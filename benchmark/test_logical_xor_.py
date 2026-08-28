@@ -27,6 +27,7 @@ def test_logical_xor_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="logical_xor_",
         torch_op=lambda a, b: a.logical_xor_(b),
+        gems_op=flag_gems.logical_xor_,
         dtypes=consts.INT_DTYPES + consts.BOOL_DTYPES,
         is_inplace=True,
     )

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -37,6 +39,7 @@ def test_functional_sym_constrain_range():
     bench = base.GenericBenchmark(
         op_name="functional_sym_constrain_range",
         torch_op=torch.ops.aten._functional_sym_constrain_range,
+        gems_op=flag_gems._functional_sym_constrain_range,
         dtypes=consts.FLOAT_DTYPES,
         case_fn=_functional_sym_constrain_range_case_fn,
         build_inputs_fn=_functional_sym_constrain_range_build_inputs_fn,

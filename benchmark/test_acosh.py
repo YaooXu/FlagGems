@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_acosh():
     bench = base.UnaryPointwiseBenchmark(
         op_name="acosh",
         torch_op=torch.acosh,
+        gems_op=flag_gems.acosh,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_acosh_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="acosh_",
         torch_op=torch.acosh_,
+        gems_op=flag_gems.acosh_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

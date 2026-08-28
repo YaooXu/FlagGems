@@ -26,6 +26,9 @@ from . import base, consts
 )
 def test_fix():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="fix", torch_op=torch.fix, dtypes=consts.FLOAT_DTYPES
+        op_name="fix",
+        torch_op=torch.fix,
+        gems_op=flag_gems.fix,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

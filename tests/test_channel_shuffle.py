@@ -33,11 +33,8 @@ def test_channel_shuffle(shape_groups, dtype):
     ref_out = torch.ops.aten.channel_shuffle(ref_input, groups)
 
     gems_op = flag_gems.testing.resolve_gems_op(
-
         "channel_shuffle",
-
         flag_gems.channel_shuffle,
-
     )
     act_out = gems_op(input_tensor, groups)
 

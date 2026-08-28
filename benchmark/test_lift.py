@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_lift():
     bench = base.UnaryPointwiseBenchmark(
         op_name="lift",
         torch_op=torch.ops.aten.lift,
+        gems_op=flag_gems.lift,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -34,6 +37,7 @@ def test_lift_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="lift_out",
         torch_op=torch.ops.aten.lift.out,
+        gems_op=flag_gems.lift_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -59,6 +61,7 @@ def test_channel_shuffle():
     bench = ChannelShuffleBenchmark(
         op_name="channel_shuffle",
         torch_op=torch.ops.aten.channel_shuffle,
+        gems_op=flag_gems.channel_shuffle,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

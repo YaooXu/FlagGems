@@ -2,7 +2,6 @@ import pytest
 import torch
 
 import flag_gems
-from flag_gems.ops.cdist import _cdist_forward
 
 from . import accuracy_utils as utils
 
@@ -33,8 +32,10 @@ def test_cdist_forward(shapes, dtype):
 
     ref_out = torch.cdist(ref_x1, ref_x2, p=2.0)
 
-    with flag_gems.use_gems():
-        res_out = _cdist_forward(x1, x2, p=2.0)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "cdist_forward", flag_gems._cdist_forward
+    )
+    res_out = gems_op(x1, x2, p=2.0)
 
     # cdist L2 computation accumulates error over feature dimension (M up to 128);
     # atol=0.01 is sufficient for float32 comparison

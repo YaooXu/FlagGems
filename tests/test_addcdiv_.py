@@ -42,3 +42,4 @@ def test_addcdiv_(shape, dtype):
     res_out = gems_op(res_inp, t1, t2, value=v)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(res_inp, ref_inp, dtype)

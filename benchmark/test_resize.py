@@ -17,6 +17,8 @@ import math
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -45,6 +47,7 @@ def test_resize():
     bench = ResizeBenchmark(
         op_name="resize",
         torch_op=torch.ops.aten.resize,
+        gems_op=flag_gems.resize,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -55,6 +58,7 @@ def test_resize_():
     bench = ResizeBenchmark(
         op_name="resize_",
         torch_op=torch.ops.aten.resize_,
+        gems_op=flag_gems.resize_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

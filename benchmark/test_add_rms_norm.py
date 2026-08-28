@@ -20,15 +20,27 @@ import flag_gems
 from . import base, consts
 
 
+def _add_rms_norm_case_fn(shape, dtype):
+    del dtype
+    M, N = shape
+    yield base.BenchmarkCasePlan(
+        shape={"input": list(shape), "weight": [N]},
+        params={},
+        builder_args=(shape,),
+    )
+
+
+def _add_rms_norm_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    M, N = shape
+    inp1 = torch.randn(shape, dtype=dtype, device=device)
+    inp2 = torch.randn(shape, dtype=dtype, device=device)
+    weight = torch.randn(N, dtype=dtype, device=device)
+    return inp1, inp2, (N,), weight
+
+
 @pytest.mark.add_rms_norm
 def test_add_rms_norm():
-    def add_rms_norm_input_fn(shape, dtype, device):
-        M, N = shape
-        inp1 = torch.randn(shape, dtype=dtype, device=device)
-        inp2 = torch.randn(shape, dtype=dtype, device=device)
-        weight = torch.randn(N, dtype=dtype, device=device)
-        yield (inp1, inp2, (N,), weight)
-
     # Use a custom wrapper for torch implementation
     def torch_add_rms_norm(x1, x2, normalized_shape, weight, eps=1e-5):
         x = x1 + x2
@@ -37,10 +49,11 @@ def test_add_rms_norm():
         return weight * hidden_states
 
     bench = base.GenericBenchmark2DOnly(
-        input_fn=add_rms_norm_input_fn,
+        case_fn=_add_rms_norm_case_fn,
+        build_inputs_fn=_add_rms_norm_build_inputs_fn,
         op_name="add_rms_norm",
         torch_op=torch_add_rms_norm,
+        gems_op=flag_gems.add_rms_norm,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems.add_rms_norm)
     bench.run()

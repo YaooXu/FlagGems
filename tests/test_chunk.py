@@ -20,8 +20,8 @@ def test_chunk(shape, dtype, chunks, dim):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.chunk(ref_inp, chunks, dim=dim)
-    with flag_gems.use_gems():
-        res_out = torch.chunk(inp, chunks, dim=dim)
+    gems_op = flag_gems.testing.resolve_gems_op("chunk", flag_gems.chunk)
+    res_out = gems_op(inp, chunks, dim=dim)
 
     assert len(res_out) == len(
         ref_out

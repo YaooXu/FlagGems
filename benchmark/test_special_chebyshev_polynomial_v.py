@@ -28,6 +28,7 @@ def test_special_chebyshev_polynomial_v():
     bench = base.BinaryPointwiseBenchmark(
         op_name="special_chebyshev_polynomial_v",
         torch_op=torch.special.chebyshev_polynomial_v,
+        gems_op=flag_gems.special_chebyshev_polynomial_v,
         # torch reference only supports float32 on CUDA
         dtypes=[torch.float32],
     )

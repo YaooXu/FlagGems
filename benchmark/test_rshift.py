@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -26,11 +28,24 @@ class RshiftBenchmark(base.Benchmark):
         self.shapes = [(1024,), (1024, 1024), (16, 512, 256)]
         self.shape_desc = "SHAPE"
 
-    def get_input_iter(self, cur_dtype) -> Generator:
-        for shape in self.shapes:
-            value = torch.randint(0, 100, shape, dtype=cur_dtype, device=self.device)
-            shift = torch.randint(0, 8, shape, dtype=cur_dtype, device=self.device)
-            yield value, shift
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"value": list(shape), "shift": list(shape)},
+                    params={},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        value = torch.randint(0, 100, shape, dtype=case.dtype, device=self.device)
+        shift = torch.randint(0, 8, shape, dtype=case.dtype, device=self.device)
+        return value, shift
 
 
 class RshiftScalarBenchmark(base.Benchmark):
@@ -38,10 +53,23 @@ class RshiftScalarBenchmark(base.Benchmark):
         self.shapes = [(1024,), (1024, 1024), (16, 512, 256)]
         self.shape_desc = "SHAPE"
 
-    def get_input_iter(self, cur_dtype) -> Generator:
-        for shape in self.shapes:
-            value = torch.randint(0, 100, shape, dtype=cur_dtype, device=self.device)
-            yield value, 3
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"value": list(shape)},
+                    params={"shift": 3},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        value = torch.randint(0, 100, shape, dtype=case.dtype, device=self.device)
+        return value, plan.params["shift"]
 
 
 class RshiftOutBenchmark(base.Benchmark):
@@ -78,6 +106,7 @@ def test_rshift():
     bench = RshiftBenchmark(
         op_name="rshift",
         torch_op=torch.ops.aten.__rshift__.Tensor,
+        gems_op=flag_gems.__rshift__,
         dtypes=consts.INT_DTYPES + consts.EXTRA_INT_DTYPES,
     )
     bench.run()
@@ -86,8 +115,9 @@ def test_rshift():
 @pytest.mark.rshift
 def test_rshift_scalar():
     bench = RshiftScalarBenchmark(
-        op_name="rshift_scalar",
+        op_name="rshift",
         torch_op=torch.ops.aten.__rshift__.Scalar,
+        gems_op=flag_gems.__rshift__,
         dtypes=consts.INT_DTYPES + consts.EXTRA_INT_DTYPES,
     )
     bench.run()

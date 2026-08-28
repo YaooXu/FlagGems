@@ -33,3 +33,4 @@ def test_frac_(shape, dtype):
     res_out = gems_op(inp)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp, ref_inp)

@@ -40,85 +40,106 @@ def batchnorm_input_fn(shape, dtype, device):
         yield inp, weight, bias, running_mean, running_var, training, momentum, eps, cudnn_enabled
 
 
-@pytest.mark.miopen_batch_norm_backward
-def test_miopen_batch_norm_backward():
-    def miopen_batch_norm_backward_input_fn(shape, dtype, device):
-        for forward_args in batchnorm_input_fn(shape, dtype, device):
-            (
-                inp,
-                weight,
-                bias,
-                running_mean,
-                running_var,
-                training,
-                _,
-                eps,
-                _,
-            ) = forward_args
+def miopen_batch_norm_backward_input_fn(shape, dtype, device):
+    for forward_args in batchnorm_input_fn(shape, dtype, device):
+        (
+            inp,
+            weight,
+            bias,
+            running_mean,
+            running_var,
+            training,
+            _,
+            eps,
+            _,
+        ) = forward_args
 
-            grad_output = torch.randn_like(inp)
-            channels = weight.shape[0] if weight is not None else inp.shape[1]
+        grad_output = torch.randn_like(inp)
+        channels = weight.shape[0] if weight is not None else inp.shape[1]
 
-            if running_mean is None:
-                running_mean = torch.zeros(channels, dtype=dtype, device=device)
-            if running_var is None:
-                running_var = torch.ones(channels, dtype=dtype, device=device)
+        if running_mean is None:
+            running_mean = torch.zeros(channels, dtype=dtype, device=device)
+        if running_var is None:
+            running_var = torch.ones(channels, dtype=dtype, device=device)
 
-            save_mean = torch.randn(channels, dtype=torch.float32, device=device)
-            # MIOpen names this argument save_var, but it stores saved inverse std.
-            save_var = (
-                torch.abs(torch.randn(channels, dtype=torch.float32, device=device))
-                + 0.1
-            )
+        save_mean = torch.randn(channels, dtype=torch.float32, device=device)
+        # MIOpen names this argument save_var, but it stores saved inverse std.
+        save_var = (
+            torch.abs(torch.randn(channels, dtype=torch.float32, device=device))
+            + 0.1
+        )
 
-            yield (
-                inp,
-                grad_output,
-                weight,
-                running_mean,
-                running_var,
-                save_mean,
-                save_var,
-                eps,
-            )
-
-    # Create a reference function that uses native_batch_norm_backward
-    # since miopen_batch_norm_backward is not available in PyTorch
-    def miopen_batch_norm_backward_reference(
-        input,
-        grad_output,
-        weight,
-        running_mean,
-        running_var,
-        save_mean,
-        save_var,
-        epsilon,
-    ):
-        save_invstd = save_var
-        # Use output_mask to get all 3 outputs
-        output_mask = [True, weight is not None, True]
-        train = True
-        return torch.ops.aten.native_batch_norm_backward(
+        yield (
+            inp,
             grad_output,
-            input,
             weight,
             running_mean,
             running_var,
             save_mean,
-            save_invstd,
-            train,
-            epsilon,
-            output_mask,
+            save_var,
+            eps,
         )
 
+
+# Create a reference function that uses native_batch_norm_backward
+# since miopen_batch_norm_backward is not available in PyTorch
+def miopen_batch_norm_backward_reference(
+    input,
+    grad_output,
+    weight,
+    running_mean,
+    running_var,
+    save_mean,
+    save_var,
+    epsilon,
+):
+    save_invstd = save_var
+    # Use output_mask to get all 3 outputs
+    output_mask = [True, weight is not None, True]
+    train = True
+    return torch.ops.aten.native_batch_norm_backward(
+        grad_output,
+        input,
+        weight,
+        running_mean,
+        running_var,
+        save_mean,
+        save_invstd,
+        train,
+        epsilon,
+        output_mask,
+    )
+
+
+def _miopen_batch_norm_backward_case_fn(shape, dtype):
+    del dtype
+    C = shape[1]
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape, "grad_output": shape, "weight": (C,)},
+        params={"eps": 1e-5, "running_stats": False},
+        builder_args=(shape, 0),
+    )
+    if base.Config.bench_level == consts.BenchLevel.COMPREHENSIVE:
+        yield base.BenchmarkCasePlan(
+            shape={"input": shape, "grad_output": shape, "weight": (C,)},
+            params={"eps": 1e-5, "running_stats": True},
+            builder_args=(shape, 1),
+        )
+
+
+@pytest.mark.miopen_batch_norm_backward
+def test_miopen_batch_norm_backward():
     bench = NormBenchmark(
-        input_fn=miopen_batch_norm_backward_input_fn,
         op_name="miopen_batch_norm_backward",
         torch_op=miopen_batch_norm_backward_reference,
+        gems_op=flag_gems.miopen_batch_norm_backward,
+        case_fn=_miopen_batch_norm_backward_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            miopen_batch_norm_backward_input_fn
+        ),
         # MThreads supports only float32 here; NVIDIA uses consts.FLOAT_DTYPES.
         dtypes=(
             [torch.float32] if base.vendor_name == "mthreads" else consts.FLOAT_DTYPES
         ),
     )
-    bench.set_gems(flag_gems.miopen_batch_norm_backward)
     bench.run()

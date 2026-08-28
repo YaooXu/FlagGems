@@ -20,13 +20,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _special_airy_ai(A):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "special_airy_ai", flag_gems.special_airy_ai
-    )
-    return gems_op(A)
-
-
 @pytest.mark.special_airy_ai
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -36,7 +29,10 @@ def test_special_airy_ai(shape, dtype):
 
     # Use float32 for reference since PyTorch doesn't support airy_ai on float16
     ref_out = torch.special.airy_ai(ref_inp.float()).to(dtype)
-    res_out = _special_airy_ai(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_airy_ai", flag_gems.special_airy_ai
+    )
+    res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype, atol=1e-3)
 
@@ -54,8 +50,10 @@ def test_special_airy_ai_out(shape, dtype):
     ref_out = out_ref.to(dtype)
 
     out_act = torch.empty_like(inp)
-    with flag_gems.use_gems():
-        act_out = torch.special.airy_ai(inp, out=out_act)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_airy_ai_out", flag_gems.special_airy_ai_out
+    )
+    act_out = gems_op(inp, out=out_act)
 
     utils.gems_assert_close(act_out, ref_out, dtype, atol=1e-3)
     utils.gems_assert_close(out_act, ref_out, dtype, atol=1e-3)

@@ -38,8 +38,10 @@ def test_adaptive_max_pool2d(shape, output_size, dtype):
         utils.to_reference(inp, True), output_size
     )
 
-    with flag_gems.use_gems():
-        actual, actual_indices = torch.ops.aten.adaptive_max_pool2d(inp, output_size)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "adaptive_max_pool2d", flag_gems.adaptive_max_pool2d
+    )
+    actual, actual_indices = gems_op(inp, output_size)
 
     utils.gems_assert_close(actual, expected, dtype)
     utils.gems_assert_equal(actual_indices, expected_indices)
@@ -55,7 +57,9 @@ def test_adaptive_max_pool2d_nan_and_tie_indices():
     expected, expected_indices = torch.ops.aten.adaptive_max_pool2d(
         utils.to_reference(inp), (1, 1)
     )
-    with flag_gems.use_gems():
-        actual, actual_indices = torch.ops.aten.adaptive_max_pool2d(inp, (1, 1))
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "adaptive_max_pool2d", flag_gems.adaptive_max_pool2d
+    )
+    actual, actual_indices = gems_op(inp, (1, 1))
     utils.gems_assert_close(actual, expected, torch.float32, equal_nan=True)
     utils.gems_assert_equal(actual_indices, expected_indices)

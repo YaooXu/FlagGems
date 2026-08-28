@@ -34,8 +34,8 @@ def test_xor(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = ref_inp1 ^ ref_inp2
-    with flag_gems.use_gems():
-        res_out = inp1 ^ inp2
+    gems_op = flag_gems.testing.resolve_gems_op("xor", flag_gems.xor)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -57,7 +57,7 @@ def test_xor_scalar(shape, dtype):
     ref_inp1 = utils.to_reference(inp1)
 
     ref_out = ref_inp1 ^ inp2
-    with flag_gems.use_gems():
-        res_out = inp1 ^ inp2
+    gems_op = flag_gems.testing.resolve_gems_op("xor", flag_gems.xor_scalar)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)

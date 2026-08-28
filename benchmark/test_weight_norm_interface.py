@@ -39,6 +39,15 @@ def weight_norm_input_fn(shape, dtype, device):
     yield v, g, 0
 
 
+def _weight_norm_interface_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"v": shape},
+        params={"dim": 0},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.weight_norm_interface
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
@@ -46,11 +55,13 @@ def weight_norm_input_fn(shape, dtype, device):
 def test_weight_norm_interface():
     bench = base.GenericBenchmarkExcluse1D(
         op_name="weight_norm_interface",
-        input_fn=weight_norm_input_fn,
-        torch_op=torch._weight_norm,
+        case_fn=_weight_norm_interface_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            weight_norm_input_fn
+        ),
+        torch_op=torch._weight_norm_interface,
+        gems_op=flag_gems.weight_norm_interface,
     )
-    bench.set_gems(flag_gems.weight_norm)
-
     bench.run()
 
 
@@ -63,6 +74,15 @@ def weight_norm_interface_backward_input_fn(shape, dtype, device):
     yield w_grad, saved_v, saved_g, saved_norms, dim
 
 
+def _weight_norm_interface_backward_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"w_grad": shape},
+        params={"dim": 0},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.weight_norm_interface_backward
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
@@ -70,13 +90,15 @@ def weight_norm_interface_backward_input_fn(shape, dtype, device):
 def test_weight_norm_interface_backward():
     bench = base.GenericBenchmarkExcluse1D(
         op_name="weight_norm_interface_backward",
-        input_fn=weight_norm_interface_backward_input_fn,
+        case_fn=_weight_norm_interface_backward_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            weight_norm_interface_backward_input_fn
+        ),
         torch_op=torch.ops.aten._weight_norm_interface_backward,
         # NOTE: torch.ops.aten._weight_norm_interface_backward only supports float32,
         # using fp16/bf16 causes "expected scalar type Float but found Half" error.
         # Original: dtypes=consts.FLOAT_DTYPES,
+        gems_op=flag_gems.weight_norm_interface_backward,
         dtypes=[torch.float32],
     )
-    bench.set_gems(flag_gems.weight_norm_interface_backward)
-
     bench.run()

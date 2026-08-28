@@ -33,8 +33,8 @@ def test_rshift_tensor(dtype, shape):
         utils.to_reference(value), utils.to_reference(shift)
     )
 
-    with flag_gems.use_gems():
-        actual = torch.ops.aten.__rshift__.Tensor(value, shift)
+    gems_op = flag_gems.testing.resolve_gems_op("rshift", flag_gems.__rshift__)
+    actual = gems_op(value, shift)
 
     utils.gems_assert_equal(actual, expected)
 
@@ -45,8 +45,8 @@ def test_rshift_scalar(dtype):
     value = torch.randint(0, 100, (11, 17), dtype=dtype, device=flag_gems.device)
     expected = torch.ops.aten.__rshift__.Scalar(utils.to_reference(value), 3)
 
-    with flag_gems.use_gems():
-        actual = torch.ops.aten.__rshift__.Scalar(value, 3)
+    gems_op = flag_gems.testing.resolve_gems_op("rshift", flag_gems.__rshift__)
+    actual = gems_op(value, 3)
 
     utils.gems_assert_equal(actual, expected)
 

@@ -26,6 +26,9 @@ from . import base, consts
 )
 def test_special_i1e():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="special_i1e", torch_op=torch.special.i1e, dtypes=consts.FLOAT_DTYPES
+        op_name="special_i1e",
+        torch_op=torch.special.i1e,
+        gems_op=flag_gems.special_i1e,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

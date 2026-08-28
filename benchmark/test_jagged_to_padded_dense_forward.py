@@ -16,6 +16,8 @@ import numpy as np
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Jagged to padded dense forward benchmark
@@ -77,6 +79,7 @@ def test_jagged_to_padded_dense_forward():
     bench = JaggedToPaddedDenseForwardBenchmark(
         op_name="jagged_to_padded_dense_forward",
         torch_op=torch.ops.aten._jagged_to_padded_dense_forward,
+        gems_op=flag_gems._jagged_to_padded_dense_forward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -2,6 +2,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -21,6 +23,7 @@ def test_igammac_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="igammac_",
         torch_op=torch.Tensor.igammac_,
+        gems_op=flag_gems.igammac_,
         # igammac_cuda does not support Half/BFloat16
         dtypes=[torch.float32],
         is_inplace=True,

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Benchmark shapes for sym_stride - covering various tensor dimensionalities
@@ -52,6 +54,7 @@ def test_sym_stride():
     bench = SymStrideBenchmark(
         op_name="sym_stride",
         torch_op=torch.ops.aten.sym_stride,
+        gems_op=flag_gems.sym_stride,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

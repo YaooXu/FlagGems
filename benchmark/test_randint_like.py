@@ -32,7 +32,7 @@ def _case_fn(shape, dtype):
 def _build_inputs_fn(plan, dtype, device):
     shape = plan.builder_args[0]
     inp = torch.randn(shape, dtype=dtype, device=device)
-    return {"input": inp, "high": plan.params["high"]},
+    return inp, plan.params["high"]
 
 
 @pytest.mark.randint_like
@@ -45,6 +45,7 @@ def test_randint_like():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.randint_like,
+        gems_op=flag_gems.randint_like,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

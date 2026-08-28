@@ -25,6 +25,8 @@ from flag_gems.runtime import torch_device_fn
 
 from . import consts
 
+pytest_plugins = ("flag_gems.testing.pytest_plugin",)
+
 device = flag_gems.device
 vendor_name = flag_gems.vendor_name
 recordLogger = logging.getLogger("flag_gems_benchmark")

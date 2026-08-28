@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 # Hardcoded shapes: LSTM cell backward requires (batch, hidden) shapes;
@@ -134,6 +136,7 @@ def test_thnn_fused_lstm_cell_backward_impl():
     bench = LSTMCellBackwardBenchmark(
         op_name="thnn_fused_lstm_cell_backward_impl",
         torch_op=torch.ops.aten._thnn_fused_lstm_cell_backward_impl,
+        gems_op=flag_gems._thnn_fused_lstm_cell_backward_impl,
         # Half/BFloat16 not supported by the underlying aten operator
         dtypes=[torch.float32],
     )

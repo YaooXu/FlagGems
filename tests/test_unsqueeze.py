@@ -9,13 +9,6 @@ from . import accuracy_utils as utils
 UNSQUEEZE_DIMS = [0, 1, 2, -1, -2]
 
 
-def _unsqueeze(A, dim):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "unsqueeze", flag_gems.unsqueeze
-    )
-    return gems_op(A, dim)
-
-
 @pytest.mark.unsqueeze
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -31,7 +24,10 @@ def test_unsqueeze(shape, dtype, dim):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.unsqueeze(ref_inp, dim)
-    res_out = _unsqueeze(inp, dim)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "unsqueeze", flag_gems.unsqueeze
+    )
+    res_out = gems_op(inp, dim)
 
     utils.gems_assert_equal(res_out, ref_out)
 

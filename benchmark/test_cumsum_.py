@@ -17,6 +17,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -26,13 +28,25 @@ def input_fn(shape, dtype, device):
     yield inp.clone(), 1
 
 
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"inp": shape},
+        params={"dim": 1},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.cumsum_
 def test_cumsum_():
     bench = base.GenericBenchmark2DOnly(
-        input_fn=input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(input_fn),
         op_name="cumsum_",
         torch_op=torch.Tensor.cumsum_,
+        gems_op=flag_gems.cumsum_,
         dtypes=consts.FLOAT_DTYPES + consts.INT_DTYPES,
+        is_inplace=True,
     )
 
     bench.run()

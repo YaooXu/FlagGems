@@ -59,6 +59,7 @@ def test_fmod_tensor():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_tensor_input_fn),
         op_name="fmod_tensor",
         torch_op=torch.fmod,
+        gems_op=flag_gems.fmod_tensor,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -74,6 +75,7 @@ def test_fmod_scalar():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_scalar_input_fn),
         op_name="fmod_scalar",
         torch_op=torch.fmod,
+        gems_op=flag_gems.fmod_scalar,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -89,8 +91,9 @@ def test_fmod_tensor_():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_tensor_input_fn),
         op_name="fmod_tensor_",
         torch_op=torch.Tensor.fmod_,
+        gems_op=flag_gems.fmod_tensor_,
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()
 
@@ -105,7 +108,8 @@ def test_fmod_scalar_():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_scalar_input_fn),
         op_name="fmod_scalar_",
         torch_op=torch.Tensor.fmod_,
+        gems_op=flag_gems.fmod_scalar_,
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()

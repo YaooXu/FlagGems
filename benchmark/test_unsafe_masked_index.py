@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # 1D shapes ranging from 1K to 1M elements for masked index coverage
@@ -72,6 +74,7 @@ def test_unsafe_masked_index():
     bench = UnsafeMaskedIndexBenchmark(
         op_name="unsafe_masked_index",
         torch_op=torch._unsafe_masked_index,
+        gems_op=flag_gems._unsafe_masked_index,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

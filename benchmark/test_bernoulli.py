@@ -62,6 +62,7 @@ def test_bernoulli():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(bernoulli_input_fn),
         op_name="bernoulli",
         torch_op=torch.bernoulli,
+        gems_op=flag_gems.bernoulli,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

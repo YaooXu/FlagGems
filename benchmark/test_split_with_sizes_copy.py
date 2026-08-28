@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes covering 1D to 4D tensors with various dimension sizes
@@ -82,6 +84,7 @@ def test_split_with_sizes_copy():
     bench = SplitWithSizesCopyBenchmark(
         op_name="split_with_sizes_copy",
         torch_op=torch.split_with_sizes_copy,
+        gems_op=flag_gems.split_with_sizes_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

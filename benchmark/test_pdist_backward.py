@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 # Benchmark shapes from the worktree PDIST_BACKWARD_SHAPES covering small to large matrices
@@ -32,14 +34,27 @@ class PdistBackwardBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = PDIST_BACKWARD_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
             n, m = shape
-            n_pairs = n * (n - 1) // 2
-            x = torch.randn(shape, dtype=cur_dtype, device=self.device)
-            pdist_out = torch.pdist(x, p=2.0)
-            grad = torch.ones(n_pairs, dtype=cur_dtype, device=self.device)
-            yield grad, x, 2.0, pdist_out
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"x": list(shape)},
+                    params={"p": 2.0},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        n, m = shape
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        pdist_out = torch.pdist(x, p=2.0)
+        grad = torch.ones(n * (n - 1) // 2, dtype=case.dtype, device=self.device)
+        return grad, x, 2.0, pdist_out
 
 
 @pytest.mark.pdist_backward
@@ -47,6 +62,7 @@ def test_pdist_backward():
     bench = PdistBackwardBenchmark(
         op_name="pdist_backward",
         torch_op=torch.ops.aten._pdist_backward,
+        gems_op=flag_gems._pdist_backward,
         # pdist_backward limited to float32 for numerical stability
         dtypes=[torch.float32],
     )

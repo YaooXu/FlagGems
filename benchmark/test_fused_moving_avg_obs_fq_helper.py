@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -31,21 +33,38 @@ class FusedMovingAvgObsFqBenchmark(base.GenericBenchmark):
         ]
 
 
-def fused_moving_avg_obs_fq_helper_input_fn(shape, dtype, device):
+def _case_fn(shape, dtype):
+    del dtype
     # aten._fused_moving_avg_obs_fq_helper requires a float32 `self`; the qparam
     # channel count is 1 for per-tensor and shape[0] for per-channel.
-    inp = torch.randn(shape, dtype=torch.float32, device=device)
-    per_channel = inp.ndim > 1
+    per_channel = len(shape) > 1
     n = shape[0] if per_channel else 1
+    yield base.BenchmarkCasePlan(
+        shape={"inp": list(shape)},
+        params={
+            "n": n,
+            "averaging_const": 0.01,
+            "quant_min": 0,
+            "quant_max": 255,
+            "ch_axis": 0,
+            "per_row_fake_quant": per_channel,
+            "symmetric_quant": False,
+        },
+        builder_args=(shape,),
+    )
 
+
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    n = plan.params["n"]
+    inp = torch.randn(shape, dtype=torch.float32, device=device)
     observer_on = torch.tensor(1, dtype=torch.long, device=device)
     fake_quant_on = torch.tensor(1, dtype=torch.long, device=device)
     running_min = torch.full((n,), -0.5, dtype=torch.float32, device=device)
     running_max = torch.full((n,), 0.5, dtype=torch.float32, device=device)
     scale = torch.ones((n,), dtype=torch.float32, device=device)
     zero_point = torch.zeros((n,), dtype=torch.int32, device=device)
-
-    yield (
+    return (
         inp,
         observer_on,
         fake_quant_on,
@@ -53,16 +72,16 @@ def fused_moving_avg_obs_fq_helper_input_fn(shape, dtype, device):
         running_max,
         scale,
         zero_point,
-        0.01,  # averaging_const
-        0,  # quant_min
-        255,  # quant_max
-        0,  # ch_axis
-        per_channel,  # per_row_fake_quant
-        False,  # symmetric_quant
+        plan.params["averaging_const"],
+        plan.params["quant_min"],
+        plan.params["quant_max"],
+        plan.params["ch_axis"],
+        plan.params["per_row_fake_quant"],
+        plan.params["symmetric_quant"],
     )
 
 
-def torch_fused_moving_avg_obs_fq_helper(
+def _torch_fused_moving_avg_obs_fq_helper(
     inp,
     observer_on,
     fake_quant_on,
@@ -97,9 +116,12 @@ def torch_fused_moving_avg_obs_fq_helper(
 @pytest.mark.fused_moving_avg_obs_fq_helper
 def test_fused_moving_avg_obs_fq_helper():
     bench = FusedMovingAvgObsFqBenchmark(
-        input_fn=fused_moving_avg_obs_fq_helper_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         op_name="fused_moving_avg_obs_fq_helper",
-        torch_op=torch_fused_moving_avg_obs_fq_helper,
+        torch_op=_torch_fused_moving_avg_obs_fq_helper,
+        gems_op=flag_gems._fused_moving_avg_obs_fq_helper,
         dtypes=[torch.float32],
+        is_inplace=True,
     )
     bench.run()

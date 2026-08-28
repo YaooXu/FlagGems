@@ -15,6 +15,7 @@
 import pytest
 import torch
 
+import flag_gems
 from flag_gems.utils import shape_utils
 
 from . import base, consts
@@ -64,6 +65,7 @@ def test_unbind_copy():
     bench = UnbindCopyBenchmark(
         op_name="unbind_copy",
         torch_op=torch.unbind_copy,
+        gems_op=flag_gems.unbind_copy,
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         dtypes=consts.FLOAT_DTYPES,

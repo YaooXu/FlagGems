@@ -78,10 +78,10 @@ FLOAT_DTYPES = [torch.float32]
 @pytest.mark.masked_scale
 @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_masked_scale(dtype):
-    torch_op = lambda inp, mask, scale: torch.ops.aten._masked_scale(inp, mask, scale)
     bench = MaskedScaleBenchmark(
         op_name="masked_scale",
-        torch_op=torch_op,
+        torch_op=torch.ops.aten._masked_scale,
+        gems_op=flag_gems._masked_scale,
         dtypes=[dtype],
     )
     bench.run()

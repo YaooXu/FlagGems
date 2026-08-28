@@ -58,11 +58,15 @@ def test_arcsin_out(shape, dtype):
 
     ref_out = torch.empty_like(ref_inp)
     torch.arcsin(ref_inp, out=ref_out)
-    with flag_gems.use_gems():
-        res_out = torch.empty_like(inp)
-        torch.arcsin(inp, out=res_out)
+    res_out = torch.empty_like(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "arcsin_out", flag_gems.arcsin_out
+    )
+    ret = gems_op(inp, out=res_out)
 
+    utils.gems_assert_close(ret, ref_out, dtype, True)
     utils.gems_assert_close(res_out, ref_out, dtype, True)
+    assert ret is res_out
 
 
 @pytest.mark.arcsin

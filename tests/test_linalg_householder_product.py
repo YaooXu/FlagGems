@@ -42,8 +42,10 @@ def test_linalg_householder_product(m, n, dtype):
     ref_tau = utils.to_reference(tau)
 
     ref_out = torch.linalg.householder_product(ref_h, ref_tau)
-    with flag_gems.use_gems():
-        res_out = torch.linalg.householder_product(h, tau)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "linalg_householder_product", flag_gems.linalg_householder_product
+    )
+    res_out = gems_op(h, tau)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -65,7 +67,9 @@ def test_linalg_householder_product_batched(shape, dtype):
     ref_tau = utils.to_reference(tau)
 
     ref_out = torch.linalg.householder_product(ref_h, ref_tau)
-    with flag_gems.use_gems():
-        res_out = torch.linalg.householder_product(h, tau)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "linalg_householder_product", flag_gems.linalg_householder_product
+    )
+    res_out = gems_op(h, tau)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

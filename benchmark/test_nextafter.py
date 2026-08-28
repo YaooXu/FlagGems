@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -9,6 +11,7 @@ def test_nextafter():
     bench = base.BinaryPointwiseBenchmark(
         op_name="nextafter",
         torch_op=torch.nextafter,
+        gems_op=flag_gems.nextafter,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

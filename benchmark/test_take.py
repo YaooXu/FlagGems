@@ -15,13 +15,28 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
-def _take_input_fn(shape, cur_dtype, device):
-    inp = utils.generate_tensor_input(shape, cur_dtype, device)
+def _take_case_fn(shape, dtype):
+    del dtype
+    numel = 1
+    for s in shape:
+        numel *= s
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape, "index": (numel,)},
+        params={},
+        builder_args=(shape,),
+    )
+
+
+def _take_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = utils.generate_tensor_input(shape, dtype, device)
     index = torch.randint(0, inp.numel(), (inp.numel(),), device=device)
-    yield inp, index
+    return inp, index
 
 
 def _take_out_input_fn(shape, cur_dtype, device):
@@ -35,8 +50,10 @@ def _take_out_input_fn(shape, cur_dtype, device):
 def test_take():
     bench = base.GenericBenchmark(
         op_name="take",
-        input_fn=_take_input_fn,
+        case_fn=_take_case_fn,
+        build_inputs_fn=_take_build_inputs_fn,
         torch_op=torch.take,
+        gems_op=flag_gems.take,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

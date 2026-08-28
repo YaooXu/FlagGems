@@ -6,13 +6,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _special_log1p(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "special_log1p", flag_gems.special_log1p
-    )
-    return gems_op(*args, **kwargs)
-
-
 @pytest.mark.special_log1p
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -21,7 +14,10 @@ def test_special_log1p(shape, dtype):
     inp = torch.rand(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp.clone())
     ref_out = torch.special.log1p(ref_inp)
-    res_out = _special_log1p(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p", flag_gems.special_log1p
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, dtype)
 
 
@@ -29,7 +25,10 @@ def test_special_log1p(shape, dtype):
 @pytest.mark.parametrize("inp", [1.0, 5, -0.5])
 def test_special_log1p_non_tensor(inp):
     ref_out = torch.special.log1p(torch.tensor(inp, dtype=torch.float32))
-    res_out = _special_log1p(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p", flag_gems.special_log1p
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(ref_out, res_out, torch.float32)
 
 
@@ -43,9 +42,13 @@ def test_special_log1p_out(shape, dtype):
     ref_out_buf = torch.empty(shape, dtype=ref_inp.dtype, device=ref_inp.device)
     ref_out = torch.ops.aten.special_log1p.out(ref_inp, out=ref_out_buf)
     res_out_buf = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.special_log1p.out(inp, out=res_out_buf)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p_out", flag_gems.special_log1p_out
+    )
+    res_out = gems_op(inp, out=res_out_buf)
     utils.gems_assert_close(res_out, ref_out, dtype)
+    assert res_out is res_out_buf
+    utils.gems_assert_close(res_out_buf, ref_out_buf, dtype)
 
 
 @pytest.mark.special_log1p
@@ -56,7 +59,10 @@ def test_special_log1p_negative():
     )
     ref_inp = utils.to_reference(inp.clone())
     ref_out = torch.special.log1p(ref_inp)
-    res_out = _special_log1p(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p", flag_gems.special_log1p
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, torch.float32, equal_nan=True)
 
 
@@ -70,7 +76,10 @@ def test_special_log1p_nan_inf():
     )
     ref_inp = utils.to_reference(inp.clone())
     ref_out = torch.special.log1p(ref_inp)
-    res_out = _special_log1p(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p", flag_gems.special_log1p
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, torch.float32, equal_nan=True)
 
 
@@ -88,5 +97,8 @@ def test_special_log1p_small_values():
     )
     ref_inp = utils.to_reference(inp.clone())
     ref_out = torch.special.log1p(ref_inp)
-    res_out = _special_log1p(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_log1p", flag_gems.special_log1p
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, torch.float64)

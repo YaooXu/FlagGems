@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -76,6 +78,7 @@ def test_upsample_nearest_exact2d_backward():
     bench = UpsampleNearestExact2dBackwardBenchmark(
         op_name="upsample_nearest_exact2d_backward",
         torch_op=torch.ops.aten._upsample_nearest_exact2d_backward.default,
+        gems_op=flag_gems._upsample_nearest_exact2d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

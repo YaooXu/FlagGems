@@ -28,8 +28,8 @@ def test_fix_(shape, dtype):
     ref_inp = utils.to_reference(inp, True)
 
     ref_out = ref_inp.fix_()
-    with flag_gems.use_gems():
-        res_out = inp.fix_()
+    gems_op = flag_gems.testing.resolve_gems_op("fix_", flag_gems.fix_)
+    res_out = gems_op(inp)
 
     # In-place: result and the mutated input must match the reference.
     utils.gems_assert_close(res_out, ref_out, dtype)

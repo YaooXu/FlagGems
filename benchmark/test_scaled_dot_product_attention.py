@@ -34,12 +34,28 @@ def scaled_dot_product_flash_attention_input_fn(shape, dtype, device):
     yield query, key, value, 0.0, False, False
 
 
+def _sdpa_flash_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"query": list(shape)},
+        params={"dropout_p": 0.0, "is_causal": False, "return_debug_mask": False},
+        builder_args=(shape, 0),
+    )
+
+
+_sdpa_flash_build_inputs_fn = base.build_inputs_from_generic_input_fn(
+    scaled_dot_product_flash_attention_input_fn
+)
+
+
 @pytest.mark.scaled_dot_product_flash_attention
 def test_scaled_dot_product_flash_attention():
     bench = AttentionBenchmark(
         op_name="scaled_dot_product_flash_attention",
-        input_fn=scaled_dot_product_flash_attention_input_fn,
+        case_fn=_sdpa_flash_case_fn,
+        build_inputs_fn=_sdpa_flash_build_inputs_fn,
         torch_op=torch.ops.aten._scaled_dot_product_flash_attention.default,
+        gems_op=flag_gems._scaled_dot_product_flash_attention,
         # FlashAttention supports CUDA float16 and bfloat16 inputs.
         dtypes=[torch.float16, torch.bfloat16],
     )

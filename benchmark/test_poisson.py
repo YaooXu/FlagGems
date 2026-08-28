@@ -40,6 +40,7 @@ def test_poisson():
     bench = base.GenericBenchmark2DOnly(
         op_name="poisson",
         torch_op=torch.poisson,
+        gems_op=flag_gems.poisson,
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         dtypes=consts.FLOAT_DTYPES,

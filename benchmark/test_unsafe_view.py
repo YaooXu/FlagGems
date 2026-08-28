@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Square 2D shapes covering common sizes for view benchmark
@@ -58,6 +60,7 @@ def test_unsafe_view():
     bench = UnsafeViewBenchmark(
         op_name="unsafe_view",
         torch_op=torch.ops.aten._unsafe_view,
+        gems_op=flag_gems._unsafe_view,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

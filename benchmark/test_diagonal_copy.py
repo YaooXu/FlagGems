@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Cubic growth shapes for profiling diagonal copy bandwidth at varying sizes,
@@ -34,10 +36,23 @@ class DiagonalCopyBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = DIAGONAL_COPY_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
-            x = torch.randn(shape, dtype=cur_dtype, device=self.device)
-            yield x, 0, 1, 2
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"x": list(shape)},
+                    params={"offset": 0, "dim1": 1, "dim2": 2},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        return x, plan.params["offset"], plan.params["dim1"], plan.params["dim2"]
 
 
 @pytest.mark.diagonal_copy
@@ -45,6 +60,7 @@ def test_diagonal_copy():
     bench = DiagonalCopyBenchmark(
         op_name="diagonal_copy",
         torch_op=torch.diagonal_copy,
+        gems_op=flag_gems.diagonal_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

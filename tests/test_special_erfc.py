@@ -16,9 +16,11 @@ def test_special_erfc(shape, dtype):
         ref_out = torch.ops.aten.special_erfc(ref_x.float()).to(dtype)
     else:
         ref_out = torch.ops.aten.special_erfc(ref_x)
-    with flag_gems.use_gems():
-        act_out = torch.ops.aten.special_erfc(x)
-    utils.gems_assert_close(act_out, ref_out, dtype, equal_nan=True)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_erfc", flag_gems.special_erfc
+    )
+    res_out = gems_op(x)
+    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.erfc
@@ -31,9 +33,9 @@ def test_erfc(shape, dtype):
         ref_out = torch.ops.aten.erfc(ref_x.float()).to(dtype)
     else:
         ref_out = torch.ops.aten.erfc(ref_x)
-    with flag_gems.use_gems():
-        act_out = torch.ops.aten.erfc(x)
-    utils.gems_assert_close(act_out, ref_out, dtype, equal_nan=True)
+    gems_op = flag_gems.testing.resolve_gems_op("erfc", flag_gems.erfc)
+    res_out = gems_op(x)
+    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.erfc_
@@ -50,7 +52,7 @@ def test_erfc_(shape, dtype):
         )
     else:
         ref_out = torch.ops.aten.erfc_(ref_x)
-    with flag_gems.use_gems():
-        act_out = torch.ops.aten.erfc_(x)
+    gems_op = flag_gems.testing.resolve_gems_op("erfc_", flag_gems.erfc_)
+    act_out = gems_op(x)
     utils.gems_assert_close(act_out, ref_out, dtype, equal_nan=True)
     utils.gems_assert_close(x, ref_x, dtype, equal_nan=True)

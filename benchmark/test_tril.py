@@ -107,15 +107,28 @@ def test_tril_out_sliced():
     bench.run()
 
 
+def _tril_inplace_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.tril_
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
 )
 def test_tril_inplace():
     bench = base.GenericBenchmarkExcluse1D(
-        input_fn=utils.unary_input_fn,
+        case_fn=_tril_inplace_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            utils.unary_input_fn
+        ),
         op_name="tril_",
         torch_op=_torch_tril_inplace,
+        gems_op=flag_gems.tril_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

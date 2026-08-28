@@ -27,6 +27,16 @@ def _dropout_backward_input_fn(shape, dtype, device):
     yield grad_output, mask, {"scale": scale}
 
 
+def _dropout_backward_case_fn(shape, dtype):
+    del dtype
+    scale = 1.0 / 0.5  # 1.0 / (1.0 - p), where p=0.5
+    yield base.BenchmarkCasePlan(
+        shape={"grad_output": shape, "mask": shape},
+        params={"scale": scale},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.dropout
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
@@ -45,8 +55,12 @@ def test_dropout():
 def test_native_dropout_backward():
     bench = base.GenericBenchmark(
         op_name="native_dropout_backward",
-        input_fn=_dropout_backward_input_fn,
+        case_fn=_dropout_backward_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            _dropout_backward_input_fn
+        ),
         torch_op=torch.ops.aten.native_dropout_backward,
+        gems_op=flag_gems.native_dropout_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

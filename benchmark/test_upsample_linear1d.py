@@ -65,7 +65,8 @@ class UpsampleLinear1dBackwardBenchmark(base.Benchmark):
         shapes_2d = [(16, 2**i) for i in range(6, 16, 2)]
         return shapes + shapes_3d + shapes_2d
 
-    def get_input_iter(self, cur_dtype):
+    def get_case_iter(self, dtype):
+        ordinal = 0
         for shape in self.shapes:
             if len(shape) == 1:
                 shape_3d = (1, 1, shape[0])
@@ -80,13 +81,33 @@ class UpsampleLinear1dBackwardBenchmark(base.Benchmark):
                     w_out = max(1, int(w_in * scale_factor))
                     if n * c * max(w_in, w_out) >= 2**30:
                         continue
-
-                    grad = torch.randn(
-                        [n, c, w_out],
-                        device=self.device,
-                        dtype=cur_dtype,
+                    yield self._case_from_plan(
+                        dtype,
+                        ordinal,
+                        base.BenchmarkCasePlan(
+                            shape={"grad": [n, c, w_out]},
+                            params={
+                                "scale_factor": scale_factor,
+                                "align_corners": align_corners,
+                                "w_out": w_out,
+                            },
+                            builder_args=(n, c, w_in),
+                        ),
                     )
-                    yield grad, [w_out], [n, c, w_in], align_corners, scale_factor
+                    ordinal += 1
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        n, c, w_in = plan.builder_args
+        scale_factor = plan.params["scale_factor"]
+        align_corners = plan.params["align_corners"]
+        w_out = plan.params["w_out"]
+        grad = torch.randn(
+            [n, c, w_out],
+            device=self.device,
+            dtype=case.dtype,
+        )
+        return grad, [w_out], [n, c, w_in], align_corners, scale_factor
 
     def get_tflops(self, op, *args, **kwargs):
         grad = args[0]
@@ -101,6 +122,7 @@ def test_upsample_linear1d_backward():
     bench = UpsampleLinear1dBackwardBenchmark(
         op_name="upsample_linear1d_backward",
         torch_op=torch.ops.aten.upsample_linear1d_backward,
+        gems_op=flag_gems.upsample_linear1d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
 

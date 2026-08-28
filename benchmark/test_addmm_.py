@@ -21,7 +21,7 @@ from . import base, consts
 
 
 @pytest.mark.addmm_
-def test_addmm_(monkeypatch):
+def test_addmm_():
     def _input_fn(b, m, n, k, dtype, device, b_column_major):
         inp1 = torch.randn([m, k], dtype=dtype, device=device)
         bias = torch.randn([m, n], dtype=dtype, device=device)
@@ -38,6 +38,7 @@ def test_addmm_(monkeypatch):
         torch_op=lambda bias, mat1, mat2: bias.addmm_(mat1, mat2),
         gems_op=flag_gems.addmm_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
 
     bench.run()

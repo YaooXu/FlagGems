@@ -42,16 +42,18 @@ def test_grid_sampler_3d_backward(
     )
 
     # Gems result
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.grid_sampler_3d_backward.default(
-            grad_output,
-            input_tensor,
-            grid,
-            interpolation_mode,
-            padding_mode,
-            align_corners,
-            [True, True],
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "grid_sampler_3d_backward", flag_gems.grid_sampler_3d_backward
+    )
+    res_out = gems_op(
+        grad_output,
+        input_tensor,
+        grid,
+        interpolation_mode,
+        padding_mode,
+        align_corners,
+        [True, True],
+    )
 
     # Compare grad_input
     utils.gems_assert_close(res_out[0], ref_out[0], dtype)

@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -48,6 +50,7 @@ def test_zero():
     bench = ZeroBenchmark(
         op_name="zero",
         torch_op=torch.ops.aten.zero,
+        gems_op=flag_gems.zero,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

@@ -22,6 +22,15 @@ import torch
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 
+from .candidate import (
+    candidate_code as _candidate_code,
+    candidate_report,
+    is_candidate as _is_candidate,
+    resolve_candidate as _resolve_candidate,
+    set_candidate_call_tracking,
+    write_candidate_report,
+)
+
 
 _REGISTERED_OP_OVERRIDE_LOCK = RLock()
 _GEMS_OP_OVERRIDE_LOCK = RLock()
@@ -68,6 +77,14 @@ def resolve_gems_op(
     _validate_gems_op(operator, default)
     with _GEMS_OP_OVERRIDE_LOCK:
         override = _GEMS_OP_OVERRIDES.get(operator, _MISSING)
+    candidate = _resolve_candidate(operator)
+    if candidate is not None:
+        if override is not _MISSING:
+            raise RuntimeError(
+                "--candidate-code-path cannot be combined with an explicit "
+                f"override_gems_op() for {operator!r}."
+            )
+        return candidate
     if override is not _MISSING:
         return override
     if default is None:
@@ -87,7 +104,11 @@ def gems_op_source(operator: str, function: Callable) -> str:
     _validate_gems_op(operator, function)
     with _GEMS_OP_OVERRIDE_LOCK:
         override = _GEMS_OP_OVERRIDES.get(operator, _MISSING)
-    return "override" if override is function else "default"
+    return (
+        "override"
+        if override is function or _is_candidate(operator, function)
+        else "default"
+    )
 
 
 @contextmanager
@@ -112,6 +133,22 @@ def current_gems_op_case(operator: Optional[str] = None) -> Optional[str]:
     if operator is not None and operator != current_operator:
         return None
     return case_id
+
+
+@contextmanager
+def candidate_code(
+    path: str,
+    *,
+    track_calls: bool = True,
+) -> Iterator[Callable]:
+    """Load ``path::run`` as the candidate resolved in this process."""
+
+    with _candidate_code(
+        path,
+        current_case=current_gems_op_case,
+        track_calls=track_calls,
+    ) as function:
+        yield function
 
 
 @contextmanager

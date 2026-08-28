@@ -2,6 +2,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -12,6 +14,7 @@ def test_special_bessel_j1():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_bessel_j1",
         torch_op=torch.special.bessel_j1,
+        gems_op=flag_gems.special_bessel_j1,
         dtypes=[torch.float32],
     )
     bench.run()

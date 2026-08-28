@@ -44,7 +44,9 @@ def test_unfold_copy(shape, dim, size, step, dtype):
     ref_inp = utils.to_reference(inp)
     ref_out = torch.unfold_copy(ref_inp, dimension=dim, size=size, step=step)
 
-    with flag_gems.use_gems():
-        res_out = torch.unfold_copy(inp, dimension=dim, size=size, step=step)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "unfold_copy", flag_gems.unfold_copy
+    )
+    res_out = gems_op(inp, dimension=dim, size=size, step=step)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

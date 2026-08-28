@@ -25,6 +25,7 @@ def test_digamma():
     bench = base.UnaryPointwiseBenchmark(
         op_name="digamma",
         torch_op=torch.digamma,
+        gems_op=flag_gems.digamma,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -38,6 +39,7 @@ def test_digamma_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="digamma_",
         torch_op=lambda a: a.digamma_(),
+        gems_op=flag_gems.digamma_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

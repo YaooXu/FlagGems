@@ -47,6 +47,8 @@ def test_addcmul_():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.ops.aten.addcmul_,
+        gems_op=flag_gems.addcmul_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

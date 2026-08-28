@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -33,10 +35,21 @@ def empty_build_inputs_fn(plan, dtype, device):
     return (plan.builder_args[0],)
 
 
-def empty_permuted_input_fn(shape, dtype, device):
+def empty_permuted_case_fn(shape, dtype):
     # Reverse the physical layout so the allocation exercises a non-contiguous
     # memory ordering rather than the plain contiguous one.
-    yield shape, list(reversed(range(len(shape))))
+    del dtype
+    physical_layout = list(reversed(range(len(shape))))
+    yield base.BenchmarkCasePlan(
+        shape={"size": shape},
+        params={"physical_layout": physical_layout},
+        builder_args=(shape,),
+    )
+
+
+def empty_permuted_build_inputs_fn(plan, dtype, device):
+    del dtype, device
+    return plan.builder_args[0], plan.params["physical_layout"]
 
 
 @pytest.mark.empty_permuted
@@ -44,8 +57,10 @@ def test_empty_permuted():
     bench = base.GenericBenchmark(
         op_name="empty_permuted",
         torch_op=torch.empty_permuted,
+        gems_op=flag_gems.empty_permuted,
         dtypes=consts.FLOAT_DTYPES,
-        input_fn=empty_permuted_input_fn,
+        case_fn=empty_permuted_case_fn,
+        build_inputs_fn=empty_permuted_build_inputs_fn,
     )
     bench.run()
 

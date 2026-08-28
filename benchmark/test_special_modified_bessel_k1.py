@@ -15,6 +15,7 @@ def test_special_modified_bessel_k1():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_modified_bessel_k1",
         torch_op=torch.ops.aten.special_modified_bessel_k1,
+        gems_op=flag_gems.special_modified_bessel_k1,
         # PyTorch reference only supports float32 for this operator
         dtypes=[torch.float32],
     )
@@ -30,6 +31,7 @@ def test_special_modified_bessel_k1_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="special_modified_bessel_k1_out",
         torch_op=torch.ops.aten.special_modified_bessel_k1.out,
+        gems_op=flag_gems.special_modified_bessel_k1_out,
         # PyTorch reference only supports float32 for this operator
         dtypes=[torch.float32],
     )

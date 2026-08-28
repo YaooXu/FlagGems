@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from flag_gems import linalg_slogdet
+import flag_gems
 
 from . import base
 
@@ -62,8 +62,8 @@ def test_linalg_slogdet():
     bench = SlogdetBenchmark(
         op_name="linalg_slogdet",
         torch_op=torch.linalg.slogdet,
+        gems_op=flag_gems.linalg_slogdet,
         # linalg.slogdet generated kernel only supports float32 on CUDA.
         dtypes=[torch.float32],
     )
-    bench.set_gems(linalg_slogdet)
     bench.run()

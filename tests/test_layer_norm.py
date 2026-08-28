@@ -66,11 +66,11 @@ def test_native_layer_norm(shape, normalized_shape, dtype, affine, caplog):
         eps,
     )
 
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "native_layer_norm", flag_gems.native_layer_norm
+    )
     with caplog.at_level("DEBUG", logger="flag_gems.ops.native_layer_norm"):
-        with flag_gems.use_gems():
-            result = torch.ops.aten.native_layer_norm.default(
-                inp, normalized_shape, weight, bias, eps
-            )
+        result = gems_op(inp, normalized_shape, weight, bias, eps)
 
     assert "GEMS NATIVE_LAYER_NORM" in caplog.text
     assert len(result) == len(ref_result) == 3

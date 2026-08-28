@@ -81,21 +81,23 @@ def test_native_batch_norm_legit(shape, dtype, affine, training):
         eps,
     )
 
-    with flag_gems.use_gems():
-        (
-            res_out,
-            res_save_mean,
-            res_save_var,
-        ) = torch.ops.aten._native_batch_norm_legit.default(
-            inp,
-            weight,
-            bias,
-            running_mean,
-            running_var,
-            training,
-            momentum,
-            eps,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "native_batch_norm_legit", flag_gems._native_batch_norm_legit
+    )
+    (
+        res_out,
+        res_save_mean,
+        res_save_var,
+    ) = gems_op(
+        inp,
+        weight,
+        bias,
+        running_mean,
+        running_var,
+        training,
+        momentum,
+        eps,
+    )
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(running_mean, ref_running_mean, dtype)

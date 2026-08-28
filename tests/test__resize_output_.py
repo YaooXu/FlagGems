@@ -61,8 +61,10 @@ def test_resize_output_(shape, dtype):
     ref_out = _reference_resize_output_(ref_inp, target_size, ref_device)
 
     inp1 = inp.clone()
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._resize_output_(inp1, target_size, device)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "resize_output_", flag_gems._resize_output_
+    )
+    res_out = gems_op(inp1, target_size, device)
 
     # Check shape matches
     assert (

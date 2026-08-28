@@ -6,14 +6,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _special_scaled_modified_bessel_k1(x):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "special_scaled_modified_bessel_k1",
-        flag_gems.special_scaled_modified_bessel_k1,
-    )
-    return gems_op(x)
-
-
 @pytest.mark.special_scaled_modified_bessel_k1
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 # Bessel K1 not supported for Half/BFloat16 in PyTorch
@@ -23,7 +15,11 @@ def test_special_scaled_modified_bessel_k1(shape, dtype):
     inp = torch.rand(shape, dtype=dtype, device=flag_gems.device) + 0.1
     ref_inp = utils.to_reference(inp, True)
     ref_out = torch.special.scaled_modified_bessel_k1(ref_inp)
-    res_out = _special_scaled_modified_bessel_k1(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_scaled_modified_bessel_k1",
+        flag_gems.special_scaled_modified_bessel_k1,
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, dtype)
 
 
@@ -66,5 +62,9 @@ def test_special_scaled_modified_bessel_k1_edge_cases(dtype):
     inp = torch.tensor(edge_vals, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp, True)
     ref_out = torch.special.scaled_modified_bessel_k1(ref_inp)
-    res_out = _special_scaled_modified_bessel_k1(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_scaled_modified_bessel_k1",
+        flag_gems.special_scaled_modified_bessel_k1,
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes for LSTM cell: (batch, hidden_size) where gates = (batch, 4*hidden_size)
@@ -83,6 +85,7 @@ def test_thnn_fused_lstm_cell():
     bench = LSTMCellBenchmark(
         op_name="thnn_fused_lstm_cell",
         torch_op=torch.ops.aten._thnn_fused_lstm_cell,
+        gems_op=flag_gems._thnn_fused_lstm_cell,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -75,6 +75,58 @@ class MaxPool3dBackwardBenchmark(base.GenericBenchmark):
         for shape in shapes_5d:
             yield from self.input_fn(shape, dtype, self.device)
 
+    def get_case_iter(self, dtype) -> Generator:
+        # Typical 3D CNN shapes (N, C, D, H, W)
+        shapes_5d = [
+            (4, 3, 16, 56, 56),  # Input video frame
+            (8, 64, 8, 28, 28),  # Early 3D-ResNet layer
+            (16, 128, 4, 14, 14),  # Mid 3D-ResNet layer
+            (32, 256, 2, 7, 7),  # Late 3D-ResNet layer
+        ]
+        ordinal = 0
+        for shape in shapes_5d:
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": list(shape)},
+                    params={
+                        "kernel_size": 3,
+                        "stride": 2,
+                        "padding": 1,
+                        "dilation": 1,
+                        "ceil_mode": False,
+                    },
+                    builder_args=(shape, 0),
+                ),
+            )
+            ordinal += 1
+            if base.Config.bench_level == consts.BenchLevel.COMPREHENSIVE:
+                # Non-cubic kernel/stride/padding
+                if shape[-3] > 5 and shape[-2] > 5 and shape[-1] > 5:
+                    yield self._case_from_plan(
+                        dtype,
+                        ordinal,
+                        base.BenchmarkCasePlan(
+                            shape={"input": list(shape)},
+                            params={
+                                "kernel_size": [2, 3, 3],
+                                "stride": [1, 2, 2],
+                                "padding": [0, 1, 1],
+                                "dilation": 1,
+                                "ceil_mode": False,
+                            },
+                            builder_args=(shape, 1),
+                        ),
+                    )
+                    ordinal += 1
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        return base.build_inputs_from_generic_input_fn(max_pool3d_backward_input_fn)(
+            plan, case.dtype, self.device
+        )
+
 
 @pytest.mark.max_pool3d_with_indices_backward
 def test_max_pool3d_with_indices_backward():

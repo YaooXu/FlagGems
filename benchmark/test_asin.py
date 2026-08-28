@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_asin():
     bench = base.UnaryPointwiseBenchmark(
         op_name="asin",
         torch_op=torch.asin,
+        gems_op=flag_gems.asin,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_asin_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="asin_",
         torch_op=torch.asin_,
+        gems_op=flag_gems.asin_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

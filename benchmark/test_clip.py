@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -64,6 +66,7 @@ def test_clip_inplace():
         build_inputs_fn=_build_inputs_fn,
         op_name="clip_",
         torch_op=torch.clip_,
+        gems_op=flag_gems.clip_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

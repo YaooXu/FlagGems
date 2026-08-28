@@ -43,6 +43,8 @@ def test_mse_loss_backward(shape, dtype, reduction):
     ref_out = torch.ops.aten.mse_loss_backward(
         ref_grad_output, ref_inp, ref_target, reduction
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.mse_loss_backward(grad_output, inp, target, reduction)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "mse_loss_backward", flag_gems.mse_loss_backward
+    )
+    res_out = gems_op(grad_output, inp, target, reduction)
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)

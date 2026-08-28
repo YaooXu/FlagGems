@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -25,6 +27,7 @@ def test_binary_cross_entropy_with_logits():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         op_name="binary_cross_entropy_with_logits",
         torch_op=torch.ops.aten.binary_cross_entropy_with_logits,
+        gems_op=flag_gems.binary_cross_entropy_with_logits,
         dtypes=consts.FLOAT_DTYPES,
     )
 

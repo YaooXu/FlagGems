@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_special_expit():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_expit",
         torch_op=torch.special.expit,
+        gems_op=flag_gems.special_expit,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Generator
-
 import pytest
 import torch
+
+import flag_gems
 
 from . import base, consts
 
@@ -24,26 +24,34 @@ class AddmvBenchmark(base.GenericBenchmark2DOnly):
     def set_more_shapes(self):
         return []
 
-    def get_input_iter(self, dtype) -> Generator:
-        for m, n in self.shapes:
-            yield from self.input_fn(m, n, dtype, self.device)
+
+def _case_fn(shape, dtype):
+    m, n = shape
+    yield base.BenchmarkCasePlan(
+        shape={"mat": [m, n], "vec": [n], "bias": [m]},
+        params={},
+        builder_args=(m, n),
+    )
 
 
-def _input_fn(m, n, cur_dtype, device):
-    mat = torch.randn([m, n], dtype=cur_dtype, device=device)
-    vec = torch.randn([n], dtype=cur_dtype, device=device)
-    bias = torch.randn([m], dtype=cur_dtype, device=device)
-
+def _build_inputs_fn(plan, dtype, device):
+    m, n = plan.builder_args
+    mat = torch.randn([m, n], dtype=dtype, device=device)
+    vec = torch.randn([n], dtype=dtype, device=device)
+    bias = torch.randn([m], dtype=dtype, device=device)
     # Tensor.addmv_(mat, vec)
-    yield bias, mat, vec
+    return bias, mat, vec
 
 
 @pytest.mark.addmv_
 def test_addmv_():
     bench = AddmvBenchmark(
         op_name="addmv_",
-        input_fn=_input_fn,
-        torch_op=lambda bias, mat, vec: bias.addmv_(mat, vec),
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
+        torch_op=torch.Tensor.addmv_,
+        gems_op=flag_gems.addmv_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

@@ -44,14 +44,14 @@ def test_cumsum_(shape, dtype):
     dim = 1 if shape == utils.REDUCTION_SHAPES[-1] else -1
     if dtype in utils.INT_DTYPES:
         inp = torch.randint(-3, 3, shape, device=flag_gems.device).to(dtype)
-        ref_inp = utils.to_reference(inp)
+        ref_inp = utils.to_reference(inp.clone())
     else:
         inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
-        ref_inp = utils.to_reference(inp, True)
+        ref_inp = utils.to_reference(inp.clone(), True)
 
     ref_out = ref_inp.cumsum_(dim=dim)
-    with flag_gems.use_gems():
-        res_out = inp.cumsum_(dim=dim)
+    gems_op = flag_gems.testing.resolve_gems_op("cumsum_", flag_gems.cumsum_)
+    res_out = gems_op(inp, dim)
 
     utils.gems_assert_close(res_out, ref_out, dtype, reduce_dim=shape[dim])
     assert res_out is inp

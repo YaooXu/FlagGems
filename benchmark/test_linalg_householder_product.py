@@ -20,12 +20,25 @@ class LinalgHouseholderProductBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = LINALG_HOUSEHOLDER_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for m, n in self.shapes:
-            # Use geqrf to generate valid (h, tau) pair
-            A = torch.randn(m, n, dtype=cur_dtype, device=self.device)
-            h, tau = torch.geqrf(A)
-            yield h, tau
+    def get_case_iter(self, dtype):
+        for ordinal, (m, n) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"m": m, "n": n},
+                    params={},
+                    builder_args=(m, n),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        m, n = plan.builder_args
+        # Use geqrf to generate valid (h, tau) pair
+        A = torch.randn(m, n, dtype=case.dtype, device=self.device)
+        h, tau = torch.geqrf(A)
+        return h, tau
 
 
 @pytest.mark.linalg_householder_product
@@ -33,8 +46,8 @@ def test_linalg_householder_product():
     bench = LinalgHouseholderProductBenchmark(
         op_name="linalg_householder_product",
         torch_op=torch.linalg.householder_product,
+        gems_op=flag_gems.linalg_householder_product,
         # Only float32 supported: geqrf/householder_product requires float32/float64 on CUDA
         dtypes=[torch.float32],
     )
-    bench.set_gems(flag_gems.linalg_householder_product)
     bench.run()

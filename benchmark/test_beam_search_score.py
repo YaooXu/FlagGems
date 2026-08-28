@@ -59,6 +59,66 @@ class BeamSearchScoreBenchmark(base.Benchmark):
         self.shape_desc = self.DEFAULT_SHAPE_DESC
 
 
+class BeamSearchScoreInplaceBenchmark(BeamSearchScoreBenchmark):
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            batch_size = shape[0]
+            vocab_size = shape[1] if len(shape) > 1 else shape[0]
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={
+                        "log_probs": (batch_size, vocab_size),
+                        "beam_scores": (batch_size,),
+                    },
+                    params={},
+                    builder_args=(batch_size, vocab_size),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        batch_size, vocab_size = plan.builder_args
+        log_probs = utils.generate_tensor_input(
+            (batch_size, vocab_size), case.dtype, self.device
+        )
+        beam_scores = utils.generate_tensor_input(
+            (batch_size,), case.dtype, self.device
+        )
+        return log_probs, beam_scores
+
+
+class BeamSearchScoreTargetBenchmark(BeamSearchScoreBenchmark):
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            batch_size = shape[0]
+            vocab_size = shape[1] if len(shape) > 1 else shape[0]
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={
+                        "log_probs": (batch_size, vocab_size),
+                        "beam_scores": (batch_size,),
+                    },
+                    params={},
+                    builder_args=(batch_size, vocab_size),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        batch_size, vocab_size = plan.builder_args
+        log_probs = utils.generate_tensor_input(
+            (batch_size, vocab_size), case.dtype, self.device
+        )
+        beam_scores = utils.generate_tensor_input(
+            (batch_size,), case.dtype, self.device
+        )
+        return log_probs, beam_scores
+
+
 @pytest.mark.beam_search_score
 @pytest.mark.parametrize("dtype", consts.FLOAT_DTYPES)
 def test_beam_search_score(dtype):
@@ -69,12 +129,12 @@ def test_beam_search_score(dtype):
     def torch_op(log_probs, beam_scores):
         return log_probs + beam_scores.unsqueeze(-1)
 
-    bench = BeamSearchScoreBenchmark(
+    bench = BeamSearchScoreTargetBenchmark(
         op_name="beam_search_score",
         torch_op=torch_op,
+        gems_op=flag_gems.beam_search_score,
         dtypes=[dtype],
     )
-    bench.gems_op = flag_gems.beam_search_score
     bench.run()
 
 
@@ -88,11 +148,11 @@ def test_beam_search_score_(dtype):
     def torch_op(log_probs, beam_scores):
         return log_probs + beam_scores.unsqueeze(-1)
 
-    bench = BeamSearchScoreBenchmark(
+    bench = BeamSearchScoreInplaceBenchmark(
         op_name="beam_search_score_",
         torch_op=torch_op,
+        gems_op=flag_gems.beam_search_score_,
         dtypes=[dtype],
         is_inplace=True,
     )
-    bench.gems_op = flag_gems.beam_search_score_
     bench.run()

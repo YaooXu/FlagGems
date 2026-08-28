@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # (batch, width) pairs covering small to medium tensors for pad1d backward
@@ -46,12 +48,42 @@ class ReflectionPad1dBackwardBenchmark(base.Benchmark):
             grad = torch.ones(B, W_out, dtype=cur_dtype, device=self.device)
             yield grad, x, padding
 
+    def get_case_iter(self, dtype):
+        padding = (1, 2)
+        for ordinal, shape in enumerate(self.shapes):
+            if len(shape) == 2:
+                B, W = shape
+            else:
+                B, W = 1, shape[0]
+            W_out = W + padding[0] + padding[1]
+            grad_shape = (B, W_out)
+            inp_shape = (B, W)
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"grad_output": grad_shape, "input": inp_shape},
+                    params={"padding": padding},
+                    builder_args=(inp_shape, padding),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        inp_shape, padding = plan.builder_args
+        B, W = inp_shape
+        W_out = W + padding[0] + padding[1]
+        x = torch.randn(inp_shape, dtype=case.dtype, device=self.device)
+        grad = torch.ones((B, W_out), dtype=case.dtype, device=self.device)
+        return grad, x, padding
+
 
 @pytest.mark.reflection_pad1d_backward
 def test_reflection_pad1d_backward():
     bench = ReflectionPad1dBackwardBenchmark(
         op_name="reflection_pad1d_backward",
         torch_op=torch.ops.aten.reflection_pad1d_backward,
+        gems_op=flag_gems.reflection_pad1d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

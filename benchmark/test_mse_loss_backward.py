@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -25,12 +27,25 @@ def mse_loss_backward_input_fn(shape, cur_dtype, device):
     yield grad_output, inp, target, {"reduction": 1}
 
 
+def _mse_loss_backward_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"reduction": 1},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.mse_loss_backward
 def test_mse_loss_backward():
     bench = base.GenericBenchmark2DOnly(
-        input_fn=mse_loss_backward_input_fn,
+        case_fn=_mse_loss_backward_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            mse_loss_backward_input_fn
+        ),
         op_name="mse_loss_backward",
         torch_op=torch.ops.aten.mse_loss_backward,
+        gems_op=flag_gems.mse_loss_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

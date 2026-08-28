@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_arccos():
     bench = base.UnaryPointwiseBenchmark(
         op_name="arccos",
         torch_op=torch.arccos,
+        gems_op=flag_gems.arccos,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_arccos_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="arccos_",
         torch_op=torch.arccos_,
+        gems_op=flag_gems.arccos_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

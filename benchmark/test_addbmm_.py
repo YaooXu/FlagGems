@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -25,6 +27,8 @@ def test_addbmm_():
         op_name="addbmm_",
         input_fn=_input_fn,
         torch_op=lambda bias, inp1, inp2: bias.addbmm_(inp1, inp2),
+        gems_op=flag_gems.addbmm_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

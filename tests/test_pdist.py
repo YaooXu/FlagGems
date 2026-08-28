@@ -21,8 +21,8 @@ def test_pdist(shape, dtype):
 
     p = 2.0
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -39,8 +39,8 @@ def test_pdist_p1(shape, dtype):
 
     p = 1.0
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -57,8 +57,8 @@ def test_pdist_pinf(shape, dtype):
 
     p = float("inf")
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -75,8 +75,8 @@ def test_pdist_p_general(shape, dtype):
 
     p = 3.0
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -93,8 +93,8 @@ def test_pdist_p0(shape, dtype):
 
     p = 0.0
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -111,7 +111,7 @@ def test_pdist_p_large(shape, dtype):
 
     p = 100.0
     ref_out = torch.pdist(ref_inp, p=p)
-    with flag_gems.use_gems():
-        res_out = torch.pdist(inp, p=p)
+    gems_op = flag_gems.testing.resolve_gems_op("pdist", flag_gems.pdist)
+    res_out = gems_op(inp, p=p)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

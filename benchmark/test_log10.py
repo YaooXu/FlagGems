@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -31,6 +33,7 @@ def test_log10_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="log10_",
         torch_op=torch.log10_,
+        gems_op=flag_gems.log10_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

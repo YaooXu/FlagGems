@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # narrow slices along dim 0; enumerate shapes explicitly.
@@ -59,6 +61,7 @@ def test_narrow():
     bench = NarrowBenchmark(
         op_name="narrow",
         torch_op=torch.narrow,
+        gems_op=flag_gems.narrow,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

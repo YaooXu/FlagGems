@@ -15,12 +15,17 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
 @pytest.mark.negative
 def test_negative():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="negative", torch_op=torch.negative, dtypes=consts.FLOAT_DTYPES
+        op_name="negative",
+        torch_op=torch.negative,
+        gems_op=flag_gems.negative,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes covering 2D, 3D, and 4D for benchmarking transpose.
@@ -55,6 +57,7 @@ def test_transpose():
     bench = TransposeBenchmark(
         op_name="transpose",
         torch_op=torch.ops.aten.transpose.int,
+        gems_op=flag_gems.transpose,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

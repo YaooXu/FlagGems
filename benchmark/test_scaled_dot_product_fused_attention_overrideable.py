@@ -28,12 +28,29 @@ class ScaledDotProductFusedAttentionOverrideableBenchmark(base.GenericBenchmark)
 def test_scaled_dot_product_fused_attention_overrideable(is_causal):
     """Benchmark for _scaled_dot_product_fused_attention_overrideable."""
 
-    def attention_kwargs(shape, dtype, device):
-        # shape: (batch, num_heads, seq_len, head_size)
+    def _case_fn(shape, dtype):
+        del dtype
+        yield base.BenchmarkCasePlan(
+            shape={"query": shape},
+            params={"is_causal": is_causal},
+            builder_args=(shape,),
+        )
+
+    def _build_inputs_fn(plan, dtype, device):
+        shape = plan.builder_args[0]
         query = torch.randn(shape, device=device, dtype=dtype)
         key = torch.randn(shape, device=device, dtype=dtype)
         value = torch.randn(shape, device=device, dtype=dtype)
-        yield (query, key, value, None, 0.0, is_causal, False, None)
+        return (
+            query,
+            key,
+            value,
+            None,
+            0.0,
+            plan.params["is_causal"],
+            False,
+            None,
+        )
 
     def torch_ref(
         query,
@@ -49,25 +66,12 @@ def test_scaled_dot_product_fused_attention_overrideable(is_causal):
             query, key, value, is_causal=is_causal
         )
 
-    def gems_op(
-        query,
-        key,
-        value,
-        attn_bias=None,
-        dropout_p=0.0,
-        is_causal=False,
-        return_debug_mask=False,
-        scale=None,
-    ):
-        return flag_gems._scaled_dot_product_fused_attention_overrideable(
-            query, key, value, attn_bias, dropout_p, is_causal, return_debug_mask, scale
-        )
-
     bench = ScaledDotProductFusedAttentionOverrideableBenchmark(
         op_name="scaled_dot_product_fused_attention_overrideable",
-        input_fn=attention_kwargs,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         torch_op=torch_ref,
+        gems_op=flag_gems._scaled_dot_product_fused_attention_overrideable,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(gems_op)
     bench.run()

@@ -42,8 +42,10 @@ def test_bitwise_xor_tensor(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = torch.bitwise_xor(ref_inp1, ref_inp2)
-    with flag_gems.use_gems():
-        res_out = torch.bitwise_xor(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "bitwise_xor_tensor", flag_gems.bitwise_xor_tensor
+    )
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -66,7 +68,11 @@ def test_bitwise_xor_tensor_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = ref_inp1.bitwise_xor_(ref_inp2)
-    with flag_gems.use_gems():
-        res_out = inp1.bitwise_xor_(inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "bitwise_xor_tensor_", flag_gems.bitwise_xor_tensor_
+    )
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp1, ref_inp1)
+    assert res_out.data_ptr() == inp1.data_ptr()

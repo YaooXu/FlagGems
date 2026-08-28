@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -39,6 +41,7 @@ def test_clamp_max():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.clamp_max,
+        gems_op=flag_gems.clamp_max,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -51,6 +54,7 @@ def test_clamp_max_inplace():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         op_name="clamp_max_",
         torch_op=torch.clamp_max_,
+        gems_op=flag_gems.clamp_max_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

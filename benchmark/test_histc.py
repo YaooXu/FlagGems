@@ -44,6 +44,7 @@ def test_histc():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         op_name="histc",
         torch_op=torch.histc,
+        gems_op=flag_gems.histc,
         dtypes=[torch.float32],
     )
     bench.run()

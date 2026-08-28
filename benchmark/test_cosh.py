@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -31,6 +33,7 @@ def test_cosh_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="cosh_",
         torch_op=torch.cosh_,
+        gems_op=flag_gems.cosh_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

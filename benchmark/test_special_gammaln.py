@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -17,6 +19,7 @@ def test_special_gammaln():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_gammaln",
         torch_op=torch.special.gammaln,
+        gems_op=flag_gems.special_gammaln,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -24,9 +27,10 @@ def test_special_gammaln():
 
 @pytest.mark.special_gammaln_out
 def test_special_gammaln_out():
-    bench = SpecialGammalnOutBenchmark(
+    bench = base.UnaryPointwiseOutBenchmark(
         op_name="special_gammaln_out",
         torch_op=torch.special.gammaln,
+        gems_op=flag_gems.special_gammaln_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

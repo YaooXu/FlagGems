@@ -37,7 +37,11 @@ def test_special_modified_bessel_k0_out(shape, dtype):
     out_ref = torch.empty_like(ref_x)
     ref_out = torch.ops.aten.special_modified_bessel_k0.out(ref_x, out=out_ref)
     out_act = torch.empty_like(x)
-    with flag_gems.use_gems():
-        act_out = torch.ops.aten.special_modified_bessel_k0.out(x, out=out_act)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_modified_bessel_k0_out",
+        flag_gems.special_modified_bessel_k0_out,
+    )
+    act_out = gems_op(x, out=out_act)
     utils.gems_assert_close(act_out, ref_out, dtype)
     utils.gems_assert_close(out_act, out_ref, dtype)
+    assert act_out is out_act

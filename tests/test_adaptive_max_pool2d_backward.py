@@ -42,8 +42,10 @@ def test_adaptive_max_pool2d_backward(shape, output_size, dtype):
         utils.to_reference(indices),
     )
 
-    with flag_gems.use_gems():
-        actual = torch.ops.aten.adaptive_max_pool2d_backward(grad_output, inp, indices)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "adaptive_max_pool2d_backward", flag_gems.adaptive_max_pool2d_backward
+    )
+    actual = gems_op(grad_output, inp, indices)
 
     utils.gems_assert_close(
         actual, expected, dtype, reduce_dim=output_size[0] * output_size[1]

@@ -74,8 +74,8 @@ def test_cdist_backward():
     bench = CdistBackwardBenchmark(
         op_name="cdist_backward",
         torch_op=torch.ops.aten._cdist_backward,
+        gems_op=flag_gems._cdist_backward,
         # _cdist_backward uses fp32 accumulation; only float32 is numerically stable
         dtypes=[torch.float32],
     )
-    bench.set_gems(flag_gems._cdist_backward)
     bench.run()

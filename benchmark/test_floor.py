@@ -15,13 +15,18 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
 @pytest.mark.floor
 def test_floor():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="floor", torch_op=torch.floor, dtypes=consts.FLOAT_DTYPES
+        op_name="floor",
+        torch_op=torch.floor,
+        gems_op=flag_gems.floor,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 

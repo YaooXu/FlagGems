@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 IM2COL_SHAPES_4D = [(1, 3, 16, 16), (1, 3, 32, 32), (2, 16, 64, 64), (4, 32, 128, 128)]
@@ -27,8 +29,13 @@ IM2COL_CONFIGS = [
 
 
 class Im2colBenchmark(base.Benchmark):
-    def __init__(self, op_name, torch_op, dtypes):
-        super().__init__(op_name=op_name, torch_op=torch_op, dtypes=dtypes)
+    def __init__(self, op_name, torch_op, gems_op, dtypes):
+        super().__init__(
+            op_name=op_name,
+            torch_op=torch_op,
+            gems_op=gems_op,
+            dtypes=dtypes,
+        )
 
     def set_shapes(self, shape_file_path=None):
         self.shapes = IM2COL_SHAPES_4D
@@ -79,6 +86,7 @@ def test_im2col():
     bench = Im2colBenchmark(
         op_name="im2col",
         torch_op=torch.ops.aten.im2col,
+        gems_op=flag_gems.im2col,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 # Match the worktree accuracy-test square matrices; LDL requires N x N inputs.
@@ -39,6 +41,7 @@ def test_linalg_ldl_factor_ex():
     bench = LinalgLdlFactorExBenchmark(
         op_name="linalg_ldl_factor_ex",
         torch_op=torch.linalg.ldl_factor_ex,
+        gems_op=flag_gems.ldl_factor_ex,
         case_fn=linalg_ldl_factor_ex_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(
             linalg_ldl_factor_ex_input_fn

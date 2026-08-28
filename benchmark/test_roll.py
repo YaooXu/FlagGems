@@ -53,6 +53,7 @@ def test_roll():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.roll,
+        gems_op=flag_gems.roll,
         dtypes=consts.FLOAT_DTYPES + consts.INT_DTYPES,
     )
     bench.run()

@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Generator
+from typing import Generator  # used by get_case_iter return annotation
 
 import pytest
 import torch
+
+import flag_gems
 
 from . import base, consts
 
@@ -30,12 +32,24 @@ class AdaptiveMaxPool2dBackwardBenchmark(base.Benchmark):
         ]
         self.shape_desc = "N, C, H, W, OUT_H, OUT_W"
 
-    def get_input_iter(self, cur_dtype) -> Generator:
-        for n, c, h, w, out_h, out_w in self.shapes:
-            inp = torch.randn((n, c, h, w), dtype=cur_dtype, device=self.device)
-            output, indices = torch.ops.aten.adaptive_max_pool2d(inp, (out_h, out_w))
-            grad_output = torch.randn_like(output)
-            yield grad_output, inp, indices
+    def get_case_iter(self, dtype) -> Generator:
+        for ordinal, (n, c, h, w, out_h, out_w) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": [n, c, h, w], "output_size": [out_h, out_w]},
+                    builder_args=(n, c, h, w, out_h, out_w),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        n, c, h, w, out_h, out_w = plan.builder_args
+        inp = torch.randn((n, c, h, w), dtype=case.dtype, device=self.device)
+        output, indices = torch.ops.aten.adaptive_max_pool2d(inp, (out_h, out_w))
+        grad_output = torch.randn_like(output)
+        return grad_output, inp, indices
 
 
 @pytest.mark.adaptive_max_pool2d_backward
@@ -43,6 +57,7 @@ def test_adaptive_max_pool2d_backward():
     bench = AdaptiveMaxPool2dBackwardBenchmark(
         op_name="adaptive_max_pool2d_backward",
         torch_op=torch.ops.aten.adaptive_max_pool2d_backward,
+        gems_op=flag_gems.adaptive_max_pool2d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

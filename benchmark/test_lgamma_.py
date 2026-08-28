@@ -15,13 +15,18 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
 @pytest.mark.lgamma
 def test_lgamma():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="lgamma", torch_op=torch.lgamma, dtypes=consts.FLOAT_DTYPES
+        op_name="lgamma",
+        torch_op=torch.lgamma,
+        gems_op=flag_gems.lgamma,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
@@ -31,6 +36,7 @@ def test_lgamma_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="lgamma_",
         torch_op=lambda a: a.lgamma_(),
+        gems_op=flag_gems.lgamma_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

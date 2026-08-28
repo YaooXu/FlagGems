@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -39,5 +41,6 @@ def test_new_full():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.Tensor.new_full,
+        gems_op=flag_gems.new_full,
     )
     bench.run()

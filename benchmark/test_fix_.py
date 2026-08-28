@@ -28,6 +28,7 @@ def test_fix_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="fix_",
         torch_op=torch.Tensor.fix_,
+        gems_op=flag_gems.fix_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

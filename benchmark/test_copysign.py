@@ -28,6 +28,7 @@ def test_copysign():
     bench = base.BinaryPointwiseBenchmark(
         op_name="copysign",
         torch_op=torch.copysign,
+        gems_op=flag_gems.copysign,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -17,8 +17,8 @@ def test_le_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2, True)
     ref_out = ref_inp1.le_(ref_inp2)
 
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.le_.Tensor(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("le_", flag_gems.le_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(inp1, ref_inp1, dtype)

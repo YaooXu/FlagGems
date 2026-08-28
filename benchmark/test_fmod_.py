@@ -27,6 +27,8 @@ def test_fmod_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="fmod_",
         torch_op=lambda a, b: a.fmod_(b),
+        gems_op=flag_gems.fmod_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

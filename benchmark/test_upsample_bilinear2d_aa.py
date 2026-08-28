@@ -76,6 +76,7 @@ def test_upsample_bilinear2d_aa():
         ),
         op_name="upsample_bilinear2d_aa",
         torch_op=torch._C._nn._upsample_bilinear2d_aa,
+        gems_op=flag_gems._upsample_bilinear2d_aa,
         dtypes=dtypes,
     )
     bench.run()

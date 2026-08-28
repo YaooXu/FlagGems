@@ -55,58 +55,79 @@ def batchnorm_input_fn(shape, dtype, device):
         yield inp, weight, bias, running_mean, running_var, training, momentum, eps, cudnn_enabled
 
 
+def _batch_norm_backward_input_fn(shape, dtype, device):
+    for forward_args in batchnorm_input_fn(shape, dtype, device):
+        (
+            inp,
+            weight,
+            bias,
+            running_mean,
+            running_var,
+            training,
+            _,
+            eps,
+            _,
+        ) = forward_args
+
+        grad_output = torch.randn_like(inp)
+        channels = weight.shape[0] if weight is not None else inp.shape[1]
+
+        if running_mean is None:
+            running_mean = torch.zeros(channels, dtype=dtype, device=device)
+        if running_var is None:
+            running_var = torch.ones(channels, dtype=dtype, device=device)
+
+        save_mean = torch.randn(channels, dtype=torch.float32, device=device)
+        save_invstd = torch.randn(channels, dtype=torch.float32, device=device)
+        output_mask = [True, weight is not None, bias is not None]
+
+        yield (
+            grad_output,
+            inp,
+            weight,
+            running_mean,
+            running_var,
+            save_mean,
+            save_invstd,
+            training,
+            eps,
+            output_mask,
+        )
+
+
+def _batch_norm_backward_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": list(shape)},
+        params={"running_stats": False},
+        builder_args=(shape, 0),
+    )
+    if base.Config.bench_level == consts.BenchLevel.COMPREHENSIVE:
+        yield base.BenchmarkCasePlan(
+            shape={"input": list(shape)},
+            params={"running_stats": True},
+            builder_args=(shape, 1),
+        )
+
+
+_batch_norm_backward_build_inputs_fn = base.build_inputs_from_generic_input_fn(
+    _batch_norm_backward_input_fn
+)
+
+
 @pytest.mark.batch_norm_backward
 def test_batch_norm_backward():
-    def batch_norm_backward_input_fn(shape, dtype, device):
-        for forward_args in batchnorm_input_fn(shape, dtype, device):
-            (
-                inp,
-                weight,
-                bias,
-                running_mean,
-                running_var,
-                training,
-                _,
-                eps,
-                _,
-            ) = forward_args
-
-            grad_output = torch.randn_like(inp)
-            channels = weight.shape[0] if weight is not None else inp.shape[1]
-
-            if running_mean is None:
-                running_mean = torch.zeros(channels, dtype=dtype, device=device)
-            if running_var is None:
-                running_var = torch.ones(channels, dtype=dtype, device=device)
-
-            save_mean = torch.randn(channels, dtype=torch.float32, device=device)
-            save_invstd = torch.randn(channels, dtype=torch.float32, device=device)
-            output_mask = [True, weight is not None, bias is not None]
-
-            yield (
-                grad_output,
-                inp,
-                weight,
-                running_mean,
-                running_var,
-                save_mean,
-                save_invstd,
-                training,
-                eps,
-                output_mask,
-            )
-
     if flag_gems.vendor_name == "mthreads":
         dtypes = [torch.float32]
     else:
         dtypes = consts.FLOAT_DTYPES
 
     bench = NormBenchmark(
-        input_fn=batch_norm_backward_input_fn,
+        case_fn=_batch_norm_backward_case_fn,
+        build_inputs_fn=_batch_norm_backward_build_inputs_fn,
         op_name="batch_norm_backward",
         torch_op=torch.ops.aten.native_batch_norm_backward,
+        gems_op=flag_gems.batch_norm_backward,
         dtypes=dtypes,
     )
-    bench.set_gems(flag_gems.batch_norm_backward)
-
     bench.run()

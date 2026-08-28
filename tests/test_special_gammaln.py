@@ -33,10 +33,15 @@ def test_special_gammaln_out(shape, dtype):
     ref_out = torch.empty_like(ref_inp)
 
     torch.special.gammaln(ref_inp, out=ref_out)
-    with flag_gems.use_gems():
-        torch.special.gammaln(inp, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_gammaln_out",
+        flag_gems.special_gammaln_out,
+    )
+    res_out = gems_op(inp, out=out)
 
+    utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(out, ref_out, dtype)
+    assert res_out is out
 
 
 @pytest.mark.special_gammaln

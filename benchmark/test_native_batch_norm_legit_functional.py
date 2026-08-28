@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -17,26 +19,41 @@ class NormBenchmark(base.GenericBenchmark):
         ]
 
 
+def _norm_case_fn(shape, dtype):
+    del dtype
+    C = shape[1]
+    yield base.BenchmarkCasePlan(
+        shape={
+            "input": list(shape),
+            "weight": [C],
+            "bias": [C],
+            "running_mean": [C],
+            "running_var": [C],
+        },
+        params={"training": True, "momentum": 0.1, "eps": 1e-5},
+        builder_args=(shape,),
+    )
+
+
+def _norm_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    C = shape[1]
+    inp = torch.randn(shape, dtype=dtype, device=device)
+    weight = torch.randn(C, dtype=dtype, device=device)
+    bias = torch.randn(C, dtype=dtype, device=device)
+    running_mean = torch.zeros(C, dtype=dtype, device=device)
+    running_var = torch.ones(C, dtype=dtype, device=device)
+    return inp, weight, bias, running_mean, running_var, True, 0.1, 1e-5
+
+
 @pytest.mark.native_batch_norm_legit_functional
 def test_native_batch_norm_legit_functional():
-    def native_batch_norm_legit_functional_input_fn(shape, dtype, device):
-        C = shape[1]
-        inp = torch.randn(shape, dtype=dtype, device=device)
-        weight = torch.randn(C, dtype=dtype, device=device)
-        bias = torch.randn(C, dtype=dtype, device=device)
-        running_mean = torch.zeros(C, dtype=dtype, device=device)
-        running_var = torch.ones(C, dtype=dtype, device=device)
-        yield inp, weight, bias, running_mean, running_var, True, 0.1, 1e-5
-
     bench = NormBenchmark(
-        input_fn=native_batch_norm_legit_functional_input_fn,
+        case_fn=_norm_case_fn,
+        build_inputs_fn=_norm_build_inputs_fn,
         op_name="native_batch_norm_legit_functional",
         torch_op=torch.ops.aten._native_batch_norm_legit_functional.default,
+        gems_op=flag_gems._native_batch_norm_legit_functional,
         dtypes=consts.FLOAT_DTYPES,
     )
-    from flag_gems.ops._native_batch_norm_legit_functional import (
-        _native_batch_norm_legit_functional as gems_bn,
-    )
-
-    bench.set_gems(gems_bn)
     bench.run()

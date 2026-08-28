@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Representative 2D reduction shapes for logsumexp benchmarking
@@ -61,6 +63,7 @@ def test_special_logsumexp():
     bench = LogsumexpBenchmark(
         op_name="special_logsumexp",
         torch_op=torch.special.logsumexp,
+        gems_op=flag_gems.special_logsumexp,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

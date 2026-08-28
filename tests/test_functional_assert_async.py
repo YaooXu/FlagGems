@@ -25,10 +25,10 @@ def test_functional_assert_async_pass():
     dep_token = torch.empty(0, dtype=torch.int32, device=flag_gems.device)
 
     # Test: FlagGems implementation
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._functional_assert_async.msg(
-            inp, "assertion failed", dep_token
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "functional_assert_async", flag_gems._functional_assert_async
+    )
+    res_out = gems_op(inp, "assertion failed", dep_token)
 
     # Should return empty tensor with same dtype and device as dep_token
     assert res_out.numel() == 0
@@ -47,11 +47,11 @@ def test_functional_assert_async_fail():
 
     # Device assertions in Triton are asynchronous and may not raise immediately
     # This test is skipped to avoid flaky behavior
-    with flag_gems.use_gems():
-        _ = torch.ops.aten._functional_assert_async.msg(
-            inp, "assertion should fail", dep_token
-        )
-        # The assertion may trigger later during CUDA synchronization
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "functional_assert_async", flag_gems._functional_assert_async
+    )
+    _ = gems_op(inp, "assertion should fail", dep_token)
+    # The assertion may trigger later during CUDA synchronization
 
 
 @pytest.mark.functional_assert_async
@@ -60,10 +60,10 @@ def test_functional_assert_async_float():
     inp = torch.tensor([1.0], dtype=torch.float32, device=flag_gems.device)
     dep_token = torch.empty(0, dtype=torch.float32, device=flag_gems.device)
 
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._functional_assert_async.msg(
-            inp, "assertion failed", dep_token
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "functional_assert_async", flag_gems._functional_assert_async
+    )
+    res_out = gems_op(inp, "assertion failed", dep_token)
 
     assert res_out.numel() == 0
     assert res_out.dtype == dep_token.dtype
@@ -76,8 +76,8 @@ def test_functional_assert_async_multi_element_error():
     inp = torch.tensor([1, 1], dtype=torch.int32, device=flag_gems.device)
     dep_token = torch.empty(0, dtype=torch.int32, device=flag_gems.device)
 
-    with flag_gems.use_gems():
-        with pytest.raises(RuntimeError, match="ambiguous"):
-            torch.ops.aten._functional_assert_async.msg(
-                inp, "assertion failed", dep_token
-            )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "functional_assert_async", flag_gems._functional_assert_async
+    )
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        gems_op(inp, "assertion failed", dep_token)

@@ -111,7 +111,8 @@ def test_asinh_(shape, dtype):
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = ref_inp.asinh_()
-    with flag_gems.use_gems():
-        res_out = inp.asinh_()
+    gems_op = flag_gems.testing.resolve_gems_op("asinh_", flag_gems.asinh_)
+    res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp, ref_inp, dtype)

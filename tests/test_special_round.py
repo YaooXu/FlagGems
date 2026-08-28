@@ -18,8 +18,10 @@ def test_special_round(shape, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.special.round(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.special.round(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_round", flag_gems.special_round
+    )
+    res_out = gems_op(inp)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -37,11 +39,14 @@ def test_special_round_out(shape, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.special.round(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.special.round(inp, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_round_out", flag_gems.special_round_out
+    )
+    res_out = gems_op(inp, out)
 
     utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(out, ref_out)
+    assert res_out is out
 
 
 # Round-half-to-even midpoint tests: verify that ties round to the nearest
@@ -81,8 +86,10 @@ def test_special_round_midpoints():
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.special.round(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.special.round(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_round", flag_gems.special_round
+    )
+    res_out = gems_op(inp)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -108,8 +115,10 @@ def test_special_round_decimals(decimals):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.special.round(ref_inp, decimals=decimals)
-    with flag_gems.use_gems():
-        res_out = torch.special.round(inp, decimals=decimals)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_round", flag_gems.special_round
+    )
+    res_out = gems_op(inp, decimals=decimals)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -130,8 +139,11 @@ def test_special_round_out_decimals(decimals):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.special.round(ref_inp, decimals=decimals)
-    with flag_gems.use_gems():
-        res_out = torch.special.round(inp, decimals=decimals, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_round_out", flag_gems.special_round_out
+    )
+    res_out = gems_op(inp, out, decimals=decimals)
 
     utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(out, ref_out)
+    assert res_out is out

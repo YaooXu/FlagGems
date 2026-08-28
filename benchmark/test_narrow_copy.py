@@ -74,6 +74,7 @@ def test_narrow_copy_perf():
     bench = TensorSelectBenchmark(
         op_name="narrow_copy",
         torch_op=torch.narrow_copy,
+        gems_op=flag_gems.narrow_copy,
         case_fn=narrow_copy_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(narrow_copy_input_fn),
         dtypes=consts.FLOAT_DTYPES,

@@ -45,6 +45,7 @@ def test_concatenate():
     bench = base.GenericBenchmark(
         op_name="concatenate",
         torch_op=torch.concatenate,
+        gems_op=flag_gems.concatenate,
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         dtypes=consts.FLOAT_DTYPES + consts.INT_DTYPES,

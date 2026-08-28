@@ -29,7 +29,7 @@ def test_atanh(shape, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.atanh(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.atanh(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("atanh", flag_gems.atanh)
+    res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

@@ -44,7 +44,7 @@ def _case_fn(shape, dtype):
 def _build_inputs_fn(plan, dtype, device):
     shape, pad = plan.builder_args
     inp = torch.randn(shape, device=device, dtype=dtype)
-    return inp, {"pad": pad, "value": plan.params["value"]}
+    return inp, pad, plan.params["value"]
 
 
 @pytest.mark.constant_pad_nd
@@ -57,6 +57,7 @@ def test_constant_pad_nd():
         build_inputs_fn=_build_inputs_fn,
         op_name="constant_pad_nd",
         torch_op=torch.constant_pad_nd,
+        gems_op=flag_gems.constant_pad_nd,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

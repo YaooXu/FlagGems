@@ -15,13 +15,33 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
+
+
+def _deg2rad_out_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape, "out": shape},
+        params={"out_aliases_input": True},
+        builder_args=(shape,),
+    )
+
+
+def _deg2rad_out_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = base.generate_tensor_input(shape, dtype, device)
+    return inp, {"out": inp}
 
 
 @pytest.mark.deg2rad
 def test_deg2rad():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="deg2rad", torch_op=torch.deg2rad, dtypes=consts.FLOAT_DTYPES
+        op_name="deg2rad",
+        torch_op=torch.deg2rad,
+        gems_op=flag_gems.deg2rad,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
@@ -31,16 +51,21 @@ def test_deg2rad_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="deg2rad_",
         torch_op=lambda x: x.deg2rad_(),
+        gems_op=flag_gems.deg2rad_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()
 
 
 @pytest.mark.deg2rad_out
 def test_deg2rad_out():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="deg2rad_out",
-        torch_op=lambda x: torch.deg2rad(x, out=x),
+        case_fn=_deg2rad_out_case_fn,
+        build_inputs_fn=_deg2rad_out_build_inputs_fn,
+        torch_op=torch.deg2rad,
+        gems_op=flag_gems.deg2rad_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

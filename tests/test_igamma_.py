@@ -16,7 +16,8 @@ def test_igamma_(shape, dtype):
     ref_other = utils.to_reference(other)
 
     ref_out = ref_inp.igamma_(ref_other)
-    with flag_gems.use_gems():
-        res_out = inp.igamma_(other)
+    gems_op = flag_gems.testing.resolve_gems_op("igamma_", flag_gems.igamma_)
+    res_out = gems_op(inp, other)
 
     utils.gems_assert_close(res_out, ref_out, dtype, atol=1e-3)
+    utils.gems_assert_close(inp, ref_inp, dtype, atol=1e-3)

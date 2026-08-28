@@ -44,6 +44,7 @@ def test_feature_dropout():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         op_name="feature_dropout",
         torch_op=torch.feature_dropout,
+        gems_op=flag_gems.feature_dropout,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

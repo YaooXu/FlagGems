@@ -39,3 +39,4 @@ def test_gcd_(shape, dtype):
     res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp1, ref_inp1)

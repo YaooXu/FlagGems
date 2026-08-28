@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 UNBIND_SHAPES = [
@@ -49,6 +51,7 @@ def test_unbind():
     bench = UnbindBenchmark(
         op_name="unbind",
         torch_op=torch.unbind,
+        gems_op=flag_gems.unbind,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

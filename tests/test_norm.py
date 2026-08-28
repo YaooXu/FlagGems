@@ -14,11 +14,6 @@ DIMS_LIST = [0, 1, [0, 1], [1, 0]]
 KEEPDIM_DIMS = list(zip([True, False] * 2, DIMS_LIST))
 
 
-def _norm(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op("norm", flag_gems.norm)
-    return gems_op(*args, **kwargs)
-
-
 @pytest.mark.norm
 @pytest.mark.parametrize("shape", REDUCTION_SHAPES)
 @pytest.mark.parametrize("ord", [2, float("inf"), -float("inf"), 0, 1])
@@ -28,7 +23,8 @@ def test_norm(shape, ord, dtype):
     ref_inp = to_reference(inp, True)
 
     ref_out = torch.norm(ref_inp, ord)
-    res_out = _norm(inp, ord)
+    gems_op = flag_gems.testing.resolve_gems_op("norm", flag_gems.norm)
+    res_out = gems_op(inp, ord)
 
     gems_assert_close(res_out, ref_out, dtype)
 
@@ -41,8 +37,8 @@ def test_norm_scalar(shape, dtype):
     ref_inp = to_reference(inp, True)
 
     ref_out = torch.norm(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.norm(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("norm_scalar", flag_gems.norm_scalar)
+    res_out = gems_op(inp)
 
     gems_assert_close(res_out, ref_out, dtype)
 
@@ -61,7 +57,9 @@ def test_norm_scalaropt_dim(shape, ord, dim, keepdim, dtype):
     ref_inp = to_reference(inp, True)
 
     ref_out = torch.norm(ref_inp, ord, dim, keepdim)
-    with flag_gems.use_gems():
-        res_out = torch.norm(inp, ord, dim, keepdim)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "norm_scalaropt_dim", flag_gems.norm_scalaropt_dim
+    )
+    res_out = gems_op(inp, ord, dim, keepdim)
 
     gems_assert_close(res_out, ref_out, dtype)

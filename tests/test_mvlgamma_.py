@@ -55,9 +55,11 @@ def test_special_multigammaln(shape, dtype, p, caplog):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.special_multigammaln(ref_inp, p)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_multigammaln", flag_gems.special_multigammaln
+    )
     with caplog.at_level("DEBUG", logger="flag_gems.ops.special_multigammaln"):
-        with flag_gems.use_gems():
-            res_out = torch.ops.aten.special_multigammaln(inp, p)
+        res_out = gems_op(inp, p)
 
     assert "GEMS SPECIAL_MULTIGAMMALN" in caplog.text
     # Use relaxed tolerance for float16 due to lgamma precision limitations
@@ -83,3 +85,4 @@ def test_mvlgamma_(shape, dtype, p):
     # Use relaxed tolerance for float16 due to lgamma precision limitations
     atol = 1e-2 if dtype == torch.float16 else 1e-4
     utils.gems_assert_close(res_out, ref_out, dtype, atol=atol)
+    utils.gems_assert_close(inp, ref_inp, dtype, atol=atol)

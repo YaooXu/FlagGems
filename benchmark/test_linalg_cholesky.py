@@ -74,6 +74,7 @@ def test_linalg_cholesky():
     bench = CholeskyBenchmark(
         op_name="linalg_cholesky",
         torch_op=torch.ops.aten.linalg_cholesky,
+        gems_op=flag_gems.linalg_cholesky,
         # Cholesky only supports float32/float64; fp16/bf16 not supported by
         # PyTorch. fp64 is gated on device support (Moore Threads has no fp64).
         dtypes=[torch.float32] + ([torch.float64] if fp64_is_supported else []),

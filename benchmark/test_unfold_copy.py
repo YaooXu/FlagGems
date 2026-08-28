@@ -20,12 +20,6 @@ import flag_gems
 from . import base, consts
 
 
-def unfold_copy_input_fn(config, dtype, device):
-    shape, dim, size, step = config
-    inp = torch.randn(shape, dtype=dtype, device=device)
-    yield inp, dim, size, step
-
-
 @pytest.mark.unfold_copy
 def test_unfold_copy():
     class UnfoldCopyBenchmark(base.Benchmark):
@@ -48,14 +42,28 @@ def test_unfold_copy():
         def set_more_shapes(self):
             return None
 
-        def get_input_iter(self, cur_dtype):
-            for config in self.shapes:
-                yield from unfold_copy_input_fn(config, cur_dtype, self.device)
+        def get_case_iter(self, dtype):
+            for ordinal, (shape, dim, size, step) in enumerate(self.shapes):
+                yield self._case_from_plan(
+                    dtype,
+                    ordinal,
+                    base.BenchmarkCasePlan(
+                        shape={"input": list(shape)},
+                        params={"dim": dim, "size": size, "step": step},
+                        builder_args=(shape, dim, size, step),
+                    ),
+                )
+
+        def build_inputs(self, case):
+            plan = case.builder_args[0]
+            shape, dim, size, step = plan.builder_args
+            inp = torch.randn(shape, dtype=case.dtype, device=self.device)
+            return inp, dim, size, step
 
     bench = UnfoldCopyBenchmark(
         op_name="unfold_copy",
         torch_op=torch.unfold_copy,
+        gems_op=flag_gems.unfold_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems.unfold_copy)
     bench.run()

@@ -216,12 +216,10 @@ def test_upsample_linear1d_backward(
         align_corners,
     )
 
-    with flag_gems.use_gems():
-        res_out = upsample_linear1d_backward_call(
-            res_grad,
-            shape,
-            align_corners,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "upsample_linear1d_backward", flag_gems.upsample_linear1d_backward
+    )
+    res_out = gems_op(res_grad, [out_w], list(shape), align_corners, None)
 
     assert res_out.shape == tuple(shape)
     assert res_out.dtype == res_grad.dtype

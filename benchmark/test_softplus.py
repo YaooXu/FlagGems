@@ -33,12 +33,30 @@ def test_softplus():
     bench.run()
 
 
+def _softplus_backward_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"grad_output": shape, "input": shape},
+        params={"beta": 1.0, "threshold": 20.0},
+        builder_args=(shape,),
+    )
+
+
+def _softplus_backward_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    grad_output = base.generate_tensor_input(shape, dtype, device)
+    inp = base.generate_tensor_input(shape, dtype, device)
+    return grad_output, inp, plan.params["beta"], plan.params["threshold"]
+
+
 @pytest.mark.softplus_backward
 def test_softplus_backward():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="softplus_backward",
-        torch_op=torch.nn.functional.softplus,
+        case_fn=_softplus_backward_case_fn,
+        build_inputs_fn=_softplus_backward_build_inputs_fn,
+        torch_op=torch.ops.aten.softplus_backward,
+        gems_op=flag_gems.softplus_backward,
         dtypes=consts.FLOAT_DTYPES,
-        is_backward=True,
     )
     bench.run()

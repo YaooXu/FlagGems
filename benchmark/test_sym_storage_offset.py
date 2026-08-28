@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Benchmark shapes for sym_storage_offset - covering various tensor dimensionalities
@@ -27,10 +29,23 @@ class SymStorageOffsetBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = SYM_STORAGE_OFFSET_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
-            x = torch.randn(shape, dtype=cur_dtype, device=self.device)
-            yield (x,)
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": list(shape)},
+                    params={},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        return (x,)
 
 
 @pytest.mark.sym_storage_offset
@@ -38,6 +53,7 @@ def test_sym_storage_offset():
     bench = SymStorageOffsetBenchmark(
         op_name="sym_storage_offset",
         torch_op=torch.ops.aten.sym_storage_offset,
+        gems_op=flag_gems.sym_storage_offset,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

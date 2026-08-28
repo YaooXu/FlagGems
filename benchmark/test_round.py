@@ -39,6 +39,7 @@ def test_round_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="round_",
         torch_op=torch.round_,
+        gems_op=flag_gems.round_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )
@@ -53,6 +54,7 @@ def test_round_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="round_out",
         torch_op=torch.round,
+        gems_op=flag_gems.round_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

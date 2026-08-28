@@ -36,11 +36,24 @@ class LinalgLdlSolveBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = LDL_SOLVE_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
             n, k = shape
-            LD, pivots, B = _make_ldl_inputs(n, k, cur_dtype, self.device)
-            yield LD, pivots, B
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"n": n, "k": k},
+                    params={},
+                    builder_args=(n, k),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        n, k = plan.builder_args
+        LD, pivots, B = _make_ldl_inputs(n, k, case.dtype, self.device)
+        return LD, pivots, B
 
 
 @pytest.mark.linalg_ldl_solve
@@ -48,6 +61,7 @@ def test_linalg_ldl_solve():
     bench = LinalgLdlSolveBenchmark(
         op_name="linalg_ldl_solve",
         torch_op=torch.linalg.ldl_solve,
+        gems_op=flag_gems.linalg_ldl_solve,
         dtypes=LDL_SOLVE_DTYPES,
     )
     bench.run()

@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -109,6 +111,7 @@ def test_median():
     bench = MedianNoDimBenchmark(
         op_name="median",
         torch_op=torch.median,
+        gems_op=flag_gems.median,
         dtypes=consts.FLOAT_DTYPES + consts.INT_DTYPES,
     )
     bench.run()

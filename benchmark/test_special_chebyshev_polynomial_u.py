@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -31,5 +33,6 @@ def test_special_chebyshev_polynomial_u():
         # torch.special.chebyshev_polynomial_u only supports float32 on CPU/CUDA
         dtypes=[torch.float32],
         torch_op=torch.special.chebyshev_polynomial_u,
+        gems_op=flag_gems.special_chebyshev_polynomial_u,
     )
     bench.run()

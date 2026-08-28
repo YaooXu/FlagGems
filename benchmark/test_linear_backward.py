@@ -32,18 +32,6 @@ class LinearBackwardBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = LINEAR_BACKWARD_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for batch, in_features in self.shapes:
-            out_features = in_features * 2  # out_features = 2 * in_features
-            input = torch.randn(batch, in_features, dtype=cur_dtype, device=self.device)
-            weight = torch.randn(
-                out_features, in_features, dtype=cur_dtype, device=self.device
-            )
-            grad_output = torch.randn(
-                batch, out_features, dtype=cur_dtype, device=self.device
-            )
-            yield input, grad_output, weight, (True, True, True)
-
     def get_case_iter(self, dtype):
         for ordinal, (batch, in_features) in enumerate(self.shapes):
             out_features = in_features * 2
@@ -81,8 +69,8 @@ def test_linear_backward():
         op_name="linear_backward",
         # Use flag_gems.linear_backward for both baseline and gems since there's no native PyTorch CUDA impl
         torch_op=flag_gems.linear_backward,
+        gems_op=flag_gems.linear_backward,
         # Keep the worktree benchmark dtype set; this backward benchmark uses only fp32/fp16 core cases.
         dtypes=[torch.float32, torch.float16],
     )
-    bench.set_gems(flag_gems.linear_backward)
     bench.run()

@@ -6,11 +6,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _nextafter(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
-    return gems_op(*args, **kwargs)
-
-
 def _nextafter_(*args, **kwargs):
     gems_op = flag_gems.testing.resolve_gems_op("nextafter_", flag_gems.nextafter_)
     return gems_op(*args, **kwargs)
@@ -26,7 +21,8 @@ def test_nextafter(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = torch.nextafter(ref_inp1, ref_inp2)
-    res_out = _nextafter(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -69,7 +65,8 @@ def test_nextafter_out(shape, dtype):
     ref_out = torch.nextafter(ref_inp1, ref_inp2)
 
     out = torch.empty_like(inp1)
-    res_out = _nextafter(inp1, inp2, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
+    res_out = gems_op(inp1, inp2, out=out)
 
     # in-place contract: the same object is returned and populated
     assert res_out is out
@@ -89,7 +86,8 @@ def test_nextafter_out_none(shape, dtype):
 
     ref_out = torch.nextafter(ref_inp1, ref_inp2)
 
-    res_out = _nextafter(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     # the inputs must not be mutated
@@ -167,7 +165,8 @@ def test_nextafter_edge_values(dtype, inp, other):
     ref_other = utils.to_reference(other_t)
 
     ref_out = torch.nextafter(ref_inp, ref_other)
-    res_out = _nextafter(inp_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
+    res_out = gems_op(inp_t, other_t)
 
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
 
@@ -191,6 +190,7 @@ def test_nextafter_nan(dtype):
         ([normal_val], [nan_val]),
         ([nan_val], [nan_val]),
     ]
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
     for inp_vals, other_vals in cases:
         inp_t = torch.tensor(inp_vals, dtype=dtype, device=device)
         other_t = torch.tensor(other_vals, dtype=dtype, device=device)
@@ -198,7 +198,7 @@ def test_nextafter_nan(dtype):
         ref_other = utils.to_reference(other_t)
 
         ref_out = torch.nextafter(ref_inp, ref_other)
-        res_out = _nextafter(inp_t, other_t)
+        res_out = gems_op(inp_t, other_t)
 
         # All outputs must be NaN
         assert torch.isnan(ref_out).all()
@@ -224,6 +224,7 @@ def test_nextafter_infinity(dtype):
         (finfo.max, float("inf")),
         (-finfo.max, float("-inf")),
     ]
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
     for inp, other in cases:
         inp_t = torch.tensor([inp], dtype=dtype, device=device)
         other_t = torch.tensor([other], dtype=dtype, device=device)
@@ -231,7 +232,7 @@ def test_nextafter_infinity(dtype):
         ref_other = utils.to_reference(other_t)
 
         ref_out = torch.nextafter(ref_inp, ref_other)
-        res_out = _nextafter(inp_t, other_t)
+        res_out = gems_op(inp_t, other_t)
 
         utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
 
@@ -251,11 +252,12 @@ def test_nextafter_small_values(dtype):
         [-0.0, -finfo.tiny, -finfo.smallest_normal], dtype=dtype, device=device
     )
 
+    gems_op = flag_gems.testing.resolve_gems_op("nextafter", flag_gems.nextafter)
     for inp_t, other_t in [(pos, neg), (neg, pos)]:
         ref_inp = utils.to_reference(inp_t)
         ref_other = utils.to_reference(other_t)
 
         ref_out = torch.nextafter(ref_inp, ref_other)
-        res_out = _nextafter(inp_t, other_t)
+        res_out = gems_op(inp_t, other_t)
 
         utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)

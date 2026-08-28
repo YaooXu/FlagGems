@@ -54,31 +54,6 @@ def torch_cudnn_attention(
     )
 
 
-def gems_cudnn_attention(
-    query,
-    key,
-    value,
-    attn_bias=None,
-    compute_log_sumexp=True,
-    dropout_p=0.0,
-    is_causal=False,
-    return_debug_mask=False,
-    scale=None,
-):
-    result = flag_gems.ops._scaled_dot_product_cudnn_attention(
-        query,
-        key,
-        value,
-        attn_bias=attn_bias,
-        compute_log_sumexp=compute_log_sumexp,
-        dropout_p=dropout_p,
-        is_causal=is_causal,
-        return_debug_mask=return_debug_mask,
-        scale=scale,
-    )
-    return result[0]  # Return only the output tensor
-
-
 @pytest.mark.scaled_dot_product_cudnn_attention
 @pytest.mark.skipif(
     flag_gems.device != "cuda",
@@ -88,19 +63,42 @@ def gems_cudnn_attention(
 def test_scaled_dot_product_cudnn_attention(is_causal):
     """Benchmark for _scaled_dot_product_cudnn_attention."""
 
-    def scaled_dot_product_cudnn_attention_kwargs(shape, dtype, device):
+    def _case_fn(shape, dtype):
+        del dtype
+        head_size = shape[-1]
+        scale = 1.0 / (head_size**0.5)
+        yield base.BenchmarkCasePlan(
+            shape={"query": shape, "key": shape, "value": shape},
+            params={"is_causal": is_causal, "scale": scale},
+            builder_args=(shape, scale),
+        )
+
+    def _build_inputs_fn(plan, dtype, device):
+        shape = plan.builder_args[0]
+        scale = plan.builder_args[1]
         query = torch.randn(shape, device=device, dtype=dtype)
         key = torch.randn(shape, device=device, dtype=dtype)
         value = torch.randn(shape, device=device, dtype=dtype)
-        head_size = shape[-1]
-        scale = 1.0 / (head_size**0.5)
-        yield query, key, value, None, True, 0.0, is_causal, False, scale
+        return (
+            query,
+            key,
+            value,
+            {
+                "attn_bias": None,
+                "compute_log_sumexp": True,
+                "dropout_p": 0.0,
+                "is_causal": plan.params["is_causal"],
+                "return_debug_mask": False,
+                "scale": scale,
+            },
+        )
 
     bench = AttentionBenchmark(
         op_name="scaled_dot_product_cudnn_attention",
-        input_fn=scaled_dot_product_cudnn_attention_kwargs,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         torch_op=torch_cudnn_attention,
-        gems_op=gems_cudnn_attention,
+        gems_op=flag_gems._scaled_dot_product_cudnn_attention,
         dtypes=CUDNN_ATTENTION_DTYPES,
     )
     bench.run()

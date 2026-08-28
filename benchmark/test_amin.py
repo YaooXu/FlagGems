@@ -26,6 +26,7 @@ def test_amin(dtype):
     bench = base.UnaryReductionBenchmark(
         op_name="amin",
         torch_op=torch.amin,
+        gems_op=flag_gems.amin,
         dtypes=[dtype],
     )
     bench.run()

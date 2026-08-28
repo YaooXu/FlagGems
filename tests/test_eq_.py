@@ -31,8 +31,8 @@ def test_eq_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2, True)
     ref_out = ref_inp1.eq_(ref_inp2)
 
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.eq_.Tensor(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("eq_", flag_gems.eq_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(inp1, ref_inp1, dtype)

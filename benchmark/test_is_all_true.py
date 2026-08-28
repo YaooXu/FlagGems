@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from flag_gems.utils import shape_utils
 
 from . import base, consts
@@ -73,6 +75,7 @@ def test_is_all_true():
     bench = IsAllTrueBenchmark(
         op_name="is_all_true",
         torch_op=torch._is_all_true,
+        gems_op=flag_gems._is_all_true,
         dtypes=consts.BOOL_DTYPES,
     )
     bench.run()

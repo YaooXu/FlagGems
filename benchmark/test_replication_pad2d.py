@@ -15,13 +15,9 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
-
-
-def _input_fn(config, dtype, device):
-    shape, padding = config
-    x = torch.randn(shape, dtype=dtype, device=device)
-    yield x, list(padding)
 
 
 def _input_fn_out(config, dtype, device):
@@ -50,9 +46,23 @@ class ReplicationPad2dBenchmark(base.Benchmark):
     def set_more_shapes(self):
         return None
 
-    def get_input_iter(self, cur_dtype):
-        for config in self.shapes:
-            yield from _input_fn(config, cur_dtype, self.device)
+    def get_case_iter(self, dtype):
+        for ordinal, (shape, padding) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": list(shape)},
+                    params={"padding": list(padding)},
+                    builder_args=(shape, padding),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape, padding = plan.builder_args
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        return x, list(padding)
 
 
 class ReplicationPad2dOutBenchmark(base.Benchmark):
@@ -79,6 +89,7 @@ def test_replication_pad2d():
     bench = ReplicationPad2dBenchmark(
         op_name="replication_pad2d",
         torch_op=torch.ops.aten.replication_pad2d,
+        gems_op=flag_gems.replication_pad2d,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

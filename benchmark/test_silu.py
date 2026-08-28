@@ -80,6 +80,7 @@ def test_silu_backward():
     bench = SiluBackwardBenchmark(
         op_name="silu_backward",
         torch_op=torch.ops.aten.silu_backward,
+        gems_op=flag_gems.silu_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

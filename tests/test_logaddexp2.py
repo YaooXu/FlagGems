@@ -50,10 +50,14 @@ def test_logaddexp2_out(shape, dtype):
     ref_out = torch.ops.aten.logaddexp2.out(ref_x, ref_y, out=ref_out_buf)
 
     res_out_buf = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.logaddexp2.out(x, y, out=res_out_buf)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "logaddexp2_out", flag_gems.logaddexp2_out
+    )
+    res_out = gems_op(x, y, out=res_out_buf)
 
+    assert res_out is res_out_buf
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(res_out_buf, ref_out_buf, dtype)
 
 
 @pytest.mark.logaddexp2

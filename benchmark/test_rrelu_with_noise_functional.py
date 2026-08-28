@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -64,6 +66,7 @@ def test_rrelu_with_noise_functional():
     bench = RreluWithNoiseFunctionalBenchmark(
         op_name="rrelu_with_noise_functional",
         torch_op=torch.ops.aten.rrelu_with_noise_functional,
+        gems_op=flag_gems.rrelu_with_noise_functional,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

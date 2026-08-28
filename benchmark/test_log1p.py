@@ -15,13 +15,18 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
 @pytest.mark.log1p
 def test_log1p():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="log1p", torch_op=torch.log1p, dtypes=consts.FLOAT_DTYPES
+        op_name="log1p",
+        torch_op=torch.log1p,
+        gems_op=flag_gems.log1p,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 

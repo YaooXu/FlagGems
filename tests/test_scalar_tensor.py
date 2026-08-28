@@ -33,7 +33,9 @@ def test_scalar_tensor(dtype, fill_value):
         fill_value, dtype=dtype, device="cpu" if cfg.TO_CPU else device
     )
 
-    with flag_gems.use_gems():
-        res_out = torch.scalar_tensor(fill_value, dtype=dtype, device=flag_gems.device)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "scalar_tensor", flag_gems.scalar_tensor
+    )
+    res_out = gems_op(fill_value, dtype=dtype, device=flag_gems.device)
 
     utils.gems_assert_equal(res_out, ref_out)

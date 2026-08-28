@@ -53,16 +53,15 @@ def _make_sequence(shape, dtype):
     return values.to(dtype)
 
 
-def _assert_tril_inplace_matches_reference(inp, diagonal):
+def _tril_inplace_expectations(inp, diagonal):
     ref_inp = utils.to_reference(inp.clone())
     ref_inp.tril_(diagonal)
+    return ref_inp, inp.stride(), inp.data_ptr()
 
-    original_stride = inp.stride()
-    original_data_ptr = inp.data_ptr()
 
-    with flag_gems.use_gems():
-        res = inp.tril_(diagonal)
-
+def _assert_tril_inplace_result(
+    inp, ref_inp, res, original_stride, original_data_ptr
+):
     utils.gems_assert_equal(inp, ref_inp)
     assert res is inp
     assert inp.data_ptr() == original_data_ptr
@@ -386,7 +385,14 @@ def test_tril_out_strided_dispatch_guards():
 )
 def test_tril_inplace(shape, diagonal, dtype):
     inp = _make_tril_input(shape, dtype)
-    _assert_tril_inplace_matches_reference(inp, diagonal)
+    ref_inp, original_stride, original_data_ptr = _tril_inplace_expectations(
+        inp, diagonal
+    )
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
+    _assert_tril_inplace_result(
+        inp, ref_inp, res, original_stride, original_data_ptr
+    )
 
 
 @pytest.mark.tril_
@@ -397,7 +403,14 @@ def test_tril_inplace(shape, diagonal, dtype):
 )
 def test_tril_inplace_noncontiguous(shape, diagonal, dtype):
     inp = _make_tril_input(shape, dtype).transpose(-2, -1)
-    _assert_tril_inplace_matches_reference(inp, diagonal)
+    ref_inp, original_stride, original_data_ptr = _tril_inplace_expectations(
+        inp, diagonal
+    )
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
+    _assert_tril_inplace_result(
+        inp, ref_inp, res, original_stride, original_data_ptr
+    )
 
 
 @pytest.mark.tril_
@@ -409,7 +422,14 @@ def test_tril_inplace_noncontiguous(shape, diagonal, dtype):
 def test_tril_inplace_strided_batched_view(diagonal, dtype):
     base = _make_sequence((2, 8, 10), dtype)
     inp = base[:, ::2, 1::2]
-    _assert_tril_inplace_matches_reference(inp, diagonal)
+    ref_inp, original_stride, original_data_ptr = _tril_inplace_expectations(
+        inp, diagonal
+    )
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
+    _assert_tril_inplace_result(
+        inp, ref_inp, res, original_stride, original_data_ptr
+    )
 
 
 @pytest.mark.tril_
@@ -429,8 +449,8 @@ def test_tril_inplace_expanded_view(diagonal, dtype):
 
     original_stride = inp.stride()
     original_data_ptr = inp.data_ptr()
-    with flag_gems.use_gems():
-        res = inp.tril_(diagonal)
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
 
     utils.gems_assert_equal(inp, ref)
     assert res is inp
@@ -455,8 +475,8 @@ def test_tril_inplace_overlapping_as_strided_view(diagonal, dtype):
 
     original_stride = inp.stride()
     original_data_ptr = inp.data_ptr()
-    with flag_gems.use_gems():
-        res = inp.tril_(diagonal)
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
 
     utils.gems_assert_equal(inp, ref)
     assert res is inp
@@ -491,7 +511,14 @@ def test_tril_empty(shape, dtype):
 )
 def test_tril_inplace_empty(shape, dtype):
     inp = _make_tril_input(shape, dtype)
-    _assert_tril_inplace_matches_reference(inp, -1)
+    ref_inp, original_stride, original_data_ptr = _tril_inplace_expectations(
+        inp, -1
+    )
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, -1)
+    _assert_tril_inplace_result(
+        inp, ref_inp, res, original_stride, original_data_ptr
+    )
 
 
 @pytest.mark.tril_
@@ -502,7 +529,14 @@ def test_tril_inplace_empty(shape, dtype):
 )
 def test_tril_inplace_extreme_diagonal(diagonal, dtype):
     inp = _make_tril_input((2, 5, 7), dtype)
-    _assert_tril_inplace_matches_reference(inp, diagonal)
+    ref_inp, original_stride, original_data_ptr = _tril_inplace_expectations(
+        inp, diagonal
+    )
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    res = gems_op(inp, diagonal)
+    _assert_tril_inplace_result(
+        inp, ref_inp, res, original_stride, original_data_ptr
+    )
 
 
 @pytest.mark.tril
@@ -528,10 +562,8 @@ def test_tril_invalid_rank():
 def test_tril_inplace_invalid_rank():
     inp = torch.tensor(1.0, device=flag_gems.device)
 
-    with (
-        flag_gems.use_gems(),
-        pytest.raises(
-            RuntimeError, match="tril: input tensor must have at least 2 dimensions"
-        ),
+    gems_op = flag_gems.testing.resolve_gems_op("tril_", flag_gems.tril_)
+    with pytest.raises(
+        RuntimeError, match="tril: input tensor must have at least 2 dimensions"
     ):
-        inp.tril_()
+        gems_op(inp)

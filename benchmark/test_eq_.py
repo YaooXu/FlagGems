@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -28,6 +30,7 @@ def test_eq_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="eq_",
         torch_op=lambda a, b: torch.ops.aten.eq_.Tensor(a, b),
+        gems_op=flag_gems.eq_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

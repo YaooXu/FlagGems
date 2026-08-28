@@ -30,10 +30,11 @@ def test_multiply_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2, True)
 
     ref_out = ref_inp1.multiply_(ref_inp2)
-    with flag_gems.use_gems():
-        res_out = inp1.multiply_(inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("multiply_", flag_gems.multiply_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp1, ref_inp1, dtype)
 
 
 @pytest.mark.multiply_
@@ -46,7 +47,8 @@ def test_multiply_tensor_scalar_(shape, scalar, dtype):
     ref_inp1 = utils.to_reference(inp1.clone(), True)
 
     ref_out = ref_inp1.multiply_(inp2)
-    with flag_gems.use_gems():
-        res_out = inp1.multiply_(inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("multiply_", flag_gems.multiply_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp1, ref_inp1, dtype)

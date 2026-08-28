@@ -39,6 +39,7 @@ def test_i0_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="i0_",
         torch_op=torch.Tensor.i0_,
+        gems_op=flag_gems.i0_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

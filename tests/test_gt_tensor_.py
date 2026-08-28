@@ -31,7 +31,8 @@ def test_gt_tensor_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = ref_inp1.gt_(ref_inp2)
-    with flag_gems.use_gems():
-        res_out = inp1.gt_(inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("gt_tensor_", flag_gems.gt_tensor_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp1, ref_inp1)

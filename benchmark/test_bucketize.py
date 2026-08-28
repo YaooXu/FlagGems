@@ -46,6 +46,7 @@ def test_bucketize_perf():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.bucketize,
+        gems_op=flag_gems.bucketize,
         dtypes=dtypes,
     )
     bench.run()

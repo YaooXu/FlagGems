@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -60,6 +62,7 @@ def test_broadcast_to():
     benchmark = BroadcastToBenchmark(
         op_name="broadcast_to",
         torch_op=torch.broadcast_to,
+        gems_op=flag_gems.broadcast_to,
         dtypes=consts.FLOAT_DTYPES,
     )
     benchmark.run()

@@ -67,10 +67,11 @@ def test_value_selecting_reduction_backward(grad_shape, sizes, dim, keepdim, dty
     ref_out = torch.ops.aten.value_selecting_reduction_backward(
         ref_grad, dim, ref_indices, list(sizes), keepdim
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.value_selecting_reduction_backward(
-            grad, dim, indices, list(sizes), keepdim
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "value_selecting_reduction_backward",
+        flag_gems.value_selecting_reduction_backward,
+    )
+    res_out = gems_op(grad, dim, indices, list(sizes), keepdim)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -91,10 +92,11 @@ def test_value_selecting_reduction_backward_max_dim(dtype):
     ref_out = torch.ops.aten.value_selecting_reduction_backward(
         ref_grad_output, 1, ref_indices, list(ref_inp.shape), False
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.value_selecting_reduction_backward(
-            grad_output, 1, indices, list(inp.shape), False
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "value_selecting_reduction_backward",
+        flag_gems.value_selecting_reduction_backward,
+    )
+    res_out = gems_op(grad_output, 1, indices, list(inp.shape), False)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -115,9 +117,10 @@ def test_value_selecting_reduction_backward_min_dim(dtype):
     ref_out = torch.ops.aten.value_selecting_reduction_backward(
         ref_grad_output, 1, ref_indices, list(ref_inp.shape), False
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.value_selecting_reduction_backward(
-            grad_output, 1, indices, list(inp.shape), False
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "value_selecting_reduction_backward",
+        flag_gems.value_selecting_reduction_backward,
+    )
+    res_out = gems_op(grad_output, 1, indices, list(inp.shape), False)
 
     utils.gems_assert_equal(res_out, ref_out)

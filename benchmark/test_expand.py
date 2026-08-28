@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes with at least one dimension of size 1 for valid expand targets.
@@ -78,6 +80,7 @@ def test_expand():
     bench = ExpandBenchmark(
         op_name="expand",
         torch_op=torch.ops.aten.expand,
+        gems_op=flag_gems.expand,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -88,6 +91,7 @@ def test_expand_():
     bench = ExpandBenchmark(
         op_name="expand_",
         torch_op=torch.Tensor.expand,
+        gems_op=flag_gems.expand_,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -49,9 +49,26 @@ class UpsampleBilinear2dAaBackwardBenchmark(base.Benchmark):
         ]
 
     def get_input_iter(self, dtype):
-        for N, C, Hi, Wi, Ho, Wo, ac, _label in self._cfgs:
-            grad = torch.randn([N, C, Ho, Wo], device=self.device, dtype=dtype)
-            yield grad, [Ho, Wo], [N, C, Hi, Wi], ac, None, None
+        for case in self.get_case_iter(dtype):
+            yield self.build_inputs(case)
+
+    def get_case_iter(self, dtype):
+        for ordinal, (N, C, Hi, Wi, Ho, Wo, ac, label) in enumerate(self._cfgs):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"grad": [N, C, Ho, Wo]},
+                    params={"align_corners": ac, "label": label},
+                    builder_args=(N, C, Hi, Wi, Ho, Wo, ac),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        N, C, Hi, Wi, Ho, Wo, ac = plan.builder_args
+        grad = torch.randn([N, C, Ho, Wo], device=self.device, dtype=case.dtype)
+        return grad, [Ho, Wo], [N, C, Hi, Wi], ac, None, None
 
     def get_tflops(self, op, *args, **kwargs):
         grad = args[0]
@@ -66,6 +83,7 @@ def test_upsample_bilinear2d_aa_backward():
     bench = UpsampleBilinear2dAaBackwardBenchmark(
         op_name="upsample_bilinear2d_aa_backward",
         torch_op=torch.ops.aten._upsample_bilinear2d_aa_backward,
+        gems_op=flag_gems._upsample_bilinear2d_aa_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
 

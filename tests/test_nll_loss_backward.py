@@ -32,13 +32,6 @@ else:
 random.seed(time.time() // 100)
 
 
-def _nll_loss_backward(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "nll_loss_backward", flag_gems.nll_loss_backward
-    )
-    return gems_op(*args, **kwargs)
-
-
 @pytest.mark.nll_loss_backward
 @pytest.mark.parametrize("reduction", ["mean", "none", "sum"])
 @pytest.mark.parametrize("weight", [True, False])
@@ -85,7 +78,10 @@ def test_nll_loss_backward(shape, dtype, ignore_index, reduction, weight):
     else:
         total_weight = weight[target[valid_target]].sum()
     reduction_value = {"none": 0, "mean": 1, "sum": 2}[reduction]
-    res_in_grad = _nll_loss_backward(
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "nll_loss_backward", flag_gems.nll_loss_backward
+    )
+    res_in_grad = gems_op(
         out_grad,
         inp,
         target,

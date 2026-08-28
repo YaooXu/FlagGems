@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -89,7 +91,9 @@ def test_amp_foreach_non_finite_check_and_unscale_():
     bench = AmpForeachNonFiniteCheckAndUnscaleBenchmark(
         op_name="amp_foreach_non_finite_check_and_unscale_",
         torch_op=torch._amp_foreach_non_finite_check_and_unscale_,
+        gems_op=flag_gems._amp_foreach_non_finite_check_and_unscale_,
         # bfloat16 is not supported by the CUDA kernel for this operator
         dtypes=[torch.float16, torch.float32],
+        is_inplace=True,
     )
     bench.run()

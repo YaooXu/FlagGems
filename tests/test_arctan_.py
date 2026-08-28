@@ -33,6 +33,7 @@ def test_arctan(shape, dtype):
 
     ref_out = ref_out.to(res_out.dtype)
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp, ref_inp, dtype)
 
 
 @pytest.mark.arctan_

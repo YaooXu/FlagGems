@@ -194,8 +194,10 @@ def test_scatter_add(src_shape, inp_shape, dim, dtype):
     ref_index = utils.to_reference(index)
     ref_src = utils.to_reference(src, upcast=True)
     ref_out = torch.scatter_add(ref_inp, dim, ref_index, ref_src)
-    with flag_gems.use_gems():
-        res_out = torch.scatter_add(inp, dim, index, src)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "scatter_add", flag_gems.scatter_add
+    )
+    res_out = gems_op(inp, dim, index, src)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -235,8 +237,10 @@ def test_scatter_add_2d(inp_shape, dim, dtype):
     ref_index = utils.to_reference(index)
     ref_src = utils.to_reference(src, upcast=True)
     ref_out = torch.scatter_add(ref_inp, dim, ref_index, ref_src)
-    with flag_gems.use_gems():
-        res_out = torch.scatter_add(inp, dim, index, src)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "scatter_add", flag_gems.scatter_add
+    )
+    res_out = gems_op(inp, dim, index, src)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 

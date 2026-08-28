@@ -25,11 +25,21 @@ class ScaledDotProductAttentionMathBenchmark(base.GenericBenchmark):
         ]
 
 
-def scaled_dot_product_attention_math_input_fn(shape, dtype, device):
+def _sdpa_math_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"query": shape, "key": shape, "value": shape},
+        params={},
+        builder_args=(shape,),
+    )
+
+
+def _sdpa_math_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
     query = torch.randn(shape, dtype=dtype, device=device)
     key = torch.randn(shape, dtype=dtype, device=device)
     value = torch.randn(shape, dtype=dtype, device=device)
-    yield query, key, value
+    return query, key, value
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
@@ -38,9 +48,10 @@ def scaled_dot_product_attention_math_input_fn(shape, dtype, device):
 def test_scaled_dot_product_attention_math():
     bench = ScaledDotProductAttentionMathBenchmark(
         op_name="scaled_dot_product_attention_math",
-        input_fn=scaled_dot_product_attention_math_input_fn,
+        case_fn=_sdpa_math_case_fn,
+        build_inputs_fn=_sdpa_math_build_inputs_fn,
         torch_op=sdpa_math,
+        gems_op=flag_gems._scaled_dot_product_attention_math,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems._scaled_dot_product_attention_math)
     bench.run()

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_arctan():
     bench = base.UnaryPointwiseBenchmark(
         op_name="arctan",
         torch_op=torch.arctan,
+        gems_op=flag_gems.arctan,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_arctan_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="arctan_",
         torch_op=torch.arctan_,
+        gems_op=flag_gems.arctan_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

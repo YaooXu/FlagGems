@@ -15,24 +15,66 @@
 import pytest
 import torch
 
-from . import base, consts
+import flag_gems
+
+from . import base, consts, utils
+
+
+def _special_multigammaln_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"p": 5},
+        builder_args=(shape,),
+    )
+
+
+def _special_multigammaln_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    p = plan.params["p"]
+    inp = base.generate_tensor_input(shape, dtype, device)
+    return inp, p
 
 
 @pytest.mark.special_multigammaln
 def test_special_multigammaln():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="special_multigammaln",
-        torch_op=lambda a: torch.special.multigammaln(a, 5),
+        case_fn=_special_multigammaln_case_fn,
+        build_inputs_fn=_special_multigammaln_build_inputs_fn,
+        torch_op=torch.special.multigammaln,
+        gems_op=flag_gems.special_multigammaln,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
+def _mvlgamma_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"p": 5},
+        builder_args=(shape,),
+    )
+
+
+def _mvlgamma_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    p = plan.params["p"]
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    inp = inp.abs() + (p - 1) / 2 + 1.0
+    return inp, p
+
+
 @pytest.mark.mvlgamma_
 def test_mvlgamma_():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="mvlgamma_",
-        torch_op=lambda a: a.mvlgamma_(5),
+        case_fn=_mvlgamma_case_fn,
+        build_inputs_fn=_mvlgamma_build_inputs_fn,
+        torch_op=torch.Tensor.mvlgamma_,
+        gems_op=flag_gems.mvlgamma_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

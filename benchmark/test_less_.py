@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -28,6 +30,7 @@ def test_less_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="less_",
         torch_op=lambda a, b: torch.ops.aten.less_.Tensor(a, b),
+        gems_op=flag_gems.less_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

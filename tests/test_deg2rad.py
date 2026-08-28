@@ -41,10 +41,11 @@ def test_deg2rad_(shape, dtype):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp, True)
 
-    ref_inp.deg2rad_()
+    ref_out = ref_inp.deg2rad_()
     gems_op = flag_gems.testing.resolve_gems_op("deg2rad_", flag_gems.deg2rad_)
-    gems_op(inp)
+    res_out = gems_op(inp)
 
+    utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(inp, ref_inp, dtype)
 
 
@@ -58,8 +59,10 @@ def test_deg2rad_out(shape, dtype):
     ref_out = torch.empty_like(ref_inp)
     torch.deg2rad(ref_inp, out=ref_out)
 
-    res_out = torch.empty_like(inp)
-    with flag_gems.use_gems():
-        torch.deg2rad(inp, out=res_out)
+    out = torch.empty_like(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("deg2rad_out", flag_gems.deg2rad_out)
+    res_out = gems_op(inp, out)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(out, ref_out, dtype)
+    assert res_out is out

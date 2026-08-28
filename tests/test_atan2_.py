@@ -32,8 +32,8 @@ def test_atan2_(shape, dtype):
 
     ref_out = ref_x.atan2_(ref_y)
 
-    with flag_gems.use_gems():
-        res_out = x.atan2_(y)
+    gems_op = flag_gems.testing.resolve_gems_op("atan2_", flag_gems.atan2_)
+    res_out = gems_op(x, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(x, ref_x, dtype)

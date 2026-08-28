@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_hardshrink():
     bench = base.UnaryPointwiseBenchmark(
         op_name="hardshrink",
         torch_op=torch.nn.functional.hardshrink,
+        gems_op=flag_gems.hardshrink,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

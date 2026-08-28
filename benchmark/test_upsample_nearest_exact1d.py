@@ -33,6 +33,25 @@ class UpsampleNearestExact1dBenchmark(base.Benchmark):
             out_size = [shape[-1] * 2]
             yield x, out_size, None
 
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            out_size = [shape[-1] * 2]
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": list(shape)},
+                    params={"out_size": out_size, "scale": None},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        return x, plan.params["out_size"], plan.params["scale"]
+
 
 @pytest.mark.upsample_nearest_exact1d
 @pytest.mark.skipif(
@@ -42,6 +61,7 @@ def test_upsample_nearest_exact1d():
     bench = UpsampleNearestExact1dBenchmark(
         op_name="upsample_nearest_exact1d",
         torch_op=torch.ops.aten._upsample_nearest_exact1d,
+        gems_op=flag_gems._upsample_nearest_exact1d,
         dtypes=consts.FLOAT_DTYPES,
     )
 

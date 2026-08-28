@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -115,6 +117,7 @@ def test_cudnn_convolution():
         input_fn=cudnn_convolution_input_fn,
         op_name="cudnn_convolution",
         torch_op=torch.ops.aten.cudnn_convolution.default,
+        gems_op=flag_gems.cudnn_convolution,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

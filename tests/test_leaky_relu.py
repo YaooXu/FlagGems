@@ -64,10 +64,14 @@ def test_leaky_relu_out(shape, dtype):
     torch.ops.aten.leaky_relu.out(ref_inp, negative_slope=negative_slope, out=ref_out)
 
     out = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    with flag_gems.use_gems():
-        torch.ops.aten.leaky_relu.out(inp, negative_slope=negative_slope, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "leaky_relu_out", flag_gems.leaky_relu_out
+    )
+    res_out = gems_op(inp, negative_slope=negative_slope, out=out)
 
+    utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(out, ref_out, dtype)
+    assert res_out is out
 
 
 @pytest.mark.leaky_relu_backward
@@ -84,9 +88,9 @@ def test_leaky_relu_backward(shape, dtype):
     ref_in_grad = torch.ops.aten.leaky_relu_backward(
         ref_grad, ref_inp, negative_slope, False
     )
-    with flag_gems.use_gems():
-        res_in_grad = torch.ops.aten.leaky_relu_backward(
-            res_grad, res_inp, negative_slope, False
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "leaky_relu_backward", flag_gems.leaky_relu_backward
+    )
+    res_in_grad = gems_op(res_grad, res_inp, negative_slope, False)
 
     utils.gems_assert_close(res_in_grad, ref_in_grad, dtype)

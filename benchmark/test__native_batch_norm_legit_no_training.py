@@ -16,6 +16,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -44,6 +46,22 @@ def native_batch_norm_legit_no_training_input_fn(shape, dtype, device):
     yield inp, weight, bias, running_mean, running_var, momentum, eps
 
 
+def native_batch_norm_legit_no_training_case_fn(shape, dtype):
+    del dtype
+    channels = shape[1]
+    yield base.BenchmarkCasePlan(
+        shape={
+            "input": shape,
+            "weight": (channels,),
+            "bias": (channels,),
+            "running_mean": (channels,),
+            "running_var": (channels,),
+        },
+        params={"momentum": 0.1, "eps": 1e-5},
+        builder_args=(shape, 0),
+    )
+
+
 def torch_native_batch_norm_legit_no_training(
     inp, weight, bias, running_mean, running_var, momentum, eps
 ):
@@ -55,9 +73,13 @@ def torch_native_batch_norm_legit_no_training(
 @pytest.mark.native_batch_norm_legit_no_training
 def test_native_batch_norm_legit_no_training():
     bench = NormBenchmark(
-        input_fn=native_batch_norm_legit_no_training_input_fn,
+        case_fn=native_batch_norm_legit_no_training_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            native_batch_norm_legit_no_training_input_fn
+        ),
         op_name="native_batch_norm_legit_no_training",
         torch_op=torch_native_batch_norm_legit_no_training,
+        gems_op=flag_gems._native_batch_norm_legit_no_training,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

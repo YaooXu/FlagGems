@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_subtract():
     bench = base.BinaryPointwiseBenchmark(
         op_name="subtract",
         torch_op=torch.subtract,
+        gems_op=flag_gems.subtract,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_subtract_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="subtract_",
         torch_op=lambda a, b: a.subtract_(b),
+        gems_op=flag_gems.subtract_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

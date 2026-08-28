@@ -48,6 +48,7 @@ def test_randint():
         build_inputs_fn=randint_build_inputs_fn,
         op_name="randint",
         torch_op=torch.randint,
+        gems_op=flag_gems.randint,
         dtypes=consts.INT_DTYPES,
     )
     bench.run()

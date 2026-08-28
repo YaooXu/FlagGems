@@ -69,19 +69,21 @@ def test_embedding_bag_dense_backward(num_bags, embedding_dim, dtype):
             -1,
         )
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._embedding_bag_dense_backward(
-            grad,
-            indices,
-            offset2bag,
-            bag_size,
-            maximum_indices,
-            num_weights,
-            False,
-            0,
-            None,
-            -1,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "embedding_bag_dense_backward", flag_gems._embedding_bag_dense_backward
+    )
+    res_out = gems_op(
+        grad,
+        indices,
+        offset2bag,
+        bag_size,
+        maximum_indices,
+        num_weights,
+        False,
+        0,
+        None,
+        -1,
+    )
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -150,19 +152,21 @@ def test_embedding_bag_dense_backward_with_weights(num_bags, embedding_dim, dtyp
             -1,
         )
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._embedding_bag_dense_backward(
-            grad,
-            indices,
-            offset2bag,
-            bag_size,
-            maximum_indices,
-            num_weights,
-            False,
-            0,
-            per_sample_weights,
-            -1,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "embedding_bag_dense_backward", flag_gems._embedding_bag_dense_backward
+    )
+    res_out = gems_op(
+        grad,
+        indices,
+        offset2bag,
+        bag_size,
+        maximum_indices,
+        num_weights,
+        False,
+        0,
+        per_sample_weights,
+        -1,
+    )
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -230,18 +234,20 @@ def test_embedding_bag_dense_backward_mode_sum(num_bags, embedding_dim, dtype):
             -1,
         )
     )
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._embedding_bag_dense_backward(
-            grad,
-            indices,
-            offset2bag,
-            bag_size,
-            maximum_indices,
-            num_weights,
-            False,
-            1,
-            None,
-            -1,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "embedding_bag_dense_backward", flag_gems._embedding_bag_dense_backward
+    )
+    res_out = gems_op(
+        grad,
+        indices,
+        offset2bag,
+        bag_size,
+        maximum_indices,
+        num_weights,
+        False,
+        1,
+        None,
+        -1,
+    )
 
     utils.gems_assert_close(res_out, ref_out, dtype)

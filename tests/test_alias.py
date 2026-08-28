@@ -18,8 +18,8 @@ def test_alias(shape, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.alias.default(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.alias.default(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("alias", flag_gems.alias)
+    res_out = gems_op(inp)
 
     # Values must match exactly (same storage)
     utils.gems_assert_close(utils.to_reference(res_out), ref_out, dtype)

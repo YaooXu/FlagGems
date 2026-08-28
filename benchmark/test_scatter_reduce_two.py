@@ -63,12 +63,13 @@ def test_scatter_reduce_two_inplace_sum():
     bench = ScatterReduceBenchmark(
         op_name="scatter_reduce_",
         torch_op=torch.Tensor.scatter_reduce_,
+        gems_op=flag_gems.scatter_reduce_,
         case_fn=_case_fn_factory("sum"),
         build_inputs_fn=base.build_inputs_from_generic_input_fn(
             _input_fn_factory("sum")
         ),
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()
 
@@ -81,12 +82,13 @@ def test_scatter_reduce_two_inplace_amax():
     bench = ScatterReduceBenchmark(
         op_name="scatter_reduce_",
         torch_op=torch.Tensor.scatter_reduce_,
+        gems_op=flag_gems.scatter_reduce_,
         case_fn=_case_fn_factory("amax"),
         build_inputs_fn=base.build_inputs_from_generic_input_fn(
             _input_fn_factory("amax")
         ),
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()
 
@@ -99,12 +101,13 @@ def test_scatter_reduce_two_inplace_amin():
     bench = ScatterReduceBenchmark(
         op_name="scatter_reduce_",
         torch_op=torch.Tensor.scatter_reduce_,
+        gems_op=flag_gems.scatter_reduce_,
         case_fn=_case_fn_factory("amin"),
         build_inputs_fn=base.build_inputs_from_generic_input_fn(
             _input_fn_factory("amin")
         ),
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()
 
@@ -117,11 +120,12 @@ def test_scatter_reduce_two_inplace_mean():
     bench = ScatterReduceBenchmark(
         op_name="scatter_reduce_",
         torch_op=torch.Tensor.scatter_reduce_,
+        gems_op=flag_gems.scatter_reduce_,
         case_fn=_case_fn_factory("mean"),
         build_inputs_fn=base.build_inputs_from_generic_input_fn(
             _input_fn_factory("mean")
         ),
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()

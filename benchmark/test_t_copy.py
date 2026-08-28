@@ -17,15 +17,30 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
 class TCopyBenchmark(base.Benchmark):
-    def get_input_iter(self, dtype) -> Generator:
-        for shape in self.shapes:
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
             if len(shape) == 2:
-                inp = utils.generate_tensor_input(shape, dtype, self.device)
-                yield inp,
+                yield self._case_from_plan(
+                    dtype,
+                    ordinal,
+                    base.BenchmarkCasePlan(
+                        shape={"input": list(shape)},
+                        params={},
+                        builder_args=(shape,),
+                    ),
+                )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        inp = utils.generate_tensor_input(shape, case.dtype, self.device)
+        return (inp,)
 
 
 @pytest.mark.t_copy
@@ -33,6 +48,7 @@ def test_t_copy():
     bench = TCopyBenchmark(
         op_name="t_copy",
         torch_op=torch.ops.aten.t_copy,
+        gems_op=flag_gems.t_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

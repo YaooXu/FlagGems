@@ -47,6 +47,7 @@ def test_addcdiv_():
     bench = base.GenericBenchmark(
         op_name="addcdiv_",
         torch_op=torch.Tensor.addcdiv_,
+        gems_op=flag_gems.addcdiv_,
         case_fn=addcdiv__case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(addcdiv__input_fn),
         dtypes=consts.FLOAT_DTYPES,

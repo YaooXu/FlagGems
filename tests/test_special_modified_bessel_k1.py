@@ -18,8 +18,10 @@ def test_special_modified_bessel_k1(shape, dtype):
     ref_inp = utils.to_reference(inp, True)
 
     ref_out = torch.ops.aten.special_modified_bessel_k1(ref_inp.cpu()).to(dtype)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.special_modified_bessel_k1(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_modified_bessel_k1", flag_gems.special_modified_bessel_k1
+    )
+    res_out = gems_op(inp)
 
     # Use relaxed tolerance since approximation has ~4% max error
     utils.gems_assert_close(res_out.cpu(), ref_out, dtype, atol=0.05)
@@ -36,6 +38,10 @@ def test_special_modified_bessel_k1_out(shape, dtype):
     ref_inp = utils.to_reference(inp, True)
     ref_out = torch.ops.aten.special_modified_bessel_k1(ref_inp.cpu()).to(dtype)
     out = torch.empty_like(inp)
-    with flag_gems.use_gems():
-        torch.ops.aten.special_modified_bessel_k1.out(inp, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_modified_bessel_k1_out", flag_gems.special_modified_bessel_k1_out
+    )
+    res_out = gems_op(inp, out=out)
+    utils.gems_assert_close(res_out.cpu(), ref_out, dtype, atol=0.05)
     utils.gems_assert_close(out.cpu(), ref_out, dtype, atol=0.05)
+    assert res_out is out

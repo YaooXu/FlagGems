@@ -20,11 +20,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _lift(A):
-    gems_op = flag_gems.testing.resolve_gems_op("lift", flag_gems.lift)
-    return gems_op(A)
-
-
 @pytest.mark.lift
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -32,7 +27,8 @@ def test_lift(shape, dtype):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     ref_out = torch.ops.aten.lift(ref_inp)
-    res_out = _lift(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("lift", flag_gems.lift)
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, dtype)
 
 
@@ -44,7 +40,9 @@ def test_lift_out(shape, dtype):
     ref_inp = utils.to_reference(inp)
     ref_out = torch.empty_like(ref_inp)
     torch.ops.aten.lift.out(ref_inp, out=ref_out)
-    with flag_gems.use_gems():
-        res_out = torch.empty_like(inp)
-        torch.ops.aten.lift.out(inp, out=res_out)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    out = torch.empty_like(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("lift_out", flag_gems.lift_out)
+    returned = gems_op(inp, out=out)
+    utils.gems_assert_close(returned, ref_out, dtype)
+    utils.gems_assert_close(out, ref_out, dtype)
+    assert returned is out

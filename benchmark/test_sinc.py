@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_sinc():
     bench = base.UnaryPointwiseBenchmark(
         op_name="sinc",
         torch_op=torch.sinc,
+        gems_op=flag_gems.sinc,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_sinc_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="sinc_",
         torch_op=torch.sinc_,
+        gems_op=flag_gems.sinc_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

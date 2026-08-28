@@ -16,6 +16,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -98,6 +100,7 @@ def test_unsafe_masked_index_put_accumulate():
     bench = UnsafeMaskedIndexPutAccumulateBenchmark(
         op_name="unsafe_masked_index_put_accumulate",
         torch_op=torch._unsafe_masked_index_put_accumulate,
+        gems_op=flag_gems._unsafe_masked_index_put_accumulate,
         # This op is covered across the project float dtype set.
         dtypes=[d for d in consts.FLOAT_DTYPES if d != torch.bfloat16],
     )

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -28,17 +30,29 @@ def test_less_equal():
     bench = base.BinaryPointwiseBenchmark(
         op_name="less_equal",
         torch_op=torch.less_equal,
+        gems_op=flag_gems.less_equal,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
+def _scalar_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"scalar": 0},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.less_equal_scalar
 def test_less_equal_scalar():
     bench = base.GenericBenchmark(
-        input_fn=_scalar_input_fn,
         op_name="less_equal_scalar",
+        case_fn=_scalar_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(_scalar_input_fn),
         torch_op=torch.less_equal,
+        gems_op=flag_gems.less_equal_scalar,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

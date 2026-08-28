@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_sinh():
     bench = base.UnaryPointwiseBenchmark(
         op_name="sinh",
         torch_op=torch.sinh,
+        gems_op=flag_gems.sinh,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

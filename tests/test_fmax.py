@@ -20,11 +20,6 @@ import flag_gems
 from . import accuracy_utils as utils
 
 
-def _fmax(a, b):
-    gems_op = flag_gems.testing.resolve_gems_op("fmax", flag_gems.fmax)
-    return gems_op(a, b)
-
-
 @pytest.mark.fmax
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -35,7 +30,8 @@ def test_fmax(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = torch.fmax(ref_inp1, ref_inp2)
-    res_out = _fmax(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("fmax", flag_gems.fmax)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -55,7 +51,8 @@ def test_fmax_with_nan(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = torch.fmax(ref_inp1, ref_inp2)
-    res_out = _fmax(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("fmax", flag_gems.fmax)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
 
@@ -71,8 +68,9 @@ def test_fmax_out(shape, dtype):
 
     ref_out = torch.empty_like(ref_inp1)
     torch.fmax(ref_inp1, ref_inp2, out=ref_out)
-    with flag_gems.use_gems():
-        res_out = torch.empty_like(inp1)
-        torch.fmax(inp1, inp2, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("fmax_out", flag_gems.fmax_out)
+    res_out = torch.empty_like(inp1)
+    returned = gems_op(inp1, inp2, res_out)
 
+    assert returned is res_out
     utils.gems_assert_equal(res_out, ref_out)

@@ -29,8 +29,8 @@ def test_hardshrink(shape, dtype, lambd):
     ref_inp = utils.to_reference(inp, True)
 
     ref_out = torch.ops.aten.hardshrink(ref_inp, lambd)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.hardshrink(inp, lambd)
+    gems_op = flag_gems.testing.resolve_gems_op("hardshrink", flag_gems.hardshrink)
+    res_out = gems_op(inp, lambd)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 

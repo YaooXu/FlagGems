@@ -27,8 +27,10 @@ def test_special_i1e(shape, dtype, caplog):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp, True)
     ref_out = torch.special.i1e(ref_inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_i1e", flag_gems.special_i1e
+    )
     with caplog.at_level("DEBUG", logger="flag_gems.ops.special_i1e"):
-        with flag_gems.use_gems():
-            res_out = torch.special.i1e(inp)
+        res_out = gems_op(inp)
     assert "GEMS SPECIAL_I1E" in caplog.text
     utils.gems_assert_close(res_out, ref_out, dtype)

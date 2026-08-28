@@ -15,14 +15,34 @@
 import pytest
 import torch
 
-from . import base, consts
+import flag_gems
+
+from . import base, consts, utils
+
+
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"p": 5},
+        builder_args=(shape,),
+    )
+
+
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    return inp, plan.params["p"]
 
 
 @pytest.mark.mvlgamma
 def test_mvlgamma():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="mvlgamma",
-        torch_op=lambda a: torch.mvlgamma(a, 5),
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
+        torch_op=torch.mvlgamma,
+        gems_op=flag_gems.mvlgamma,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

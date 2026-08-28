@@ -31,8 +31,8 @@ def test_accuracy_not_equal_(shape, dtype):
     ref_inp2 = utils.to_reference(inp2, True)
     ref_out = ref_inp1.not_equal_(ref_inp2)
 
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.ne_.Tensor(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op("not_equal_", flag_gems.not_equal_)
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(inp1, ref_inp1, dtype)

@@ -15,12 +15,9 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
-
-
-def _input_fn(shape, cur_dtype, device):
-    inp = utils.generate_tensor_input(shape, cur_dtype, device)
-    yield inp,
 
 
 def _case_fn(shape, dtype):
@@ -32,13 +29,20 @@ def _case_fn(shape, dtype):
     )
 
 
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    return inp, plan.params["threshold"], plan.params["value"]
+
+
 @pytest.mark.threshold_
 def test_threshold_():
     bench = base.GenericBenchmark(
         op_name="threshold_",
         case_fn=_case_fn,
-        build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
-        torch_op=lambda x: torch.threshold_(x, 0.0, -1.0),
+        build_inputs_fn=_build_inputs_fn,
+        torch_op=torch.threshold_,
+        gems_op=flag_gems.threshold_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

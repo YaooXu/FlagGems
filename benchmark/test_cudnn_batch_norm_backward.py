@@ -112,9 +112,9 @@ def test_cudnn_batch_norm_backward():
         ),
         op_name="cudnn_batch_norm_backward",
         torch_op=torch.ops.aten.cudnn_batch_norm_backward,
+        gems_op=flag_gems.cudnn_batch_norm_backward,
         # cuDNN cudnn_batch_norm_backward only supports float32,
         # so we hardcode float32 instead of using consts.FLOAT_DTYPES.
         dtypes=[torch.float32],
     )
-    bench.set_gems(flag_gems.cudnn_batch_norm_backward)
     bench.run()

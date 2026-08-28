@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -28,12 +30,23 @@ def _input_fn(shape, cur_dtype, device):
     yield inp,
 
 
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.nan_to_num_
 def test_nan_to_num_():
     bench = base.GenericBenchmark(
         op_name="nan_to_num_",
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=lambda a: a.nan_to_num_(),
+        gems_op=flag_gems.nan_to_num_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

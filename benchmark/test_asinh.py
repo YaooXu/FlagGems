@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -31,6 +33,7 @@ def test_asinh_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="asinh_",
         torch_op=lambda a: a.asinh_(),
+        gems_op=flag_gems.asinh_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

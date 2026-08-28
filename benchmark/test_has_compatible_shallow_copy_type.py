@@ -20,21 +20,34 @@ import flag_gems
 from . import base, consts
 
 
+def _has_compatible_shallow_copy_type_input_fn(shape, dtype, device):
+    # Metadata-only check between two tensors of the same layout.
+    inp1 = torch.randn(shape, dtype=dtype, device=device)
+    inp2 = torch.randn(shape, dtype=dtype, device=device)
+    yield inp1, inp2
+
+
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.has_compatible_shallow_copy_type
 def test_has_compatible_shallow_copy_type():
-    def has_compatible_shallow_copy_type_input_fn(shape, dtype, device):
-        # Metadata-only check between two tensors of the same layout.
-        inp1 = torch.randn(shape, dtype=dtype, device=device)
-        inp2 = torch.randn(shape, dtype=dtype, device=device)
-        yield inp1, inp2
-
     bench = base.GenericBenchmark(
-        input_fn=has_compatible_shallow_copy_type_input_fn,
         op_name="has_compatible_shallow_copy_type",
+        case_fn=_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            _has_compatible_shallow_copy_type_input_fn
+        ),
         # Baseline is the native PyTorch op; the Gems path exercises the actual
         # FlagGems implementation so the benchmark measures gems vs torch.
         torch_op=torch._has_compatible_shallow_copy_type,
+        gems_op=flag_gems._has_compatible_shallow_copy_type,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems._has_compatible_shallow_copy_type)
     bench.run()

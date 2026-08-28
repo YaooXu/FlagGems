@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -30,6 +32,7 @@ def test_unsqueeze():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.unsqueeze,
+        gems_op=flag_gems.unsqueeze,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -42,6 +45,7 @@ def test_unsqueeze_():
         case_fn=_case_fn,
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         torch_op=torch.Tensor.unsqueeze_,
+        gems_op=flag_gems.unsqueeze_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

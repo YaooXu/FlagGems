@@ -28,6 +28,7 @@ def test_atanh():
     bench = base.UnaryPointwiseBenchmark(
         op_name="atanh",
         torch_op=torch.atanh,
+        gems_op=flag_gems.atanh,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

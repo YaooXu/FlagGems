@@ -29,13 +29,21 @@ class VarDimBenchmark(base.UnaryReductionBenchmark):
                 yield args
 
 
+def _var_gems_op(inp, dim=None):
+    normalized_dim = [dim] if isinstance(dim, int) else dim
+    return flag_gems.var(inp, dim=normalized_dim)
+
+
 @pytest.mark.var
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
 )
 def test_var():
     bench = base.UnaryReductionBenchmark(
-        op_name="var", torch_op=torch.var, dtypes=consts.FLOAT_DTYPES
+        op_name="var",
+        torch_op=torch.var,
+        gems_op=_var_gems_op,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 

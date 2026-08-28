@@ -17,6 +17,8 @@ import math
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -45,6 +47,7 @@ def test_view_copy():
     bench = ViewCopyBenchmark(
         op_name="view_copy",
         torch_op=torch.view_copy,
+        gems_op=flag_gems.view_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

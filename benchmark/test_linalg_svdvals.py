@@ -47,8 +47,8 @@ def test_linalg_svdvals():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(svd_input_fn),
         op_name="linalg_svdvals",
         torch_op=torch.linalg.svdvals,
+        gems_op=flag_gems.linalg_svdvals,
         # Only float32 for SVD on CUDA (PyTorch limitation)
         dtypes=[torch.float32],
     )
-    bench.set_gems(flag_gems.linalg_svdvals)
     bench.run()

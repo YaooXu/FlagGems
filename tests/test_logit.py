@@ -50,6 +50,7 @@ def test_logit_(shape, dtype):
     gems_op = flag_gems.testing.resolve_gems_op("logit_", flag_gems.logit_)
     res_out = gems_op(inp, eps=1e-6)
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp, ref_inp, dtype)
 
 
 @pytest.mark.logit_out

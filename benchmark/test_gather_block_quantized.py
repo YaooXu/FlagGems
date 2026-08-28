@@ -51,12 +51,41 @@ class GatherBlockQuantizedBenchmark(base.Benchmark):
             # We'll use flag_gems implementation as the "torch" baseline
             yield quantized_data, scales, None, block_size
 
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            n_elements = shape[0]
+            block_size = 128
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"n_elements": n_elements},
+                    params={"block_size": block_size},
+                    builder_args=(shape, block_size),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape, block_size = plan.builder_args
+        n_elements = shape[0]
+        n_blocks = (n_elements + block_size - 1) // block_size
+        quantized_data = torch.randint(
+            -100, 100, shape, dtype=torch.int8, device=self.device
+        )
+        scales = (
+            torch.rand(n_blocks, dtype=torch.float32, device=self.device) * 2
+            + 0.5
+        )
+        return quantized_data, scales, None, block_size
+
 
 @pytest.mark.gather_block_quantized
 def test_gather_block_quantized():
     bench = GatherBlockQuantizedBenchmark(
         op_name="gather_block_quantized",
         torch_op=flag_gems.ops.gather_block_quantized,
+        gems_op=flag_gems.gather_block_quantized,
         # gather_block_quantized consumes int8 data and float32 scales.
         dtypes=[torch.float32],
     )

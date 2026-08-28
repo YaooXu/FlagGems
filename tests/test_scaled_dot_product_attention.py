@@ -160,10 +160,11 @@ def test_scaled_dot_product_flash_attention(
     with caplog.at_level(
         "DEBUG", logger="flag_gems.ops._scaled_dot_product_flash_attention"
     ):
-        with flag_gems.use_gems():
-            result = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                q, k, v, 0.0, is_causal, False, scale=scale
-            )
+        gems_op = flag_gems.testing.resolve_gems_op(
+            "scaled_dot_product_flash_attention",
+            flag_gems._scaled_dot_product_flash_attention,
+        )
+        result = gems_op(q, k, v, 0.0, is_causal, False, scale=scale)
 
     assert "GEMS _SCALED_DOT_PRODUCT_FLASH_ATTENTION" in caplog.text
     assert len(result) == 9

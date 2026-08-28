@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -74,14 +76,65 @@ def test_nll_loss_forward():
     bench.run()
 
 
+def nll_loss_backward_case_fn(shape, dtype):
+    del dtype
+    target_shape = list(shape)
+    del target_shape[1]
+    yield base.BenchmarkCasePlan(
+        shape={"self": shape, "target": target_shape},
+        params={"reduction": 1},
+        builder_args=(shape, False, 1),
+    )
+    if base.Config.bench_level == consts.BenchLevel.COMPREHENSIVE:
+        yield base.BenchmarkCasePlan(
+            shape={
+                "self": shape,
+                "target": target_shape,
+                "weight": (shape[1],),
+            },
+            params={"reduction": 0, "ignore_index": 1},
+            builder_args=(shape, True, 0),
+        )
+
+
+def materialize_nll_loss_backward_case(plan, dtype, device):
+    shape, with_weight, reduction = plan.builder_args
+    target_shape = list(shape)
+    del target_shape[1]
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    target = torch.randint(0, shape[-1], target_shape, device=device)
+    weight = (
+        torch.randn(shape[1], dtype=dtype, device=device) if with_weight else None
+    )
+    ignore_index = plan.params.get("ignore_index", -100)
+    valid_target = target != ignore_index
+    if weight is None:
+        total_weight = valid_target.sum().to(dtype)
+    else:
+        total_weight = weight[target[valid_target]].sum()
+    if reduction == 0:
+        grad_output = utils.generate_tensor_input(target_shape, dtype, device)
+    else:
+        grad_output = utils.generate_tensor_input([], dtype, device)
+    return (
+        grad_output,
+        inp,
+        target,
+        weight,
+        reduction,
+        ignore_index,
+        total_weight,
+    )
+
+
 @pytest.mark.nll_loss_backward
 def test_nll_loss_backward():
     bench = base.GenericBenchmark2DOnly(
         op_name="nll_loss_backward",
-        case_fn=nll_loss_case_fn,
-        build_inputs_fn=materialize_nll_loss_case,
-        torch_op=torch.nn.functional.nll_loss,
+        case_fn=nll_loss_backward_case_fn,
+        build_inputs_fn=materialize_nll_loss_backward_case,
+        torch_op=torch.ops.aten.nll_loss_backward,
+        gems_op=flag_gems.nll_loss_backward,
         dtypes=consts.FLOAT_DTYPES,
-        is_backward=True,
     )
     bench.run()

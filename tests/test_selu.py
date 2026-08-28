@@ -46,3 +46,4 @@ def test_selu_(shape, dtype):
     res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp, ref_inp, dtype)

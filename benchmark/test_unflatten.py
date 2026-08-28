@@ -1,10 +1,13 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
-def unflatten_input_fn(shape, dtype, device):
+def _case_fn(shape, dtype):
+    del dtype
     # Unflatten dim 0 into different factorizations
     dim = 0
     dim_size = shape[dim]
@@ -19,20 +22,31 @@ def unflatten_input_fn(shape, dtype, device):
         factors = [1]
 
     for factor in factors[:4]:
-        inp = utils.generate_tensor_input(shape, dtype, device)
         sizes = (factor, dim_size // factor)
-        yield inp, {
-            "dim": dim,
-            "sizes": sizes,
-        }
+        yield base.BenchmarkCasePlan(
+            shape={"input": shape},
+            params={"dim": dim, "sizes": list(sizes)},
+            builder_args=(shape,),
+        )
+
+
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    return inp, {
+        "dim": plan.params["dim"],
+        "sizes": tuple(plan.params["sizes"]),
+    }
 
 
 @pytest.mark.unflatten
 def test_unflatten():
     bench = base.GenericBenchmark(
-        input_fn=unflatten_input_fn,
         op_name="unflatten",
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         torch_op=torch.unflatten,
+        gems_op=flag_gems.unflatten,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

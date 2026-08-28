@@ -27,6 +27,7 @@ def test_atan2_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="atan2_",
         torch_op=lambda a, b: a.atan2_(b),
+        gems_op=flag_gems.atan2_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

@@ -70,6 +70,7 @@ def test_index_copy():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_tensor_input_fn),
         op_name="index_copy",
         torch_op=torch.index_copy,
+        gems_op=flag_gems.index_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -85,7 +86,8 @@ def test_index_copy_():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_tensor_input_fn),
         op_name="index_copy_",
         torch_op=torch.Tensor.index_copy_,
+        gems_op=flag_gems.index_copy_,
         dtypes=consts.FLOAT_DTYPES,
-        inplace=True,
+        is_inplace=True,
     )
     bench.run()

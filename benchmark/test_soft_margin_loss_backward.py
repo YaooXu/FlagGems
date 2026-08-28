@@ -15,21 +15,38 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
+
+
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"reduction": 1},
+        builder_args=(shape,),
+    )
+
+
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = torch.randn(shape, dtype=dtype, device=device)
+    target = (
+        torch.randint(0, 2, shape, device=device).to(dtype) * 2
+    ) - 1
+    grad_output = torch.ones(shape, dtype=dtype, device=device)
+    return grad_output, inp, target, 1
 
 
 @pytest.mark.soft_margin_loss_backward
 def test_soft_margin_loss_backward():
-    def soft_margin_loss_backward_input_fn(shape, dtype, device):
-        inp = torch.randn(shape, dtype=dtype, device=device)
-        target = (torch.randint(0, 2, shape, device=device).to(dtype) * 2) - 1
-        grad_output = torch.ones(shape, dtype=dtype, device=device)
-        yield grad_output, inp, target, 1
-
     bench = base.GenericBenchmark(
-        input_fn=soft_margin_loss_backward_input_fn,
         op_name="soft_margin_loss_backward",
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.soft_margin_loss_backward,
+        gems_op=flag_gems.soft_margin_loss_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

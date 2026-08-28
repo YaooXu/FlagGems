@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_hypot_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="hypot_",
         torch_op=torch.Tensor.hypot_,
+        gems_op=flag_gems.hypot_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

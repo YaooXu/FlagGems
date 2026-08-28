@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -22,6 +24,7 @@ def test_frac_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="frac_",
         torch_op=lambda a: a.frac_(),
+        gems_op=flag_gems.frac_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

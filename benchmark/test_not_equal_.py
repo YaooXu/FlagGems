@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_not_equal_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="not_equal_",
         torch_op=lambda a, b: torch.ops.aten.ne_.Tensor(a, b),
+        gems_op=flag_gems.not_equal_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

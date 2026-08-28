@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -22,6 +24,8 @@ def test_multiply_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="multiply_",
         torch_op=lambda a, b: a.multiply_(b),
+        gems_op=flag_gems.multiply_,
+        is_inplace=True,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -32,11 +32,6 @@ EXPAND_SIZES = [
 ]
 
 
-def _expand(inp, size):
-    gems_op = flag_gems.testing.resolve_gems_op("expand", flag_gems.expand)
-    return gems_op(inp, size)
-
-
 @pytest.mark.expand
 @pytest.mark.parametrize("shape_expand_sizes", EXPAND_SIZES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -46,7 +41,8 @@ def test_expand(shape_expand_sizes, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.expand(ref_inp, expand_size)
-    res_out = _expand(inp, expand_size)
+    gems_op = flag_gems.testing.resolve_gems_op("expand", flag_gems.expand)
+    res_out = gems_op(inp, expand_size)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -60,8 +56,8 @@ def test_expand_(shape_expand_sizes, dtype):
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = ref_inp.expand(expand_size)
-    with flag_gems.use_gems():
-        res_out = inp.expand(expand_size)
+    gems_op = flag_gems.testing.resolve_gems_op("expand_", flag_gems.expand_)
+    res_out = gems_op(inp, expand_size)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     # Verify original input data was not modified (expand_ returns a view)
@@ -81,8 +77,9 @@ def test_expand_(shape_expand_sizes, dtype):
 def test_expand_invalid_sizes(input_shape, expand_size):
     inp = torch.randn(input_shape, device=flag_gems.device)
 
+    gems_op = flag_gems.testing.resolve_gems_op("expand", flag_gems.expand)
     with pytest.raises(RuntimeError):
-        _expand(inp, expand_size)
+        gems_op(inp, expand_size)
 
 
 @pytest.mark.expand
@@ -91,7 +88,8 @@ def test_expand_zero_size_singleton_stride():
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.expand(ref_inp, (0,))
-    res_out = _expand(inp, (0,))
+    gems_op = flag_gems.testing.resolve_gems_op("expand", flag_gems.expand)
+    res_out = gems_op(inp, (0,))
 
     assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()

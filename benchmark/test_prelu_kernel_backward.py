@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes for prelu_kernel_backward benchmark
@@ -29,12 +31,25 @@ class PReluKernelBackwardBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = PRELU_KERNEL_BACKWARD_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
-            grad_output = torch.randn(shape, dtype=cur_dtype, device=self.device)
-            x = torch.randn(shape, dtype=cur_dtype, device=self.device)
-            weight = torch.tensor([0.25], dtype=cur_dtype, device=self.device)
-            yield grad_output, x, weight
+    def get_case_iter(self, dtype):
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"grad_output": shape, "x": shape, "weight": (1,)},
+                    params={},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        grad_output = torch.randn(shape, dtype=case.dtype, device=self.device)
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        weight = torch.tensor([0.25], dtype=case.dtype, device=self.device)
+        return grad_output, x, weight
 
 
 @pytest.mark.prelu_kernel_backward
@@ -42,6 +57,7 @@ def test_prelu_kernel_backward():
     bench = PReluKernelBackwardBenchmark(
         op_name="prelu_kernel_backward",
         torch_op=torch.ops.aten._prelu_kernel_backward,
+        gems_op=flag_gems._prelu_kernel_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -155,6 +155,7 @@ def test_col2im():
     bench = Col2ImBenchmark(
         op_name="col2im",
         torch_op=torch.ops.aten.col2im,
+        gems_op=flag_gems.col2im,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

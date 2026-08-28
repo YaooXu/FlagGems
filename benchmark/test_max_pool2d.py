@@ -171,18 +171,108 @@ def torch_max_pool2d_with_indices_backward_wrapper(
     )
 
 
+_MAXPOOL2D_WITH_INDICES_BACKWARD_SHAPES = [
+    (4, 3, 224, 224),
+    (16, 64, 56, 56),
+    (32, 128, 28, 28),
+    (64, 256, 14, 14),
+    (128, 512, 7, 7),
+]
+
+
+class MaxPool2dWithIndicesBackwardBenchmark(base.GenericBenchmark):
+    def set_shapes(self, shape_file_path=None):
+        del shape_file_path
+        self.shapes = list(_MAXPOOL2D_WITH_INDICES_BACKWARD_SHAPES)
+
+
+def _max_pool2d_with_indices_backward_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": list(shape)},
+        params={
+            "kernel_size": 3,
+            "stride": 2,
+            "padding": 1,
+            "dilation": 1,
+            "ceil_mode": False,
+        },
+        builder_args=(shape,),
+    )
+    if base.Config.bench_level == consts.BenchLevel.COMPREHENSIVE:
+        if shape[-2] > 5 and shape[-1] > 5:
+            yield base.BenchmarkCasePlan(
+                shape={"input": list(shape)},
+                params={
+                    "kernel_size": (3, 5),
+                    "stride": (2, 1),
+                    "padding": (1, 2),
+                    "dilation": 1,
+                    "ceil_mode": False,
+                },
+                builder_args=(shape,),
+            )
+        yield base.BenchmarkCasePlan(
+            shape={"input": list(shape)},
+            params={
+                "kernel_size": 3,
+                "stride": 1,
+                "padding": 1,
+                "dilation": 2,
+                "ceil_mode": False,
+            },
+            builder_args=(shape,),
+        )
+        yield base.BenchmarkCasePlan(
+            shape={"input": list(shape)},
+            params={
+                "kernel_size": 3,
+                "stride": 2,
+                "padding": 1,
+                "dilation": 1,
+                "ceil_mode": True,
+            },
+            builder_args=(shape,),
+        )
+
+
+def _max_pool2d_with_indices_backward_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    p = plan.params
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    output, indices = flag_gems.max_pool2d_with_indices(
+        inp,
+        kernel_size=p["kernel_size"],
+        stride=p["stride"],
+        padding=p["padding"],
+        dilation=p["dilation"],
+        ceil_mode=p["ceil_mode"],
+    )
+    grad_output = torch.randn_like(output)
+    return (
+        grad_output,
+        inp,
+        p["kernel_size"],
+        p["stride"],
+        p["padding"],
+        p["dilation"],
+        p["ceil_mode"],
+        indices,
+    )
+
+
 @pytest.mark.max_pool2d_with_indices_backward
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
 )
 def test_max_pool2d_with_indices_backward():
-    bench = MaxPool2dBenchmark(
-        input_fn=max_pool2d_with_indices_backward_input_fn,
+    bench = MaxPool2dWithIndicesBackwardBenchmark(
         op_name="max_pool2d_with_indices_backward",
+        case_fn=_max_pool2d_with_indices_backward_case_fn,
+        build_inputs_fn=_max_pool2d_with_indices_backward_build_inputs_fn,
         torch_op=torch_max_pool2d_with_indices_backward_wrapper,
+        gems_op=flag_gems.max_pool2d_with_indices_backward,
         dtypes=consts.FLOAT_DTYPES,
         is_backward=False,
     )
-
-    bench.set_gems(flag_gems.max_pool2d_with_indices_backward)
     bench.run()

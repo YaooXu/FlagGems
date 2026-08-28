@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -30,7 +32,7 @@ def new_ones_case_fn(shape, dtype):
 def materialize_new_ones_case(plan, dtype, device):
     shape = plan.builder_args[0]
     inp = torch.randn(shape, dtype=dtype, device=device)
-    return {"tensor": inp, "size": plan.params["size"]},
+    return inp, plan.params["size"]
 
 
 @pytest.mark.new_ones
@@ -38,6 +40,7 @@ def test_new_ones():
     bench = base.GenericBenchmark(
         op_name="new_ones",
         torch_op=lambda tensor, size: tensor.new_ones(size),
+        gems_op=flag_gems.new_ones,
         case_fn=new_ones_case_fn,
         build_inputs_fn=materialize_new_ones_case,
         dtypes=consts.FLOAT_DTYPES,

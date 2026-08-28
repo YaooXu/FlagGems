@@ -39,8 +39,10 @@ def test_bitwise_xor_scalar(shape, dtype):
     ref_inp1 = utils.to_reference(inp1)
 
     ref_out = torch.bitwise_xor(ref_inp1, inp2)
-    with flag_gems.use_gems():
-        res_out = torch.bitwise_xor(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "bitwise_xor_scalar", flag_gems.bitwise_xor_scalar
+    )
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -60,7 +62,10 @@ def test_bitwise_xor_scalar_(shape, dtype):
     ref_inp1 = utils.to_reference(inp1.clone())
 
     ref_out = ref_inp1.bitwise_xor_(inp2)
-    with flag_gems.use_gems():
-        res_out = inp1.bitwise_xor_(inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "bitwise_xor_scalar_", flag_gems.bitwise_xor_scalar_
+    )
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp1, ref_inp1)

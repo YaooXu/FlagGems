@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -27,14 +29,25 @@ def _input_fn(shape, dtype, device):
     yield q_tensor,
 
 
+def _case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.dequantize
 def test_dequantize():
     # Dequantize operates on quantized tensor input;
     # no FLOAT_DTYPES parametrization needed (input always qint8, output always float32).
     bench = base.GenericBenchmarkExcluse1D(
         op_name="dequantize",
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         dtypes=[torch.qint8],
         torch_op=torch.dequantize,
+        gems_op=flag_gems.dequantize,
     )
     bench.run()

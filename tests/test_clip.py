@@ -66,3 +66,4 @@ def test_accuracy_clip_(shape, maxi, mini, isnone, dtype):
     res_out = gems_op(inp, mini=mini, maxi=maxi)
 
     gems_assert_equal(res_out, ref_out)
+    gems_assert_equal(inp, ref_inp)

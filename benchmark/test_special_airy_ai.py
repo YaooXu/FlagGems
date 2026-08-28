@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -23,6 +25,7 @@ def test_special_airy_ai():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_airy_ai",
         torch_op=torch.special.airy_ai,
+        gems_op=flag_gems.special_airy_ai,
         # torch.special.airy_ai only supports float32 on CUDA
         dtypes=[torch.float32],
     )
@@ -34,6 +37,7 @@ def test_special_airy_ai_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="special_airy_ai_out",
         torch_op=torch.special.airy_ai,
+        gems_op=flag_gems.special_airy_ai_out,
         # torch.special.airy_ai only supports float32 on CUDA
         dtypes=[torch.float32],
     )

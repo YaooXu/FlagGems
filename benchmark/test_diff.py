@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
-
 import pytest
 import torch
 
@@ -22,9 +20,10 @@ import flag_gems
 from . import base, consts
 
 
-def _input_fn(shape, dtype, device):
+def _build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
     inp = torch.randn(shape, dtype=dtype, device=device)
-    yield (inp,)
+    return inp, plan.params["n"]
 
 
 def _case_fn(n):
@@ -33,7 +32,7 @@ def _case_fn(n):
         yield base.BenchmarkCasePlan(
             shape={"input": shape},
             params={"n": n},
-            builder_args=(shape, 0),
+            builder_args=(shape,),
         )
 
     return plan
@@ -60,8 +59,9 @@ def test_diff():
     bench = DiffBenchmark(
         op_name="diff",
         torch_op=torch.diff,
+        gems_op=flag_gems.diff,
         case_fn=_case_fn(1),
-        build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
+        build_inputs_fn=_build_inputs_fn,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -74,9 +74,10 @@ def test_diff():
 def test_diff_n2():
     bench = DiffBenchmark(
         op_name="diff",
-        torch_op=functools.partial(torch.diff, n=2),
+        torch_op=torch.diff,
+        gems_op=flag_gems.diff,
         case_fn=_case_fn(2),
-        build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
+        build_inputs_fn=_build_inputs_fn,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

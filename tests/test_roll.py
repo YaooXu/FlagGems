@@ -27,11 +27,6 @@ ROLL_SHIFTS_DIMS = [
 ]
 
 
-def _roll(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op("roll", flag_gems.roll)
-    return gems_op(*args, **kwargs)
-
-
 @pytest.mark.roll
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES + utils.ALL_INT_DTYPES)
@@ -53,13 +48,14 @@ def test_roll_single_dim(shape, dtype, shifts_dims):
     else:
         inp = torch.randint(-1000, 1000, shape, device=flag_gems.device).to(dtype)
 
-    res_out = _roll(inp, shifts, dims)
     ref_inp = (
         inp.cpu()
         if flag_gems.vendor_name == "ascend" and dtype == torch.int16
         else utils.to_reference(inp, False)
     )
     ref_out = torch.roll(ref_inp, shifts, dims)
+    gems_op = flag_gems.testing.resolve_gems_op("roll", flag_gems.roll)
+    res_out = gems_op(inp, shifts, dims)
 
     if flag_gems.vendor_name == "ascend" and dtype == torch.int16:
         res_out = res_out.cpu()
@@ -90,7 +86,8 @@ def test_roll_multi_dims(shape, dtype, shifts_dims):
     ref_inp = utils.to_reference(inp, False)
 
     ref_out = torch.roll(ref_inp, shifts, dims)
-    res_out = _roll(inp, shifts, dims)
+    gems_op = flag_gems.testing.resolve_gems_op("roll", flag_gems.roll)
+    res_out = gems_op(inp, shifts, dims)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -108,7 +105,8 @@ def test_roll_flatten(shape, dtype, shifts):
 
     # Roll without specifying dims (flatten case)
     ref_out = torch.roll(ref_inp, shifts)
-    res_out = _roll(inp, shifts)
+    gems_op = flag_gems.testing.resolve_gems_op("roll", flag_gems.roll)
+    res_out = gems_op(inp, shifts)
 
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -129,6 +127,7 @@ def test_roll_with_non_dense_input(shape, dtype):
     dims = 0
 
     ref_out = torch.roll(ref_inp, shifts, dims)
-    res_out = _roll(inp, shifts, dims)
+    gems_op = flag_gems.testing.resolve_gems_op("roll", flag_gems.roll)
+    res_out = gems_op(inp, shifts, dims)
 
     utils.gems_assert_equal(res_out, ref_out)

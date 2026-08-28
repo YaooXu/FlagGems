@@ -52,8 +52,8 @@ def test_hypot_(self_shape, other_shape, dtype, contig):
     ref_out = torch.ops.aten.hypot_(ref_self, ref_other)
 
     act_self = base_self.clone()
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.hypot_(act_self, base_other)
+    gems_op = flag_gems.testing.resolve_gems_op("hypot_", flag_gems.hypot_)
+    res_out = gems_op(act_self, base_other)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(act_self, ref_out, dtype)

@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -22,6 +24,7 @@ def test_gt_tensor_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="gt_tensor_",
         torch_op=lambda a, b: a.gt_(b),
+        gems_op=flag_gems.gt_tensor_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

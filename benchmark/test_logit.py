@@ -17,7 +17,7 @@ import torch
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 
 @pytest.mark.logit
@@ -33,14 +33,33 @@ def test_logit():
     bench.run()
 
 
+def _logit_inplace_input_fn(shape, dtype, device):
+    inp = utils.generate_tensor_input(shape, dtype, device)
+    yield inp, 1e-6
+
+
+def _logit_inplace_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"eps": 1e-6},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.logit_
 @pytest.mark.skipif(
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
 )
 def test_logit_inplace():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="logit_",
-        torch_op=lambda a: a.logit_(eps=1e-6),
+        case_fn=_logit_inplace_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            _logit_inplace_input_fn
+        ),
+        torch_op=torch.Tensor.logit_,
+        gems_op=flag_gems.logit_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

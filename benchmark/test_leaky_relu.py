@@ -30,6 +30,7 @@ def test_leaky_relu():
     bench = base.UnaryPointwiseBenchmark(
         op_name="leaky_relu",
         torch_op=torch.nn.functional.leaky_relu,
+        gems_op=flag_gems.leaky_relu,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -54,20 +55,39 @@ def test_leaky_relu_inplace():
     flag_gems.vendor_name == "tsingmicro", reason="Issue #4131: not working"
 )
 def test_leaky_relu_out():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.UnaryPointwiseOutBenchmark(
         op_name="leaky_relu_out",
-        torch_op=torch.nn.functional.leaky_relu,
+        torch_op=torch.ops.aten.leaky_relu.out,
+        gems_op=flag_gems.leaky_relu_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
 class LeakyReluBackwardBenchmark(base.UnaryPointwiseBenchmark):
-    def get_input_iter(self, dtype: torch.dtype) -> Generator:
-        for shape in self.shapes:
-            inp = utils.generate_tensor_input(shape, dtype, self.device)
-            grad_out = torch.randn_like(inp)
-            yield grad_out, inp, 0.01, False
+    def get_case_iter(self, dtype: torch.dtype) -> Generator:
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": shape},
+                    params={"negative_slope": 0.01, "self_is_result": False},
+                    builder_args=(shape,),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape = plan.builder_args[0]
+        inp = utils.generate_tensor_input(shape, case.dtype, self.device)
+        grad_out = torch.randn_like(inp)
+        return (
+            grad_out,
+            inp,
+            plan.params["negative_slope"],
+            plan.params["self_is_result"],
+        )
 
 
 @pytest.mark.leaky_relu_backward
@@ -78,6 +98,7 @@ def test_leaky_relu_backward():
     bench = LeakyReluBackwardBenchmark(
         op_name="leaky_relu_backward",
         torch_op=torch.ops.aten.leaky_relu_backward,
+        gems_op=flag_gems.leaky_relu_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

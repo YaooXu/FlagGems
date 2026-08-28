@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -40,6 +42,7 @@ def test_alpha_dropout():
         build_inputs_fn=base.build_inputs_from_generic_input_fn(_input_fn),
         op_name="alpha_dropout",
         torch_op=torch.alpha_dropout,
+        gems_op=flag_gems.alpha_dropout,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

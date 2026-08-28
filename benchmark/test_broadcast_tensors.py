@@ -3,6 +3,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -61,6 +63,7 @@ def test_broadcast_tensors():
     bench = BroadcastTensorsBenchmark(
         op_name="broadcast_tensors",
         torch_op=torch.broadcast_tensors,
+        gems_op=flag_gems.broadcast_tensors,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

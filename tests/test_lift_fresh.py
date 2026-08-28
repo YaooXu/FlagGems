@@ -37,7 +37,7 @@ def test_lift_fresh(shape, dtype):
 
     ref_inp = utils.to_reference(inp)
     ref_out = torch.ops.aten.lift_fresh(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.lift_fresh(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("lift_fresh", flag_gems.lift_fresh)
+    res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

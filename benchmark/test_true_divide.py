@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -61,6 +63,7 @@ def test_true_divide_tensor_dispatch():
     bench = base.BinaryPointwiseBenchmark(
         op_name="true_divide",
         torch_op=torch.ops.aten.true_divide.Tensor,
+        gems_op=flag_gems.true_divide_tensor,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

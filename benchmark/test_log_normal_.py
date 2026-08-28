@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,8 +25,10 @@ def test_log_normal_():
     bench = base.GenericBenchmark(
         op_name="log_normal_",
         torch_op=torch.Tensor.log_normal_,
+        gems_op=flag_gems.log_normal_,
         case_fn=base.unary_case_fn,
         build_inputs_fn=base.build_inputs_unary_case,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

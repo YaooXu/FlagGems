@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_special_erfinv():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_erfinv",
         torch_op=torch.ops.aten.special_erfinv,
+        gems_op=flag_gems.special_erfinv,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -33,6 +36,7 @@ def test_special_erfinv_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="special_erfinv_out",
         torch_op=torch.ops.aten.special_erfinv,
+        gems_op=flag_gems.special_erfinv_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

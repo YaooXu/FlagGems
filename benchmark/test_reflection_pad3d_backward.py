@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 from .consts import FLOAT_DTYPES
 
@@ -98,6 +100,7 @@ def test_reflection_pad3d_backward():
     bench = ReflectionPad3dBackwardBenchmark(
         op_name="reflection_pad3d_backward",
         torch_op=torch.ops.aten.reflection_pad3d_backward,
+        gems_op=flag_gems.reflection_pad3d_backward,
         dtypes=FLOAT_DTYPES,
     )
     bench.run()

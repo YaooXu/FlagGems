@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -23,6 +25,7 @@ def test_frac():
     bench = base.UnaryPointwiseBenchmark(
         op_name="frac",
         torch_op=torch.frac,
+        gems_op=flag_gems.frac,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

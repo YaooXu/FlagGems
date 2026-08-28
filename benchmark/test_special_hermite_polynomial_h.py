@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -49,6 +51,7 @@ def test_special_hermite_polynomial_h():
     bench = _HermiteBenchmark(
         op_name="special_hermite_polynomial_h",
         torch_op=torch.special.hermite_polynomial_h,
+        gems_op=flag_gems.special_hermite_polynomial_h,
         # special.* ops only support float32
         dtypes=[torch.float32],
     )

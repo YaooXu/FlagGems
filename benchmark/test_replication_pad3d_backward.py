@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Generator
-
 import pytest
 import torch
+
+import flag_gems
 
 from . import base, consts
 
@@ -30,34 +30,39 @@ class ReplicationPad3dBackwardBenchmark(base.Benchmark):
         ]
         self.shape_desc = "N, C, D, H, W, PAD_LEFT, PAD_RIGHT, PAD_TOP, PAD_BOTTOM, PAD_FRONT, PAD_BACK"
 
-    def get_input_iter(self, cur_dtype) -> Generator:
-        for (
-            n,
-            c,
-            d,
-            h,
-            w,
-            pad_left,
-            pad_right,
-            pad_top,
-            pad_bottom,
-            pad_front,
-            pad_back,
-        ) in self.shapes:
-            inp = torch.randn((n, c, d, h, w), dtype=cur_dtype, device=self.device)
-            padding = (pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
-            grad_output = torch.randn(
-                (
-                    n,
-                    c,
-                    d + pad_front + pad_back,
-                    h + pad_top + pad_bottom,
-                    w + pad_left + pad_right,
+    def get_case_iter(self, dtype):
+        for ordinal, dims in enumerate(self.shapes):
+            n, c, d, h, w, pl, pr, pt, pb, pf, pk = dims
+            padding = (pl, pr, pt, pb, pf, pk)
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={
+                        "grad_output": (
+                            n,
+                            c,
+                            d + pf + pk,
+                            h + pt + pb,
+                            w + pl + pr,
+                        )
+                    },
+                    params={"inp_shape": [n, c, d, h, w], "padding": list(padding)},
+                    builder_args=(n, c, d, h, w, padding),
                 ),
-                dtype=cur_dtype,
-                device=self.device,
             )
-            yield grad_output, inp, padding
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        n, c, d, h, w, padding = plan.builder_args
+        inp = torch.randn((n, c, d, h, w), dtype=case.dtype, device=self.device)
+        pl, pr, pt, pb, pf, pk = padding
+        grad_output = torch.randn(
+            (n, c, d + pf + pk, h + pt + pb, w + pl + pr),
+            dtype=case.dtype,
+            device=self.device,
+        )
+        return grad_output, inp, padding
 
 
 @pytest.mark.replication_pad3d_backward
@@ -65,6 +70,7 @@ def test_replication_pad3d_backward():
     bench = ReplicationPad3dBackwardBenchmark(
         op_name="replication_pad3d_backward",
         torch_op=torch.ops.aten.replication_pad3d_backward,
+        gems_op=flag_gems.replication_pad3d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

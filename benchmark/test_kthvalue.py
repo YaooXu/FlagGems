@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -30,7 +32,7 @@ def kthvalue_case_fn(shape, dtype):
 
 def materialize_kthvalue_case(plan, dtype, device):
     x = torch.randn(plan.builder_args[0], device=device, dtype=dtype)
-    return {"input": x, **plan.params},
+    return x, plan.params["k"], {"dim": plan.params["dim"]}
 
 
 class KthvalueBenchmark(base.GenericBenchmarkExcluse1D):
@@ -50,6 +52,7 @@ def test_kthvalue():
     bench = KthvalueBenchmark(
         op_name="kthvalue",
         torch_op=torch.kthvalue,
+        gems_op=flag_gems.kthvalue,
         # Benchmark uses float32 only because topk gemm kernel operates in float32;
         # the kthvalue op auto-converts non-fp32 inputs internally.
         dtypes=[torch.float32],

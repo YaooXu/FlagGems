@@ -39,6 +39,9 @@ def test_range(start, end, dtype):
             device="cpu" if cfg.TO_CPU else device,
         )
     )
-    with flag_gems.use_gems():
-        res_out = torch.range(start, end, dtype=dtype, device=device)
+    gems_op = flag_gems.testing.resolve_gems_op("range", flag_gems.range_op)
+    # The dispatcher resolves an omitted dtype before calling the registered
+    # kernel.  A direct call must pass the same effective dtype explicitly.
+    gems_dtype = ref_out.dtype if dtype is None else dtype
+    res_out = gems_op(start, end, dtype=gems_dtype, device=device)
     utils.gems_assert_equal(res_out, ref_out)

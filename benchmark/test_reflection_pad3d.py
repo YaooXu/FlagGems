@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -70,6 +72,7 @@ def test_reflection_pad3d():
     bench = ReflectionPad3dBenchmark(
         op_name="reflection_pad3d",
         torch_op=torch.ops.aten.reflection_pad3d,
+        gems_op=flag_gems.reflection_pad3d,
         dtypes=consts.FLOAT_DTYPES,
     )
 

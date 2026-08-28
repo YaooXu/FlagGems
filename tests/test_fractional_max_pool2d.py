@@ -93,7 +93,11 @@ def test_fractional_max_pool2d_backward(shape, kernel_size, output_size, dtype):
     out_grad = torch.randn_like(res_out, device=flag_gems.device)
     ref_grad = utils.to_reference(out_grad, upcast=True)
     (ref_in_grad,) = torch.autograd.grad(ref_out, ref_inp, ref_grad)
-    res_in_grad = flag_gems.fractional_max_pool2d_backward(
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "fractional_max_pool2d_backward",
+        flag_gems.fractional_max_pool2d_backward,
+    )
+    res_in_grad = gems_op(
         out_grad,
         inp,
         kernel_size=kernel_size,

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -39,23 +41,36 @@ def test_logcumsumexp():
         case_fn=logcumsumexp_case_fn,
         build_inputs_fn=logcumsumexp_build_inputs_fn,
         torch_op=torch.logcumsumexp,
+        gems_op=flag_gems.logcumsumexp,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
-def logcumsumexp_out_input_fn(shape, cur_dtype, device):
-    inp = torch.randn(shape, dtype=cur_dtype, device=device)
+def logcumsumexp_out_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape, "out": shape},
+        params={"dim": 1},
+        builder_args=(shape,),
+    )
+
+
+def logcumsumexp_out_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    inp = torch.randn(shape, dtype=dtype, device=device)
     out = torch.empty_like(inp)
-    yield inp, 1, {"out": out}
+    return inp, 1, {"out": out}
 
 
 @pytest.mark.logcumsumexp_out
 def test_logcumsumexp_out():
     bench = base.GenericBenchmark2DOnly(
         op_name="logcumsumexp_out",
-        input_fn=logcumsumexp_out_input_fn,
+        case_fn=logcumsumexp_out_case_fn,
+        build_inputs_fn=logcumsumexp_out_build_inputs_fn,
         torch_op=torch.ops.aten.logcumsumexp.out,
+        gems_op=flag_gems.logcumsumexp_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

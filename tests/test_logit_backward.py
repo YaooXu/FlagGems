@@ -18,8 +18,10 @@ def test_logit_backward(shape, dtype):
     ref_grad = utils.to_reference(res_grad, True)
 
     ref_out = torch.ops.aten.logit_backward(ref_grad, ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.logit_backward(res_grad, res_inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "logit_backward", flag_gems.logit_backward
+    )
+    res_out = gems_op(res_grad, res_inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -37,7 +39,9 @@ def test_logit_backward_eps(shape, dtype, eps):
     ref_grad = utils.to_reference(res_grad, True)
 
     ref_out = torch.ops.aten.logit_backward(ref_grad, ref_inp, eps)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.logit_backward(res_grad, res_inp, eps)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "logit_backward", flag_gems.logit_backward
+    )
+    res_out = gems_op(res_grad, res_inp, eps)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

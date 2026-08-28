@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -56,12 +58,26 @@ def native_layer_norm_input_fn(shape, dtype, device):
     yield inp, normalized_shape, weight, bias, 1e-5
 
 
+def _native_layer_norm_case_fn(shape, dtype):
+    del dtype
+    normalized_shape = shape[1:]
+    yield base.BenchmarkCasePlan(
+        shape={"input": list(shape), "normalized": list(normalized_shape)},
+        params={"eps": 1e-5},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.native_layer_norm
 def test_native_layer_norm():
     bench = NormBenchmark(
         op_name="native_layer_norm",
-        input_fn=native_layer_norm_input_fn,
+        case_fn=_native_layer_norm_case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(
+            native_layer_norm_input_fn
+        ),
         torch_op=torch.ops.aten.native_layer_norm.default,
+        gems_op=flag_gems.native_layer_norm,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

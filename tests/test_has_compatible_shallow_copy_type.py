@@ -88,13 +88,16 @@ def test_accuracy_has_compatible_shallow_copy_type(self_name):
     # device or dtype normalisation of the reference is needed.
     self_tensor = TENSOR_KINDS[self_name]
 
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "has_compatible_shallow_copy_type",
+        flag_gems._has_compatible_shallow_copy_type,
+    )
     mismatches = []
     for from_name in KIND_NAMES:
         from_tensor = TENSOR_KINDS[from_name]
 
         ref_out = torch._has_compatible_shallow_copy_type(self_tensor, from_tensor)
-        with flag_gems.use_gems():
-            res_out = torch._has_compatible_shallow_copy_type(self_tensor, from_tensor)
+        res_out = gems_op(self_tensor, from_tensor)
 
         assert isinstance(res_out, bool)
         if res_out != ref_out:
@@ -110,12 +113,13 @@ def test_accuracy_has_compatible_shallow_copy_type(self_name):
 def test_accuracy_has_compatible_shallow_copy_type_dense_family():
     # Every dense tensor is compatible with every other dense tensor: shape,
     # dtype, stride, memory format and device are all irrelevant.
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "has_compatible_shallow_copy_type",
+        flag_gems._has_compatible_shallow_copy_type,
+    )
     for self_name in DENSE_NAMES:
         for from_name in DENSE_NAMES:
-            with flag_gems.use_gems():
-                res_out = torch._has_compatible_shallow_copy_type(
-                    TENSOR_KINDS[self_name], TENSOR_KINDS[from_name]
-                )
+            res_out = gems_op(TENSOR_KINDS[self_name], TENSOR_KINDS[from_name])
             assert res_out is True, f"{self_name} vs {from_name}"
 
 
@@ -125,12 +129,13 @@ def test_accuracy_has_compatible_shallow_copy_type_sparse_family(family):
     # Sparse COO is closed under itself, and the four compressed layouts are
     # closed under each other. Both hold across devices.
     names = COO_NAMES if family == "coo" else COMPRESSED_NAMES
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "has_compatible_shallow_copy_type",
+        flag_gems._has_compatible_shallow_copy_type,
+    )
     for self_name in names:
         for from_name in names:
-            with flag_gems.use_gems():
-                res_out = torch._has_compatible_shallow_copy_type(
-                    TENSOR_KINDS[self_name], TENSOR_KINDS[from_name]
-                )
+            res_out = gems_op(TENSOR_KINDS[self_name], TENSOR_KINDS[from_name])
             assert res_out is True, f"{self_name} vs {from_name}"
 
 
@@ -140,12 +145,13 @@ def test_accuracy_has_compatible_shallow_copy_type_opaque(self_name):
     # Opaque impls live on their own backends and are only compatible with a
     # tensor carrying an identical key set. They must not be treated as dense,
     # even though meta and nested tensors report ``torch.strided`` as layout.
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "has_compatible_shallow_copy_type",
+        flag_gems._has_compatible_shallow_copy_type,
+    )
     for from_name in KIND_NAMES:
         expected = from_name == self_name
-        with flag_gems.use_gems():
-            res_out = torch._has_compatible_shallow_copy_type(
-                TENSOR_KINDS[self_name], TENSOR_KINDS[from_name]
-            )
+        res_out = gems_op(TENSOR_KINDS[self_name], TENSOR_KINDS[from_name])
         assert res_out is expected, f"{self_name} vs {from_name}"
 
 
@@ -168,10 +174,11 @@ def test_accuracy_has_compatible_shallow_copy_type_cross_family(self_name, from_
     ref_out = torch._has_compatible_shallow_copy_type(
         TENSOR_KINDS[self_name], TENSOR_KINDS[from_name]
     )
-    with flag_gems.use_gems():
-        res_out = torch._has_compatible_shallow_copy_type(
-            TENSOR_KINDS[self_name], TENSOR_KINDS[from_name]
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "has_compatible_shallow_copy_type",
+        flag_gems._has_compatible_shallow_copy_type,
+    )
+    res_out = gems_op(TENSOR_KINDS[self_name], TENSOR_KINDS[from_name])
 
     assert res_out == ref_out
     assert res_out is False

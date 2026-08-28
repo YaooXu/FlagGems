@@ -315,12 +315,13 @@ class Benchmark:
             latency = (end - start) / n_rep * 1000
         elif Config.mode == consts.BenchMode.KERNEL:
             if vendor_name == "ascend":
-                do_bench = triton.backends.ascend.testing.do_bench_npu
-                latency = do_bench(
+                from .ascend_timing import measure_latency
+
+                latency = measure_latency(
                     fn,
-                    # do_bench_npu requires iterations, rather than duration
-                    # warmup=Config.warm_up,
-                    # active=Config.repetition,
+                    warmup_ms=Config.warm_up,
+                    repetition_ms=Config.repetition,
+                    clear_l2_cache=True,
                 )
             else:
                 do_bench = triton.testing.do_bench

@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 
@@ -9,6 +11,7 @@ def test_special_scaled_modified_bessel_k1():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_scaled_modified_bessel_k1",
         torch_op=torch.special.scaled_modified_bessel_k1,
+        gems_op=flag_gems.special_scaled_modified_bessel_k1,
         # Bessel K1 not supported for Half/BFloat16 in PyTorch
         dtypes=[torch.float32],
     )

@@ -72,22 +72,24 @@ def test_fused_adam(shape, dtype):
         )
 
     # Run gems implementation
-    with flag_gems.use_gems():
-        gems_result = torch.ops.aten._fused_adam(
-            [param],
-            [grad],
-            [exp_avg],
-            [exp_avg_sq],
-            [max_exp_avg_sq],
-            [state_step],
-            lr=0.001,
-            beta1=0.9,
-            beta2=0.999,
-            weight_decay=0.0,
-            eps=1e-8,
-            amsgrad=False,
-            maximize=False,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "fused_adam", flag_gems._fused_adam
+    )
+    gems_result = gems_op(
+        [param],
+        [grad],
+        [exp_avg],
+        [exp_avg_sq],
+        [max_exp_avg_sq],
+        [state_step],
+        lr=0.001,
+        beta1=0.9,
+        beta2=0.999,
+        weight_decay=0.0,
+        eps=1e-8,
+        amsgrad=False,
+        maximize=False,
+    )
 
     # Compare results
     ref_out = utils.to_reference(ref_param)

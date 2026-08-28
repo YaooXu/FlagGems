@@ -14,6 +14,7 @@
 
 import os
 
+import flag_gems
 import pytest
 import torch
 import yaml
@@ -30,12 +31,6 @@ PIXEL_SHUFFLE_SHAPES = [
 ]
 
 
-def _input_fn(config, dtype, device):
-    shape, upscale_factor = config
-    x = torch.randn(shape, dtype=dtype, device=device)
-    yield x, upscale_factor
-
-
 class PixelShuffleBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = PIXEL_SHUFFLE_SHAPES
@@ -43,9 +38,23 @@ class PixelShuffleBenchmark(base.Benchmark):
     def set_more_shapes(self):
         return []
 
-    def get_input_iter(self, cur_dtype):
-        for config in self.shapes:
-            yield from _input_fn(config, cur_dtype, self.device)
+    def get_case_iter(self, dtype):
+        for ordinal, (shape, upscale_factor) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": shape},
+                    params={"upscale_factor": upscale_factor},
+                    builder_args=(shape, upscale_factor),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape, upscale_factor = plan.builder_args
+        x = torch.randn(shape, dtype=case.dtype, device=self.device)
+        return x, upscale_factor
 
 
 @pytest.mark.pixel_shuffle
@@ -53,6 +62,7 @@ def test_pixel_shuffle():
     bench = PixelShuffleBenchmark(
         op_name="pixel_shuffle",
         torch_op=torch.ops.aten.pixel_shuffle,
+        gems_op=flag_gems.pixel_shuffle,
         dtypes=consts.FLOAT_DTYPES,
     )
 

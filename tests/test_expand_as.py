@@ -26,7 +26,7 @@ def test_expand_as(shape, target_shape, dtype):
     ref_other = utils.to_reference(other)
 
     ref_out = ref_inp.expand_as(ref_other)
-    with flag_gems.use_gems():
-        res_out = inp.expand_as(other)
+    gems_op = flag_gems.testing.resolve_gems_op("expand_as", flag_gems.expand_as)
+    res_out = gems_op(inp, other)
 
     utils.gems_assert_close(utils.to_reference(res_out), ref_out, dtype)

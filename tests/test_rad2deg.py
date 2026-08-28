@@ -50,3 +50,4 @@ def test_rad2deg_(shape, dtype):
     res_out = gems_op(inp)
 
     gems_assert_close(res_out, ref_out, dtype)
+    gems_assert_close(inp, ref_inp, dtype)

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Adaptive pooling benchmark shapes covering common 3D input sizes
@@ -73,6 +75,7 @@ def test_adaptive_max_pool3d_backward():
     bench = AdaptiveMaxPool3dBackwardBenchmark(
         op_name="adaptive_max_pool3d_backward",
         torch_op=torch.ops.aten.adaptive_max_pool3d_backward,
+        gems_op=flag_gems.adaptive_max_pool3d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

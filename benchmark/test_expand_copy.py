@@ -17,16 +17,38 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
+
+
+def _expand_copy_case_fn(shape, dtype):
+    del dtype
+    if shape[-1] == 1:
+        target_shape = tuple(shape[:-1]) + (2,)
+    else:
+        target_shape = shape
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape, "target": list(target_shape)},
+        params={"target_shape": list(target_shape)},
+        builder_args=(shape, target_shape),
+    )
+
+
+def _expand_copy_build_inputs_fn(plan, dtype, device):
+    shape, target_shape = plan.builder_args
+    inp = base.generate_tensor_input(shape, dtype, device)
+    return inp, target_shape
 
 
 @pytest.mark.expand_copy
 def test_expand_copy():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.GenericBenchmark(
         op_name="expand_copy",
-        torch_op=lambda a: torch.ops.aten.expand_copy(
-            a, tuple(a.shape[:-1]) + (2,) if a.shape[-1] == 1 else a.shape
-        ),
+        case_fn=_expand_copy_case_fn,
+        build_inputs_fn=_expand_copy_build_inputs_fn,
+        torch_op=torch.ops.aten.expand_copy,
+        gems_op=flag_gems.expand_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

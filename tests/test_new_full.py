@@ -24,13 +24,6 @@ from . import accuracy_utils as utils
 device = flag_gems.device
 
 
-def _new_full(*args, **kwargs):
-    gems_op = flag_gems.testing.resolve_gems_op(
-        "new_full", flag_gems.new_full
-    )
-    return gems_op(*args, **kwargs)
-
-
 @pytest.mark.new_full
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize(
@@ -54,12 +47,14 @@ def test_new_full(shape, dtype, xdtype, fill_value):
     if not implicit_supported and not explicit_supported:
         pytest.skip("inf/nan fill values require a floating output dtype")
 
+    gems_op = flag_gems.testing.resolve_gems_op("new_full", flag_gems.new_full)
+
     if implicit_supported:
         ref_out = ref_inp.new_full(shape, fill_value)
-        res_out = _new_full(inp, shape, fill_value)
+        res_out = gems_op(inp, shape, fill_value)
         utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
 
     if explicit_supported:
         ref_out = ref_inp.new_full(shape, fill_value, dtype=xdtype)
-        res_out = _new_full(inp, shape, fill_value, dtype=xdtype)
+        res_out = gems_op(inp, shape, fill_value, dtype=xdtype)
         utils.gems_assert_equal(res_out, ref_out, equal_nan=True)

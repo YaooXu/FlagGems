@@ -17,6 +17,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -25,6 +27,7 @@ def test_frexp():
     bench = base.UnaryPointwiseBenchmark(
         op_name="frexp",
         torch_op=torch.frexp,
+        gems_op=flag_gems.frexp,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

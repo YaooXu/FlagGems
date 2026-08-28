@@ -15,17 +15,9 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
-
-
-def reflection_pad2d_backward_input_fn(shape, dtype, device):
-    """Generate input for reflection_pad2d_backward benchmark."""
-    inp = torch.randn(shape, dtype=dtype, device=device)
-    # Use moderate padding: left, right, top, bottom
-    padding = [2, 2, 2, 2]
-    padded = torch.nn.functional.pad(inp, padding, mode="reflect")
-    grad_output = torch.randn_like(padded)
-    yield grad_output, inp, padding
 
 
 class ReflectionPad2dBackwardBenchmark(base.Benchmark):
@@ -47,9 +39,27 @@ class ReflectionPad2dBackwardBenchmark(base.Benchmark):
             (4, 128, 64, 64),
         ]
 
-    def get_input_iter(self, cur_dtype):
-        for shape in self.shapes:
-            yield from reflection_pad2d_backward_input_fn(shape, cur_dtype, self.device)
+    def get_case_iter(self, dtype):
+        # Use moderate padding: left, right, top, bottom
+        padding = [2, 2, 2, 2]
+        for ordinal, shape in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"input": list(shape)},
+                    params={"padding": padding},
+                    builder_args=(shape, padding),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        shape, padding = plan.builder_args
+        inp = torch.randn(shape, dtype=case.dtype, device=self.device)
+        padded = torch.nn.functional.pad(inp, padding, mode="reflect")
+        grad_output = torch.randn_like(padded)
+        return grad_output, inp, padding
 
 
 @pytest.mark.reflection_pad2d_backward
@@ -57,6 +67,7 @@ def test_reflection_pad2d_backward():
     bench = ReflectionPad2dBackwardBenchmark(
         op_name="reflection_pad2d_backward",
         torch_op=torch.ops.aten.reflection_pad2d_backward,
+        gems_op=flag_gems.reflection_pad2d_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -16,7 +16,9 @@ def test_prelu_kernel(shape, dtype):
     ref_inp2 = utils.to_reference(inp2)
 
     ref_out = torch.ops.aten._prelu_kernel(ref_inp1, ref_inp2)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten._prelu_kernel(inp1, inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "prelu_kernel", flag_gems._prelu_kernel
+    )
+    res_out = gems_op(inp1, inp2)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

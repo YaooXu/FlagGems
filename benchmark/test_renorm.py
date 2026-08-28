@@ -74,6 +74,7 @@ def test_renorm():
     bench = RenormBenchmark(
         op_name="renorm",
         torch_op=torch.renorm,
+        gems_op=flag_gems.renorm,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

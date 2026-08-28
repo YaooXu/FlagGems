@@ -54,6 +54,7 @@ def test_safe_softmax():
     bench = SafeSoftmaxBenchmark(
         op_name="safe_softmax",
         torch_op=torch.ops.aten._safe_softmax,
+        gems_op=flag_gems._safe_softmax,
         dtypes=consts.FLOAT_DTYPES,
     )
 

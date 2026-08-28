@@ -90,6 +90,7 @@ def test_conv_transpose1d():
         input_fn=conv_transpose1d_input_fn,
         op_name="conv_transpose1d",
         torch_op=torch.nn.functional.conv_transpose1d,
+        gems_op=flag_gems.conv_transpose1d,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

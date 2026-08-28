@@ -28,6 +28,7 @@ def test_special_erf():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_erf",
         torch_op=torch.special.erf,
+        gems_op=flag_gems.special_erf,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

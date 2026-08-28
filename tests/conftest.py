@@ -26,6 +26,8 @@ import yaml
 
 import flag_gems
 
+pytest_plugins = ("flag_gems.testing.pytest_plugin",)
+
 BUILTIN_MARKS = {
     "filterwarnings",
     "parametrize",

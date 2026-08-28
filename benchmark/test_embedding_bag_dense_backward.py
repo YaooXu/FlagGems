@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # _embedding_bag_dense_backward benchmark
@@ -20,48 +22,80 @@ class EmbeddingBagDenseBackwardBenchmark(base.Benchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = EMBEDDING_BAG_BACKWARD_SHAPES
 
-    def get_input_iter(self, cur_dtype):
-        for num_bags, embedding_dim, num_weights, samples_per_bag in self.shapes:
-            num_samples = num_bags * samples_per_bag
-            # Create weight (embedding table)
-            weight = torch.randn(
-                num_weights, embedding_dim, dtype=cur_dtype, device=self.device
+    def get_case_iter(self, dtype):
+        for ordinal, (
+            num_bags,
+            embedding_dim,
+            num_weights,
+            samples_per_bag,
+        ) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={
+                        "num_bags": num_bags,
+                        "embedding_dim": embedding_dim,
+                        "num_weights": num_weights,
+                        "samples_per_bag": samples_per_bag,
+                    },
+                    params={
+                        "scale_grad_by_freq": False,
+                        "mode": 0,
+                        "padding_idx": -1,
+                    },
+                    builder_args=(
+                        num_bags,
+                        embedding_dim,
+                        num_weights,
+                        samples_per_bag,
+                    ),
+                ),
             )
-            # Create indices
-            indices = torch.randint(
-                0, num_weights, (num_samples,), dtype=torch.long, device=self.device
-            )
-            # Create offsets
-            offsets = torch.arange(
-                0,
-                num_samples + 1,
-                samples_per_bag,
-                dtype=torch.long,
-                device=self.device,
-            )[:num_bags]
-            # Forward pass to get required tensors
-            (
-                output,
-                offset2bag,
-                bag_size,
-                maximum_indices,
-            ) = torch.ops.aten._embedding_bag(
-                weight, indices, offsets, False, 0, False, None, False, -1
-            )
-            # Generate random gradient
-            grad = torch.randn_like(output)
-            yield (
-                grad,
-                indices,
-                offset2bag,
-                bag_size,
-                maximum_indices,
-                num_weights,
-                False,  # scale_grad_by_freq
-                0,  # mode
-                None,  # per_sample_weights
-                -1,  # padding_idx
-            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        num_bags, embedding_dim, num_weights, samples_per_bag = plan.builder_args
+        num_samples = num_bags * samples_per_bag
+        # Create weight (embedding table)
+        weight = torch.randn(
+            num_weights, embedding_dim, dtype=case.dtype, device=self.device
+        )
+        # Create indices
+        indices = torch.randint(
+            0, num_weights, (num_samples,), dtype=torch.long, device=self.device
+        )
+        # Create offsets
+        offsets = torch.arange(
+            0,
+            num_samples + 1,
+            samples_per_bag,
+            dtype=torch.long,
+            device=self.device,
+        )[:num_bags]
+        # Forward pass to get required tensors
+        (
+            output,
+            offset2bag,
+            bag_size,
+            maximum_indices,
+        ) = torch.ops.aten._embedding_bag(
+            weight, indices, offsets, False, 0, False, None, False, -1
+        )
+        # Generate random gradient
+        grad = torch.randn_like(output)
+        return (
+            grad,
+            indices,
+            offset2bag,
+            bag_size,
+            maximum_indices,
+            num_weights,
+            False,  # scale_grad_by_freq
+            0,  # mode
+            None,  # per_sample_weights
+            -1,  # padding_idx
+        )
 
 
 @pytest.mark.embedding_bag_dense_backward
@@ -69,6 +103,7 @@ def test_embedding_bag_dense_backward():
     bench = EmbeddingBagDenseBackwardBenchmark(
         op_name="embedding_bag_dense_backward",
         torch_op=torch.ops.aten._embedding_bag_dense_backward,
+        gems_op=flag_gems._embedding_bag_dense_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

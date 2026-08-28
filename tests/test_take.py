@@ -76,7 +76,13 @@ def _assert_matches_torch(inp, index, out=None):
 def test_take(dtype, shape, idx_shape):
     inp = _make_input(shape, dtype)
     index = _make_index(inp.numel(), idx_shape)
-    _assert_matches_torch(inp, index)
+    ref_inp = utils.to_reference(inp)
+    ref_idx = utils.to_reference(index)
+    ref_out = torch.take(ref_inp, ref_idx)
+    gems_op = flag_gems.testing.resolve_gems_op("take", flag_gems.take)
+    result = gems_op(inp, index)
+    # take is a pure gather, values must match exactly.
+    utils.gems_assert_equal(result, ref_out)
 
 
 @pytest.mark.take_out
@@ -93,7 +99,13 @@ def test_take_out(dtype, shape, idx_shape):
 def test_take_negative_index(dtype):
     inp = _make_input((8, 8), dtype)
     index = _make_index(inp.numel(), (16,), negative=True)
-    _assert_matches_torch(inp, index)
+    ref_inp = utils.to_reference(inp)
+    ref_idx = utils.to_reference(index)
+    ref_out = torch.take(ref_inp, ref_idx)
+    gems_op = flag_gems.testing.resolve_gems_op("take", flag_gems.take)
+    result = gems_op(inp, index)
+    # take is a pure gather, values must match exactly.
+    utils.gems_assert_equal(result, ref_out)
 
 
 @pytest.mark.take
@@ -117,7 +129,13 @@ def test_take_out_of_bounds(bad):
 def test_take_noncontiguous(dtype):
     inp = _make_input((7, 11), dtype).transpose(0, 1)
     index = _make_index(inp.numel(), (16,))
-    _assert_matches_torch(inp, index)
+    ref_inp = utils.to_reference(inp)
+    ref_idx = utils.to_reference(index)
+    ref_out = torch.take(ref_inp, ref_idx)
+    gems_op = flag_gems.testing.resolve_gems_op("take", flag_gems.take)
+    result = gems_op(inp, index)
+    # take is a pure gather, values must match exactly.
+    utils.gems_assert_equal(result, ref_out)
 
 
 @pytest.mark.take_out
@@ -153,7 +171,13 @@ def test_take_out_rejects_mismatched_dtype():
 def test_take_empty():
     inp = _make_input((3, 5), torch.float32)
     index = torch.empty((0,), dtype=torch.int64, device=flag_gems.device)
-    _assert_matches_torch(inp, index)
+    ref_inp = utils.to_reference(inp)
+    ref_idx = utils.to_reference(index)
+    ref_out = torch.take(ref_inp, ref_idx)
+    gems_op = flag_gems.testing.resolve_gems_op("take", flag_gems.take)
+    result = gems_op(inp, index)
+    # take is a pure gather, values must match exactly.
+    utils.gems_assert_equal(result, ref_out)
 
 
 @pytest.mark.take
@@ -161,7 +185,11 @@ def test_take_multidim_index():
     """Output shape follows the index shape."""
     inp = _make_input((4, 6), torch.float32)
     index = _make_index(inp.numel(), (3, 5))
-    _assert_matches_torch(inp, index)
-    with flag_gems.use_gems():
-        result = torch.take(inp, index)
+    ref_inp = utils.to_reference(inp)
+    ref_idx = utils.to_reference(index)
+    ref_out = torch.take(ref_inp, ref_idx)
+    gems_op = flag_gems.testing.resolve_gems_op("take", flag_gems.take)
+    result = gems_op(inp, index)
+    # take is a pure gather, values must match exactly.
+    utils.gems_assert_equal(result, ref_out)
     assert tuple(result.shape) == (3, 5)

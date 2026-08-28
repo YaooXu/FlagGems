@@ -50,7 +50,7 @@ def test_matmuladd():
         input_fn=matmuladd_input_fn,
         op_name="matmuladd",
         torch_op=matmuladd_torch_wrapper,
+        gems_op=flag_gems.matmuladd,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems.matmuladd)
     bench.run()

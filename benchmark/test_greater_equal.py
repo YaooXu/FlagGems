@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -38,6 +40,7 @@ def test_greater_equal_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="greater_equal_",
         torch_op=lambda a, b: a.greater_equal_(b),
+        gems_op=flag_gems.greater_equal_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

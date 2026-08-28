@@ -16,6 +16,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 # Shapes for permute_copy benchmark: (original_shape, dims)
@@ -60,6 +62,7 @@ def test_permute_copy():
     bench = PermuteCopyBenchmark(
         op_name="permute_copy",
         torch_op=torch.permute_copy,
+        gems_op=flag_gems.permute_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

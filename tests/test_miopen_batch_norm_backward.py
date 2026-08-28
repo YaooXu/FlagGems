@@ -75,21 +75,23 @@ def test_miopen_batch_norm_backward(shape, dtype, affine):
         eps,
         output_mask,
     )
-    with flag_gems.use_gems():
-        (
-            res_in_grad,
-            res_weight_grad,
-            res_bias_grad,
-        ) = torch.ops.aten.miopen_batch_norm_backward(
-            res_inp,
-            res_grad,
-            res_weight,
-            res_running_mean,
-            res_running_var,
-            res_save_mean,
-            res_save_var,
-            eps,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "miopen_batch_norm_backward", flag_gems.miopen_batch_norm_backward
+    )
+    (
+        res_in_grad,
+        res_weight_grad,
+        res_bias_grad,
+    ) = gems_op(
+        res_inp,
+        res_grad,
+        res_weight,
+        res_running_mean,
+        res_running_var,
+        res_save_mean,
+        res_save_var,
+        eps,
+    )
 
     reduce_dim = math.prod(shape) // C
     utils.gems_assert_close(res_in_grad, ref_in_grad, dtype, reduce_dim=reduce_dim)

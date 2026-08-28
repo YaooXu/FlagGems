@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -123,6 +125,15 @@ class AvgPool3dBenchmark(base.GenericBenchmark):
         return inp, config
 
 
+class AvgPool3dBackwardBenchmark(AvgPool3dBenchmark):
+    def build_inputs(self, case):
+        shape, config = case.builder_args[0].builder_args
+        inp = utils.generate_tensor_input(shape, case.dtype, self.device)
+        out = torch.ops.aten.avg_pool3d(inp, **config)
+        grad_output = torch.randn_like(out)
+        return grad_output, inp, config
+
+
 @pytest.mark.avg_pool3d
 def test_perf_avg_pool3d():
     bench = AvgPool3dBenchmark(
@@ -136,11 +147,11 @@ def test_perf_avg_pool3d():
 
 @pytest.mark.avg_pool3d_backward
 def test_perf_avg_pool3d_backward():
-    bench = AvgPool3dBenchmark(
+    bench = AvgPool3dBackwardBenchmark(
         input_fn=avg_pool3d_input_fn,
-        op_name="avg_pool3d",
-        torch_op=torch.ops.aten.avg_pool3d,
+        op_name="avg_pool3d_backward",
+        torch_op=torch.ops.aten.avg_pool3d_backward,
+        gems_op=flag_gems.avg_pool3d_backward,
         dtypes=consts.FLOAT_DTYPES,
-        is_backward=True,
     )
     bench.run()

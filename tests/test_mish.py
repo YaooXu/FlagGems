@@ -46,6 +46,7 @@ def test_mish_(shape, dtype):
     res_out = gems_op(inp)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_close(inp, ref_inp, dtype)
 
 
 @pytest.mark.mish_backward
@@ -59,7 +60,9 @@ def test_mish_backward(shape, dtype):
     ref_grad_out = utils.to_reference(grad_out, True)
 
     ref_in_grad = torch.ops.aten.mish_backward(ref_grad_out, ref_inp)
-    with flag_gems.use_gems():
-        res_in_grad = torch.ops.aten.mish_backward(grad_out, inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "mish_backward", flag_gems.mish_backward
+    )
+    res_in_grad = gems_op(grad_out, inp)
 
     utils.gems_assert_close(res_in_grad, ref_in_grad, dtype)

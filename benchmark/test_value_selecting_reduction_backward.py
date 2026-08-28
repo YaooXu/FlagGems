@@ -20,19 +20,6 @@ import flag_gems
 from . import base, consts
 
 
-class ValueSelectingReductionBackwardBenchmark(base.GenericBenchmark):
-    def set_shapes(self, shape_file_path=None):
-        # Fixed (grad_shape, input sizes, dim, keepdim) cases covering 2D and
-        # 3D inputs reduced along the last dimension, matching typical
-        # max/min backward workloads; index 0..5 into _CASES below.
-        self.shapes = list(range(len(_VALUE_SELECTING_REDUCTION_BACKWARD_CASES)))
-        self.shape_desc = "case"
-
-    def get_input_iter(self, dtype):
-        for case in self.shapes:
-            yield from self.input_fn(case, dtype, self.device)
-
-
 # (grad_shape, input sizes, dim, keepdim) benchmark cases
 _VALUE_SELECTING_REDUCTION_BACKWARD_CASES = [
     ((1024,), (1024, 1024), 1, False),
@@ -52,13 +39,36 @@ def _input_fn(shape, dtype, device):
     yield grad, dim, indices, list(sizes), keepdim
 
 
+def _case_fn(shape, dtype):
+    del dtype
+    grad_shape, sizes, dim, keepdim = _VALUE_SELECTING_REDUCTION_BACKWARD_CASES[shape]
+    yield base.BenchmarkCasePlan(
+        shape={"grad": list(grad_shape), "sizes": list(sizes)},
+        params={"dim": dim, "keepdim": keepdim},
+        builder_args=(shape, 0),
+    )
+
+
+_build_inputs_fn = base.build_inputs_from_generic_input_fn(_input_fn)
+
+
+class ValueSelectingReductionBackwardBenchmark(base.GenericBenchmark):
+    def set_shapes(self, shape_file_path=None):
+        # Fixed (grad_shape, input sizes, dim, keepdim) cases covering 2D and
+        # 3D inputs reduced along the last dimension, matching typical
+        # max/min backward workloads; index 0..5 into _CASES below.
+        self.shapes = list(range(len(_VALUE_SELECTING_REDUCTION_BACKWARD_CASES)))
+        self.shape_desc = "case"
+
+
 @pytest.mark.value_selecting_reduction_backward
 def test_value_selecting_reduction_backward():
     bench = ValueSelectingReductionBackwardBenchmark(
         op_name="value_selecting_reduction_backward",
         torch_op=torch.ops.aten.value_selecting_reduction_backward,
-        input_fn=_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
+        gems_op=flag_gems.value_selecting_reduction_backward,
         dtypes=consts.FLOAT_DTYPES,
     )
-    bench.set_gems(flag_gems.value_selecting_reduction_backward)
     bench.run()

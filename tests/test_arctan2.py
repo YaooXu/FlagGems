@@ -17,8 +17,8 @@ def test_arctan2(shape, dtype):
     ref_y = utils.to_reference(y, True)
     ref_out = torch.arctan2(ref_x, ref_y)
 
-    with flag_gems.use_gems():
-        res_out = torch.arctan2(x, y)
+    gems_op = flag_gems.testing.resolve_gems_op("arctan2", flag_gems.arctan2)
+    res_out = gems_op(x, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
 
@@ -35,8 +35,8 @@ def test_arctan2_(shape, dtype):
     ref_out = ref_x.arctan2_(ref_y)
 
     x1 = x.clone()
-    with flag_gems.use_gems():
-        res_out = x1.arctan2_(y)
+    gems_op = flag_gems.testing.resolve_gems_op("arctan2_", flag_gems.arctan2_)
+    res_out = gems_op(x1, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(x1, ref_x, dtype)
@@ -77,8 +77,8 @@ def test_arctan2_special_values(dtype):
     ref_y = utils.to_reference(y, True)
     ref_out = torch.arctan2(ref_x, ref_y)
 
-    with flag_gems.use_gems():
-        res_out = torch.arctan2(x, y)
+    gems_op = flag_gems.testing.resolve_gems_op("arctan2", flag_gems.arctan2)
+    res_out = gems_op(x, y)
 
     # NaN cannot be compared by the default gems_assert_close,
     # because equal_nan=False by default.
@@ -104,7 +104,7 @@ def test_arctan2_broadcast(dtype):
     ref_y = utils.to_reference(y, True)
     ref_out = torch.arctan2(ref_x, ref_y)
 
-    with flag_gems.use_gems():
-        res_out = torch.arctan2(x, y)
+    gems_op = flag_gems.testing.resolve_gems_op("arctan2", flag_gems.arctan2)
+    res_out = gems_op(x, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

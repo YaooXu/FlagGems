@@ -56,6 +56,7 @@ def test_round_(shape, dtype):
     res_out = gems_op(inp)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp, ref_inp)
 
 
 @pytest.mark.round_out
@@ -68,10 +69,12 @@ def test_round_out(shape, dtype):
     ref_out = torch.empty_like(ref_inp)
 
     torch.round(ref_inp, out=ref_out)
-    with flag_gems.use_gems():
-        torch.round(inp, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op("round_out", flag_gems.round_out)
+    res_out = gems_op(inp, out=out)
 
     utils.gems_assert_equal(out, ref_out)
+    utils.gems_assert_equal(res_out, ref_out)
+    assert res_out is out
 
 
 @pytest.mark.round

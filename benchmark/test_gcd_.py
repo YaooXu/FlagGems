@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -22,6 +24,7 @@ def test_gcd_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="gcd_",
         torch_op=lambda a, b: a.gcd_(b),
+        gems_op=flag_gems.gcd_,
         dtypes=consts.INT_DTYPES,
         is_inplace=True,
     )

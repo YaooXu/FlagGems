@@ -26,8 +26,8 @@ def test_unsafe_chunk(shape, dtype, chunks, dim):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.unsafe_chunk(ref_inp, chunks, dim)
-    with flag_gems.use_gems():
-        res_out = torch.unsafe_chunk(inp, chunks, dim)
+    gems_op = flag_gems.testing.resolve_gems_op("unsafe_chunk", flag_gems.unsafe_chunk)
+    res_out = gems_op(inp, chunks, dim)
 
     # Compare number of chunks
     assert len(res_out) == len(ref_out), "Number of chunks mismatch"

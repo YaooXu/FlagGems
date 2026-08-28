@@ -25,9 +25,19 @@ weight: 30
 
 ### 1. 统一指定“待测代码”的方式
 
-本文所说的“待测代码”，是指 KernelGen Agent 当前生成、尚未合入 FlagGems 的算子实现。Agent 会连续生成和测试多个版本，因此需要在不手动替换 FlagGems 源文件的情况下，告诉测试框架“本轮测试使用哪一份待测代码”。我们希望正确性测试和性能测试都能通过统一入口指定待测代码，并且只在本轮测试内生效，测试结束后自动恢复原状。
+本文所说的“待测代码”，是指 KernelGen Agent 当前生成、尚未合入 FlagGems 的算子实现。Agent 会连续生成和测试多个版本，因此需要在不手动替换 FlagGems 源文件的情况下，告诉测试框架“本轮测试使用哪一份待测代码”。建议把它设计成 pytest 的统一命令行参数：
 
-性能测试目前已经部分支持通过 `gems_op` 直接指定被测函数；`gems_op` 可以简单理解为“明确告诉测试框架本次要调用哪个算子实现”。但并非所有测试都统一使用这种方式，正确性测试也存在多种调用路径。希望双方共同确定一个统一入口，并逐步让 KernelGen 涉及的测试使用这一入口。
+```bash
+python3 -m pytest tests/test_clamp_max.py -m clamp_max --candidate-code-path /path/to/main.py
+```
+
+同一个参数同时适用于正确性测试和性能测试。待测文件按约定导出 `run` 函数；测试框架在本次 pytest 进程内加载它，并把它接到所选算子的直接调用入口。pytest 退出后替换自动失效，不修改 FlagGems 源文件，也不影响下一次测试。不传 `--candidate-code-path` 时仍使用 FlagGems 默认实现，原有 CI 行为保持不变。
+
+一次带待测代码的 pytest 命令只允许选择一个明确的算子。如果选中的测试对应多个算子、待测文件没有导出约定入口，或者测试结束时发现待测代码实际没有被调用，pytest 应直接报错，避免出现“命令成功但测到的不是待测代码”。
+
+测试内部仍需要有统一的直接调用链：正确性测试通过 `resolve_gems_op()` 获取实现，性能测试由 Benchmark 基类根据 `op_name` 解析实现。测试文件中的 `gems_op=flag_gems.<op>` 只描述没有传入待测代码时使用的默认 FlagGems 函数，不再作为 KernelGen 指定待测代码的外部接口。
+
+自动化系统可以额外传入 `--candidate-report-path /path/to/report.json`，获得待测文件绝对路径、SHA256、实际绑定的算子、总调用次数以及每个 pytest node 和性能 `case_id` 的调用覆盖。该报告用于正确性、preflight 和精确重放检查；启用报告会安装逐调用计数 wrapper，因此正式性能计时只传 `--candidate-code-path`，由 benchmark 结果中的 `candidate_source=override` 确认路由，避免把 Python 计数开销带入 latency。普通开发者仍只需要使用 `--candidate-code-path`。
 
 ### 2. 能够识别并精确重放单个 Workload
 
@@ -55,9 +65,9 @@ Agent 的典型工作流程如下：
 
 ## 当前测试方式为什么需要统一
 
-FlagGems 现有测试并不是全部通过同一种方式找到被测实现：一部分测试先调用 PyTorch 接口，再由框架自动路由到 FlagGems 实现；部分性能测试则可以通过 `gems_op` 直接指定 FlagGems 函数。直接指定函数可能绕过原有自动路由过程中的参数处理，因此两种调用方式的结果不能直接假定完全相同。
+FlagGems 现有测试并不是全部通过同一种方式找到被测实现：一部分测试先调用 PyTorch 接口，再由框架自动路由到 FlagGems 实现；部分性能测试则通过 `gems_op` 保存默认 FlagGems 函数。直接调用函数可能绕过原有自动路由过程中的参数处理，因此两种调用方式的结果不能直接假定完全相同。
 
-性能测试能够接收 `gems_op`，已经满足了部分需求，但还不能完整覆盖 Agent 工作流：测试文件中通常静态写死了具体函数，Agent 仍需要在运行时替换为本轮生成的代码；正确性测试尚未统一使用这一入口；现有接口也没有完整提供单个 Workload 的稳定标识、重放和结构化结果。
+性能测试能够接收 `gems_op`，说明它已经具备明确的默认算子入口，但这还不是 Agent 所需的外部接口：KernelGen 仍需要在 pytest 启动时通过 `--candidate-code-path` 换成本轮生成的代码；正确性测试也需要接入同一解析链。现有接口还没有完整提供单个 Workload 的稳定标识、重放和结构化结果。
 
 过去 KernelGen 若要评测新生成的实现，主要依赖手动替换 FlagGems `ops` 目录中的文件，再运行原有测试。这样可以让原有路由机制找到新代码，但不适合 Agent 高频、自动地测试多个版本，也难以只针对一个 Workload 做分析。
 
@@ -75,7 +85,7 @@ KernelGen 团队负责提供接口实现、测试迁移和沐曦机器上的回�
 
 **KernelGen 将长期维护一套只能在修改版 FlagGems 上运行的优化测试，优化阶段与最终提交阶段的评测可能不一致。**
 
-KernelGen 后续编写的测试会统一通过 `gems_op` 指定待测代码，但正式提交到 FlagGems 时仍要切换回主分支现有的调用方式。这意味着同一份算子代码需要经过两套路径验证，既增加适配和重复测试的工作量，也可能出现优化时通过、提交时失败，或者两边性能结论不同的情况。
+KernelGen 后续编写的测试会统一依赖 `--candidate-code-path` 和直接算子解析链，但正式提交到 FlagGems 时仍要切换回主分支现有的调用方式。这意味着同一份算子代码需要经过两套路径验证，既增加适配和重复测试的工作量，也可能出现优化时通过、提交时失败，或者两边性能结论不同的情况。
 
 此外，KernelGen 需要的 Workload 标识、单独重放和输入生成接口如果只存在于修改版 FlagGems 中，相关测试和工具便无法直接在主分支运行，后续每次同步或提交都需要额外改写。
 
@@ -83,13 +93,13 @@ KernelGen 后续编写的测试会统一通过 `gems_op` 指定待测代码，�
 
 **整体风险可控，但不是零风险：部分现有测试需要接入统一的待测代码入口，调用路径变化可能改变原有测试结果。**
 
-主要风险不在 Workload 标识、重放或结果报告本身，这些能力可以设计为显式启用，不改变原有默认测试流程。需要重点验证的是迁移到 `gems_op` 的 `pytest`：原有测试可能经过框架自动路由，改成直接调用函数后，参数处理和执行路径可能存在差异。沐曦机器的抽样对比已经观察到少量原本通过的用例在改为直接调用后失败，因此这项风险需要承认并通过回归测试控制。
+主要风险不在 `--candidate-code-path`、Workload 标识、重放或结果报告本身，这些能力均为显式启用，不改变原有默认测试流程。需要重点验证的是迁移到直接算子解析链的 `pytest`：原有测试可能经过框架自动路由，改成直接调用函数后，参数处理和执行路径可能存在差异。沐曦机器的抽样对比已经观察到少量原本通过的用例在改为直接调用后失败，因此这项风险需要承认并通过回归测试控制。
 
 建议只迁移 KernelGen 实际需要的测试，每一批迁移都对比修改前后的相同用例，并以 FlagGems 正式 CI 结果作为最终合入标准。FlagGems 后续需要维护的是少量公共接口和对应回归测试，而不是一套独立的 KernelGen 测试框架。
 
 ## 建议的合入方式
 
-1. 先加入默认关闭的公共接口，并选择少量代表性算子验证“指定待测代码”不会影响原有测试。
+1. 先加入默认关闭的 `--candidate-code-path`，并选择少量代表性算子验证“不传参数时保持原样、传入参数时只运行指定待测代码”。
 2. 再补充 Workload 标识、单独重放和结构化结果，验证单独执行与完整测试使用相同输入和判定标准。
 3. 最后分批迁移 KernelGen 必需的 `pytest`，每批都运行修改前后对比和 FlagGems 正式 CI，避免一次性扩大影响范围。
 
@@ -99,7 +109,7 @@ KernelGen 后续编写的测试会统一通过 `gems_op` 指定待测代码，�
 
 ### 适用范围和统一原则
 
-**从本规范生效后，所有新写的算子正确性测试和性能测试都统一使用 `gems_op` 直接调用被测实现。** 正确性测试在测试函数内通过 `resolve_gems_op()` 得到 `gems_op`，性能测试在创建 Benchmark 时显式传入 `gems_op=flag_gems.<op>`。这两类新文件中不得再新增依赖 `with flag_gems.use_gems()`、PyTorch dispatcher 或手动替换 `ops` 文件的测试用例；dispatcher 兼容性如需验证，应作为独立集成检查，不替代本规范中的正确性和性能测试。
+**从本规范生效后，KernelGen 统一通过 pytest 的 `--candidate-code-path` 指定待测代码，所有新写的正确性测试和性能测试都必须接入同一条直接算子解析链。** 正确性测试在测试函数内通过 `resolve_gems_op()` 得到实际实现；性能测试在创建 Benchmark 时显式传入默认的 `gems_op=flag_gems.<op>`，再由 Benchmark 基类统一解析命令行传入的待测代码。这两类新文件中不得再新增依赖 `with flag_gems.use_gems()`、PyTorch dispatcher 或手动替换 `ops` 文件的测试用例；dispatcher 兼容性如需验证，应作为独立集成检查，不替代本规范中的正确性和性能测试。
 
 这项规范适用于后续新增文件和重写文件，不要求一次性改完所有历史测试。历史测试仍按前述方式分批迁移并执行修改前后对比。
 
@@ -107,8 +117,8 @@ KernelGen 后续编写的测试会统一通过 `gems_op` 指定待测代码，�
 
 | 文件 | 目的 | 统一的待测代码入口 |
 | --- | --- | --- |
-| `tests/test_<op>.py` | 验证数值、返回值、dtype、shape、原地修改等语义 | 在每个测试函数内调用 `resolve_gems_op()`，再执行返回的 `gems_op` |
-| `benchmark/test_<op>.py` | 比较 PyTorch reference 与待测代码的性能，并提供 Workload 枚举、重放和 profiling | 创建 Benchmark 时显式传入 `gems_op=flag_gems.<op>` |
+| `tests/test_<op>.py` | 验证数值、返回值、dtype、shape、原地修改等语义 | 在每个测试函数内调用 `resolve_gems_op()`；它会选择 CLI 待测代码或默认实现 |
+| `benchmark/test_<op>.py` | 比较 PyTorch reference 与待测代码的性能，并提供 Workload 枚举、重放和 profiling | 创建 Benchmark 时传入默认 `gems_op`，由基类统一解析 CLI 待测代码 |
 
 两个文件中的算子名必须一致：文件名、pytest marker、`resolve_gems_op()` 的名称、Benchmark 的 `op_name` 和 `gems_op` 应指向同一个公开算子。原地版本、out 版本和 backward 版本视为不同算子，例如 `clamp_max` 与 `clamp_max_` 分别使用各自的名称和入口。
 
@@ -118,7 +128,7 @@ KernelGen 后续编写的测试会统一通过 `gems_op` 指定待测代码，�
 
 正确性测试必须遵守以下要求：
 
-1. `gems_op` 必须在测试函数内解析，不得在模块导入阶段缓存。这样 KernelGen 在本轮测试中安装的待测代码才能生效，测试结束后也能正确恢复默认实现。
+1. `gems_op` 必须在测试函数内解析，不得在模块导入阶段缓存。这样 `--candidate-code-path` 指定的待测代码才能在本次 pytest 中生效；不传参数时同一测试仍调用默认实现。
 2. reference 使用 PyTorch 原生实现，待测结果只通过 `gems_op` 获得。不得在待测路径中调用 `torch.ops.*`、`torch.<op>` 或 `use_gems()`，也不得在异常后回退到 PyTorch 实现。
 3. 输入 Tensor 在 `flag_gems.device` 上生成，并使用 `accuracy_utils.to_reference()` 构造 reference 输入。对于原地修改、out、alias 或可能修改输入的算子，reference 与待测代码必须使用内容相同但存储独立的输入，并同时检查返回值和被修改对象。
 4. 传给直接函数的参数类型必须符合 FlagGems 公开 Python 接口。普通标量使用 Python 的 `int`、`float` 和 `bool`，不得依赖 dispatcher 把 NumPy 标量或其他特殊对象自动转换成 schema 类型。
@@ -167,7 +177,7 @@ utils.gems_assert_close(inp, ref_inp, dtype)
 
 ### 性能测试规范
 
-性能测试必须使用 FlagGems 的 Benchmark 基类完成 reference、warmup、计时和结果记录，不得在 pytest 文件中自行编写另一套计时循环。`torch_op` 只表示性能对照实现，`gems_op` 明确表示本轮被测实现；两者必须具有相同的输入和调用语义。
+性能测试必须使用 FlagGems 的 Benchmark 基类完成 reference、warmup、计时和结果记录，不得在 pytest 文件中自行编写另一套计时循环。`torch_op` 表示性能对照实现，测试文件传入的 `gems_op` 表示 FlagGems 默认实现；传入 `--candidate-code-path` 后，基类应统一把实际被测实现换成待测文件中的 `run`。对照实现、默认实现和待测实现必须具有相同的输入及调用语义。
 
 新增性能测试必须遵守以下要求：
 
@@ -248,7 +258,7 @@ def test_clamp_max():
 
 自定义 Benchmark 必须满足以下要求：
 
-1. 仍由 `base.Benchmark.run()` 驱动，pytest 中仍显式传入 `gems_op`。除非公共框架本身缺少必要能力，否则不得覆盖 `run()`、候选代码解析或计时主流程。
+1. 仍由 `base.Benchmark.run()` 驱动，pytest 中仍显式传入默认 `gems_op`，实际待测代码由基类根据 `--candidate-code-path` 统一解析。除非公共框架本身缺少必要能力，否则不得覆盖 `run()`、待测代码解析或计时主流程。
 2. 必须同时实现 `get_case_iter(dtype)` 和 `build_inputs(case)`：前者只生成不含 Tensor 的稳定 Workload 描述，后者只构造选中的一组真实输入。不得只实现旧式 `get_input_iter()`。
 3. 需要特殊 shape 时可以覆盖 `set_shapes()` 或 `set_more_shapes()`；需要特殊指标时只覆盖 `get_gbps()`、`get_tflops()` 等指标钩子。shape、参数和指标定义必须与算子实际语义一致。
 4. 继承某个公共 family 时，如果覆盖了该 family 原有的 case 循环，也必须同步覆盖 Workload 枚举和输入构造，不能让完整 benchmark 与单 case 重放走不同路径。
@@ -305,7 +315,7 @@ def test_affine_grid_generator():
 
 每组正确性和性能测试至少完成以下验证后才能提交评审：
 
-1. 正确性测试在没有 override 时调用 FlagGems 默认 `gems_op` 并全部通过；安装 KernelGen 待测代码后，所有相同 Workload 都改为执行待测 `gems_op`，退出 override 后恢复默认实现。
+1. 不传 `--candidate-code-path` 时，正确性和性能测试调用 FlagGems 默认实现并全部通过；传入参数后，所有相同 Workload 都改为执行待测文件中的 `run`，pytest 结束后再次运行能够恢复默认实现。
 2. 性能测试能够在不创建 Tensor 的情况下列出全部 Workload，每个 `case_id` 唯一且信息可读；任意选择一个 `case_id` 都能单独重放，并与完整 benchmark 中的对应 Workload 使用相同输入构造逻辑。
 3. Preflight 能让每个 core Workload 各执行一次待测 `gems_op`；profiling 只执行指定的一个 Workload；正式性能结果能确认本轮使用的待测代码。
 4. 正确性与性能文件中的算子名称、参数语义和 dtype 范围一致。正确性覆盖可以更广，但不能出现同名算子在两个文件中采用不同参数含义的情况。
@@ -315,11 +325,12 @@ def test_affine_grid_generator():
 
 ```bash
 python3 -m pytest -q tests/test_clamp_max.py --quick
-python3 -m pytest -q tests/test_clamp_max.py
+python3 -m pytest -q tests/test_clamp_max.py --quick --candidate-code-path /path/to/main.py
+python3 -m pytest -q tests/test_clamp_max.py --candidate-code-path /path/to/main.py
 python3 -m pytest -q benchmark/test_clamp_max.py --level core --list-cases --output /tmp/clamp-max-cases.json
-python3 -m pytest -q benchmark/test_clamp_max.py --level core --preflight-only
-python3 -m pytest -q benchmark/test_clamp_max.py --level core --case-id 'benchmark/test_clamp_max.py::test_clamp_max::core::float16::0' --record json --output /tmp/clamp-max-result.json
-python3 -m pytest -q benchmark/test_clamp_max.py --level core --profile-only --case-id 'benchmark/test_clamp_max.py::test_clamp_max::core::float16::0'
+python3 -m pytest -q benchmark/test_clamp_max.py --level core --preflight-only --candidate-code-path /path/to/main.py
+python3 -m pytest -q benchmark/test_clamp_max.py --level core --case-id 'benchmark/test_clamp_max.py::test_clamp_max::core::float16::0' --record json --output /tmp/clamp-max-result.json --candidate-code-path /path/to/main.py
+python3 -m pytest -q benchmark/test_clamp_max.py --level core --profile-only --case-id 'benchmark/test_clamp_max.py::test_clamp_max::core::float16::0' --candidate-code-path /path/to/main.py
 ```
 
-代码评审时，如果新正确性测试仍包含依赖 `use_gems()` 或 dispatcher 的算子测试、性能 Benchmark 没有显式传入 `gems_op`、`GenericBenchmark` 没有使用两阶段输入、自定义 Benchmark 只实现 `get_input_iter()` 而无法枚举和重放 Workload，或者测试通过 fallback、无理由 skip 和放宽断言掩盖失败，应直接退回修改。
+代码评审时，如果新正确性测试仍包含依赖 `use_gems()` 或 dispatcher 的算子测试、性能 Benchmark 没有显式传入默认 `gems_op`、测试不能通过 `--candidate-code-path` 执行待测代码、`GenericBenchmark` 没有使用两阶段输入、自定义 Benchmark 只实现 `get_input_iter()` 而无法枚举和重放 Workload，或者测试通过 fallback、无理由 skip 和放宽断言掩盖失败，应直接退回修改。

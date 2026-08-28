@@ -71,7 +71,9 @@ def test_baddbmm_():
         op_name="baddbmm_",
         input_fn=_input_fn,
         torch_op=lambda bias, batch1, batch2: bias.baddbmm_(batch1, batch2),
+        gems_op=flag_gems.baddbmm_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
 
     bench.run()

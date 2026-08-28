@@ -14,6 +14,8 @@
 
 import pytest
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -22,6 +24,7 @@ def test_copysign_():
     bench = base.BinaryPointwiseBenchmark(
         op_name="copysign_",
         torch_op=lambda a, b: a.copysign_(b),
+        gems_op=flag_gems.copysign_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

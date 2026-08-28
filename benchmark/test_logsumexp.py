@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts, utils
 
 
@@ -40,6 +42,7 @@ def test_logsumexp():
         build_inputs_fn=_build_inputs_fn,
         op_name="logsumexp",
         torch_op=torch.logsumexp,
+        gems_op=flag_gems.logsumexp,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

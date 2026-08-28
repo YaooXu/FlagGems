@@ -28,16 +28,27 @@ def test_logaddexp2():
     bench = base.BinaryPointwiseBenchmark(
         op_name="logaddexp2",
         torch_op=torch.logaddexp2,
+        gems_op=flag_gems.logaddexp2,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
-def logaddexp2_out_input_fn(shape, dtype, device):
+def logaddexp2_out_case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={},
+        builder_args=(shape,),
+    )
+
+
+def logaddexp2_out_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
     inp1 = torch.randn(shape, dtype=dtype, device=device)
     inp2 = torch.randn(shape, dtype=dtype, device=device)
     out = torch.empty(shape, dtype=dtype, device=device)
-    yield inp1, inp2, {"out": out}
+    return inp1, inp2, {"out": out}
 
 
 @pytest.mark.logaddexp2_out
@@ -48,7 +59,9 @@ def test_logaddexp2_out():
     bench = base.GenericBenchmark(
         op_name="logaddexp2_out",
         torch_op=torch.logaddexp2,
-        input_fn=logaddexp2_out_input_fn,
+        case_fn=logaddexp2_out_case_fn,
+        build_inputs_fn=logaddexp2_out_build_inputs_fn,
+        gems_op=flag_gems.logaddexp2_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -47,6 +47,7 @@ def test_square_(shape, dtype):
     res_out = gems_op(inp)
 
     utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(inp, ref_inp)
 
 
 @pytest.mark.square_out
@@ -60,7 +61,9 @@ def test_square_out(shape, dtype):
     ref_out = torch.empty_like(ref_inp)
 
     torch.square(ref_inp, out=ref_out)
-    with flag_gems.use_gems():
-        torch.square(inp, out=out)
+    gems_op = flag_gems.testing.resolve_gems_op("square_out", flag_gems.square_out)
+    res_out = gems_op(inp, out=out)
 
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(out, ref_out)
+    assert res_out is out

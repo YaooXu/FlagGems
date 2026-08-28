@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -31,6 +33,7 @@ def test_square_inplace():
     bench = base.UnaryPointwiseBenchmark(
         op_name="square_",
         torch_op=torch.square_,
+        gems_op=flag_gems.square_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )
@@ -42,6 +45,7 @@ def test_square_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="square_out",
         torch_op=torch.square,
+        gems_op=flag_gems.square_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

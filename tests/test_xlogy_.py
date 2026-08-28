@@ -32,8 +32,8 @@ def test_xlogy_(shape, dtype):
     ref_y = utils.to_reference(y, True)
     ref_out = ref_x.xlogy_(ref_y)
 
-    with flag_gems.use_gems():
-        res_out = x.xlogy_(y)
+    gems_op = flag_gems.testing.resolve_gems_op("xlogy_", flag_gems.xlogy_)
+    res_out = gems_op(x, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype)
     utils.gems_assert_close(x, ref_x, dtype)
@@ -55,8 +55,8 @@ def test_xlogy_special_values_(dtype):
     ref_y = utils.to_reference(y, True)
     ref_out = ref_x.xlogy_(ref_y)
 
-    with flag_gems.use_gems():
-        res_out = x.xlogy_(y)
+    gems_op = flag_gems.testing.resolve_gems_op("xlogy_", flag_gems.xlogy_)
+    res_out = gems_op(x, y)
 
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
     utils.gems_assert_close(x, ref_x, dtype, equal_nan=True)

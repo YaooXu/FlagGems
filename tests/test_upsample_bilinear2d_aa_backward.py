@@ -92,12 +92,13 @@ def test_upsample_bilinear2d_aa_backward(
         align_corners,
     ).to(dtype)
 
-    with flag_gems.use_gems():
-        res_out = upsample_bilinear2d_aa_backward_call(
-            res_grad.to(dtype),
-            shape,
-            align_corners,
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "upsample_bilinear2d_aa_backward",
+        flag_gems._upsample_bilinear2d_aa_backward,
+    )
+    res_out = gems_op(
+        res_grad.to(dtype), [H_out, W_out], list(shape), align_corners, None, None
+    )
 
     assert res_out.shape == shape
 

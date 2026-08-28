@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
+import flag_gems
 import pytest
 import torch
 
@@ -33,11 +36,10 @@ class ResizeOutputBenchmark(base.GenericBenchmark):
         return _RESIZE_OUTPUT_SHAPES
 
 
-def resize_output_input_fn(shape, dtype, device):
-    # Create input tensor
-    inp = torch.randn(*shape, device=device, dtype=dtype)
+def _case_fn(shape, dtype):
+    del dtype
+    numel = math.prod(shape)
     # Target size - same number of elements but different shape when possible
-    numel = inp.numel()
     if numel == 1024:
         target_size = [32, 32]
     elif numel == 2048:
@@ -52,23 +54,35 @@ def resize_output_input_fn(shape, dtype, device):
         target_size = [512, 2048]
     else:
         target_size = [numel]
-    yield inp, target_size, {"device": device}
+    yield base.BenchmarkCasePlan(
+        shape={"input": list(shape)},
+        params={"target_size": target_size},
+        builder_args=(shape, target_size),
+    )
+
+
+def _build_inputs_fn(plan, dtype, device):
+    shape, target_size = plan.builder_args
+    # Create input tensor
+    inp = torch.randn(*shape, device=device, dtype=dtype)
+    return inp, target_size, {"device": device}
 
 
 @pytest.mark.resize_output_
 def test_resize_output_():
     # Note: PyTorch doesn't have _resize_output_ implemented for CUDA, so we use
     # a dummy torch_op that calls our gems implementation as the "baseline"
-    from flag_gems import _resize_output_ as gems_resize_output_
-
     def dummy_torch_op(inp, size, device):
         # Use the same in-place implementation as GEMS for baseline
-        return gems_resize_output_(inp, size, device)
+        return flag_gems._resize_output_(inp, size, device)
 
     bench = ResizeOutputBenchmark(
-        input_fn=resize_output_input_fn,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
         op_name="resize_output_",
         torch_op=dummy_torch_op,
+        gems_op=flag_gems._resize_output_,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

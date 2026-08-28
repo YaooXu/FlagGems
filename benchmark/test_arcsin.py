@@ -15,13 +15,18 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
 @pytest.mark.arcsin
 def test_arcsin():
     bench = base.UnaryPointwiseBenchmark(
-        op_name="arcsin", torch_op=torch.arcsin, dtypes=consts.FLOAT_DTYPES
+        op_name="arcsin",
+        torch_op=torch.arcsin,
+        gems_op=flag_gems.arcsin,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
@@ -31,6 +36,7 @@ def test_arcsin_():
     bench = base.UnaryPointwiseBenchmark(
         op_name="arcsin_",
         torch_op=lambda a: a.arcsin_(),
+        gems_op=flag_gems.arcsin_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )
@@ -39,9 +45,10 @@ def test_arcsin_():
 
 @pytest.mark.arcsin_out
 def test_arcsin_out():
-    bench = base.UnaryPointwiseBenchmark(
+    bench = base.UnaryPointwiseOutBenchmark(
         op_name="arcsin_out",
-        torch_op=lambda x, out=None: torch.arcsin(x, out=out),
+        torch_op=torch.arcsin,
+        gems_op=flag_gems.arcsin_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

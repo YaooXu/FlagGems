@@ -75,6 +75,7 @@ def test_upsample_trilinear3d(align_corners):
         ),
         op_name="upsample_trilinear3d",
         torch_op=torch.ops.aten.upsample_trilinear3d.default,
+        gems_op=flag_gems.upsample_trilinear3d,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

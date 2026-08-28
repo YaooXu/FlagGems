@@ -47,7 +47,9 @@ def test_reflection_pad1d_backward(shape, padding, dtype):
     ref_grad = utils.to_reference(grad_output)
 
     ref_out = torch.ops.aten.reflection_pad1d_backward(ref_grad, ref_inp, padding)
-    with flag_gems.use_gems():
-        res_out = torch.ops.aten.reflection_pad1d_backward(grad_output, inp, padding)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "reflection_pad1d_backward", flag_gems.reflection_pad1d_backward
+    )
+    res_out = gems_op(grad_output, inp, padding)
 
     utils.gems_assert_close(res_out, ref_out, dtype)

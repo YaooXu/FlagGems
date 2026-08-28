@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -30,6 +32,7 @@ def test_resize_as():
         build_inputs_fn=_resize_as_build_inputs_fn,
         op_name="resize_as",
         torch_op=torch.Tensor.resize_as,
+        gems_op=flag_gems.resize_as,
         dtypes=consts.FLOAT_DTYPES,
     )
 
@@ -43,6 +46,7 @@ def test_resize_as_():
         build_inputs_fn=_resize_as_build_inputs_fn,
         op_name="resize_as_",
         torch_op=torch.Tensor.resize_as_,
+        gems_op=flag_gems.resize_as_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

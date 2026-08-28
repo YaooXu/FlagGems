@@ -40,16 +40,6 @@ class FusedAdamBenchmark(base.GenericBenchmark):
         self.shapes = list(_FUSED_ADAM_SHAPES)
 
 
-def fused_adam_input_fn(shape, dtype, device):
-    param = torch.randn(shape, dtype=dtype, device=device)
-    grad = torch.randn(shape, dtype=dtype, device=device)
-    exp_avg = torch.zeros(shape, dtype=dtype, device=device)
-    exp_avg_sq = torch.zeros(shape, dtype=dtype, device=device)
-    max_exp_avg_sq = torch.zeros(shape, dtype=dtype, device=device)
-    state_step = torch.tensor([1], dtype=torch.long, device=device)
-    yield param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq, state_step
-
-
 def fused_adam_case_fn(shape, dtype):
     del dtype
     yield base.BenchmarkCasePlan(
@@ -97,64 +87,83 @@ def torch_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq, state_step):
     return param
 
 
+def _torch_fused_adam(
+    params,
+    grads,
+    exp_avgs,
+    exp_avg_sqs,
+    max_exp_avg_sqs,
+    state_steps,
+    *,
+    lr=0.001,
+    beta1=0.9,
+    beta2=0.999,
+    weight_decay=0.0,
+    eps=1e-8,
+    amsgrad=False,
+    maximize=False,
+):
+    return torch_op(
+        params[0],
+        grads[0],
+        exp_avgs[0],
+        exp_avg_sqs[0],
+        max_exp_avg_sqs[0],
+        state_steps[0],
+    )
+
+
+def _fused_adam_build_inputs_fn(plan, dtype, device):
+    shape = plan.builder_args[0]
+    param = torch.randn(shape, dtype=dtype, device=device)
+    grad = torch.randn(shape, dtype=dtype, device=device)
+    exp_avg = torch.zeros(shape, dtype=dtype, device=device)
+    exp_avg_sq = torch.zeros(shape, dtype=dtype, device=device)
+    max_exp_avg_sq = torch.zeros(shape, dtype=dtype, device=device)
+    state_step = torch.tensor([1], dtype=torch.long, device=device)
+    return (
+        [param],
+        [grad],
+        [exp_avg],
+        [exp_avg_sq],
+        [max_exp_avg_sq],
+        [state_step],
+        {
+            "lr": 0.001,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+            "amsgrad": False,
+            "maximize": False,
+        },
+    )
+
+
 @pytest.mark.fused_adam
 def test_fused_adam():
-    def gems_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq, state_step):
-        return flag_gems._fused_adam(
-            [param],
-            [grad],
-            [exp_avg],
-            [exp_avg_sq],
-            [max_exp_avg_sq],
-            [state_step],
-            lr=0.001,
-            beta1=0.9,
-            beta2=0.999,
-            weight_decay=0.0,
-            eps=1e-8,
-            amsgrad=False,
-            maximize=False,
-        )
-
     bench = FusedAdamBenchmark(
         case_fn=fused_adam_case_fn,
-        build_inputs_fn=base.build_inputs_from_generic_input_fn(fused_adam_input_fn),
+        build_inputs_fn=_fused_adam_build_inputs_fn,
         op_name="fused_adam",
-        torch_op=torch_op,
+        torch_op=_torch_fused_adam,
+        gems_op=flag_gems._fused_adam,
         # _fused_adam only supports float32 for optimizer state precision
         dtypes=[torch.float32],
     )
-    bench.set_gems(gems_op)
     bench.run()
 
 
 @pytest.mark.fused_adam_
 def test_fused_adam_():
-    def gems_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq, state_step):
-        flag_gems._fused_adam_(
-            [param],
-            [grad],
-            [exp_avg],
-            [exp_avg_sq],
-            [max_exp_avg_sq],
-            [state_step],
-            lr=0.001,
-            beta1=0.9,
-            beta2=0.999,
-            weight_decay=0.0,
-            eps=1e-8,
-            amsgrad=False,
-            maximize=False,
-        )
-        return param
-
     bench = FusedAdamBenchmark(
         case_fn=fused_adam_case_fn,
-        build_inputs_fn=base.build_inputs_from_generic_input_fn(fused_adam_input_fn),
+        build_inputs_fn=_fused_adam_build_inputs_fn,
         op_name="fused_adam_",
-        torch_op=torch_op,
+        torch_op=_torch_fused_adam,
+        gems_op=flag_gems._fused_adam_,
         # _fused_adam only supports float32 for optimizer state precision
         dtypes=[torch.float32],
+        is_inplace=True,
     )
-    bench.set_gems(gems_op)
     bench.run()

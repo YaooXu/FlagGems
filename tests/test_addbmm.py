@@ -48,8 +48,8 @@ def test_accuracy_addbmm(M, N, K, scalar, dtype):
     alpha = beta = scalar
 
     ref_out = torch.addbmm(ref_bias, ref_mat1, ref_mat2, alpha=alpha, beta=beta)
-    with flag_gems.use_gems():
-        res_out = torch.addbmm(bias, mat1, mat2, beta=beta, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("addbmm", flag_gems.addbmm)
+    res_out = gems_op(bias, mat1, mat2, beta=beta, alpha=alpha)
 
     utils.gems_assert_close(res_out, ref_out, dtype, reduce_dim=K)
 

@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -25,12 +27,23 @@ def xlogy_input_fn(shape, dtype, device):
     yield inp1, inp2
 
 
+def _xlogy__case_fn(shape, dtype):
+    del dtype
+    yield base.BenchmarkCasePlan(
+        shape={"self": shape, "other": shape},
+        params={},
+        builder_args=(shape, 0),
+    )
+
+
 @pytest.mark.xlogy_
 def test_xlogy_():
     bench = base.GenericBenchmark(
         op_name="xlogy_",
+        case_fn=_xlogy__case_fn,
+        build_inputs_fn=base.build_inputs_from_generic_input_fn(xlogy_input_fn),
         torch_op=lambda a, b: a.xlogy_(b),
-        input_fn=xlogy_input_fn,
+        gems_op=flag_gems.xlogy_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
     )

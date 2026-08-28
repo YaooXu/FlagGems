@@ -30,6 +30,7 @@ def test_nonzero_numpy():
         build_inputs_fn=base.build_inputs_unary_case,
         op_name="nonzero_numpy",
         torch_op=torch.ops.aten.nonzero_numpy,
+        gems_op=flag_gems.nonzero_numpy,
         dtypes=consts.FLOAT_DTYPES + consts.INT_DTYPES + consts.BOOL_DTYPES,
     )
     bench.run()

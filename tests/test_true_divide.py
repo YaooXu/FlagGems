@@ -129,9 +129,11 @@ def test_true_divide_tensor_dispatch(shape, dtype, caplog):
     ref_inp2 = utils.to_reference(inp2, False)
 
     ref_out = torch.ops.aten.true_divide.Tensor(ref_inp1, ref_inp2)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "true_divide", flag_gems.true_divide_tensor
+    )
     with caplog.at_level("DEBUG", logger="flag_gems.ops.true_divide"):
-        with flag_gems.use_gems():
-            res_out = torch.ops.aten.true_divide.Tensor(inp1, inp2)
+        res_out = gems_op(inp1, inp2)
 
     assert "GEMS TRUE_DIVIDE" in caplog.text
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)

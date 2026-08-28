@@ -1,6 +1,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -9,6 +11,7 @@ def test_special_round():
     bench = base.UnaryPointwiseBenchmark(
         op_name="special_round",
         torch_op=torch.special.round,
+        gems_op=flag_gems.special_round,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -20,6 +23,7 @@ def test_special_round_out():
     bench = base.UnaryPointwiseOutBenchmark(
         op_name="special_round_out",
         torch_op=torch.ops.aten.special_round.out,
+        gems_op=flag_gems.special_round_out,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

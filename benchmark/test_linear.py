@@ -15,6 +15,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -41,6 +43,7 @@ def test_linear():
         op_name="linear",
         input_fn=_input_fn,
         torch_op=torch.nn.functional.linear,
+        gems_op=flag_gems.linear,
         dtypes=consts.FLOAT_DTYPES,
     )
 

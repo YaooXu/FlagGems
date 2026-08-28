@@ -21,6 +21,8 @@ def test_special_bessel_j1(shape, dtype):
         ref_out = torch.special.bessel_j1(ref_inp.float()).to(dtype)
     else:
         ref_out = torch.special.bessel_j1(ref_inp)
-    with flag_gems.use_gems():
-        res_out = torch.special.bessel_j1(inp)
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "special_bessel_j1", flag_gems.special_bessel_j1
+    )
+    res_out = gems_op(inp)
     utils.gems_assert_close(res_out, ref_out, dtype)
