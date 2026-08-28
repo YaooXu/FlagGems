@@ -731,16 +731,17 @@ _FULL_CONFIG = (
     ("linalg_ldl_solve", linalg_ldl_solve),
     ("linalg_lstsq", linalg_lstsq),
     ("linalg_matrix_norm", linalg_matrix_norm),
-    (
-        "linalg_matrix_sqrth",
-        linalg_matrix_sqrth,
-        lambda: torch_ge("2.15.0.dev20260627"),
-    ),
-    (
-        "linalg_matrix_sqrth.out",
-        linalg_matrix_sqrth_out,
-        lambda: torch_ge("2.15.0.dev20260627"),
-    ),
+    # Temporarily disabled until vendor images align their Torch/Triton runtimes.
+    # (
+    #     "linalg_matrix_sqrth",
+    #     linalg_matrix_sqrth,
+    #     lambda: torch_ge("2.15.0.dev20260627"),
+    # ),
+    # (
+    #     "linalg_matrix_sqrth.out",
+    #     linalg_matrix_sqrth_out,
+    #     lambda: torch_ge("2.15.0.dev20260627"),
+    # ),
     ("linalg_slogdet", linalg_slogdet),
     ("linalg_solve_triangular", linalg_solve_triangular),
     ("linalg_solve_triangular.out", linalg_solve_triangular_out),
@@ -1090,7 +1091,8 @@ _FULL_CONFIG = (
     ("special_modified_bessel_k1.out", special_modified_bessel_k1_out),
     ("special_multigammaln", special_multigammaln),
     ("special_ndtr", special_ndtr),
-    ("special_ndtri", special_ndtri),
+    # Temporarily disabled until vendor images align their Torch/Triton runtimes.
+    # ("special_ndtri", special_ndtri),
     ("special_round", special_round),
     ("special_round.out", special_round_out),
     ("special_scaled_modified_bessel_k1", special_scaled_modified_bessel_k1),

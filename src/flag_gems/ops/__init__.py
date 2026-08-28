@@ -526,10 +526,11 @@ from flag_gems.ops.linalg_lu_factor_ex import (
     linalg_lu_factor_ex_out,
 )
 from flag_gems.ops.linalg_matrix_norm import linalg_matrix_norm
-from flag_gems.ops.linalg_matrix_sqrth import (
-    linalg_matrix_sqrth,
-    linalg_matrix_sqrth_out,
-)
+# Temporarily disabled until vendor images align their Torch/Triton runtimes.
+# from flag_gems.ops.linalg_matrix_sqrth import (
+#     linalg_matrix_sqrth,
+#     linalg_matrix_sqrth_out,
+# )
 from flag_gems.ops.linalg_slogdet import linalg_slogdet
 from flag_gems.ops.linalg_solve_triangular import (
     linalg_solve_triangular,
@@ -840,7 +841,8 @@ from flag_gems.ops.special_modified_bessel_k1 import (
 )
 from flag_gems.ops.special_multigammaln import special_multigammaln
 from flag_gems.ops.special_ndtr import special_ndtr
-from flag_gems.ops.special_ndtri import special_ndtri
+# Temporarily disabled until vendor images align their Torch/Triton runtimes.
+# from flag_gems.ops.special_ndtri import special_ndtri
 from flag_gems.ops.special_round import special_round, special_round_out
 from flag_gems.ops.special_scaled_modified_bessel_k1 import (
     special_scaled_modified_bessel_k1,
@@ -1508,8 +1510,8 @@ __all__ = [
     "linalg_lu_factor_out",
     "linalg_lu_out",
     "linalg_matrix_norm",
-    "linalg_matrix_sqrth",
-    "linalg_matrix_sqrth_out",
+    # "linalg_matrix_sqrth",
+    # "linalg_matrix_sqrth_out",
     "linalg_slogdet",
     "linalg_solve_triangular",
     "linalg_solve_triangular_out",
@@ -1875,7 +1877,7 @@ __all__ = [
     "special_modified_bessel_k1_out",
     "special_multigammaln",
     "special_ndtr",
-    "special_ndtri",
+    # "special_ndtri",
     "special_round",
     "special_round_out",
     "special_scaled_modified_bessel_k1",
