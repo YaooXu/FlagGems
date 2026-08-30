@@ -12,12 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+import os
+import sys
+
 import pytest
 import torch
 
 import flag_gems
 
-from . import base, consts, utils
+# Same package-resolution bootstrap as the correctness suite: the benchmark
+# package that ships with this file must win over any other top-level
+# ``benchmark`` package already importable on sys.path (the KernelGen harness
+# runs pytest in-process with its own ``benchmark`` package).
+_BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_BENCH_DIR)
+if _PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, _PACKAGE_ROOT)
+_IMPORTED_BENCHMARK = sys.modules.get("benchmark")
+if _IMPORTED_BENCHMARK is not None and os.path.abspath(
+    getattr(_IMPORTED_BENCHMARK, "__file__", "")
+) != os.path.join(_BENCH_DIR, "__init__.py"):
+    del sys.modules["benchmark"]
+
+from . import base, consts, utils  # noqa: E402
+
+# aten::atleast_1d is a pure view/identity op (0-dim -> (1,) view, ndim >= 1
+# returned as-is). No public Benchmark family models a view identity op, so both
+# overloads use a two-phase GenericBenchmark (case_fn + build_inputs_fn). The
+# 0-dim scalar case is the defining workload and is prepended to the shape set.
+# gems_op is resolved through getattr because flag_gems.atleast_1d is not yet
+# registered as a direct callable; KernelGen's override_gems_op("atleast_1d",
+# ...) still wins at run time via flag_gems.testing.resolve_gems_op.
 
 
 def _case_fn(shape, dtype):
@@ -54,8 +80,16 @@ def _sequence_build_inputs_fn(plan, dtype, device):
 
 
 class Atleast1DBenchmark(base.GenericBenchmark):
+    # A view op's latency is dominated by the call overhead, not the tensor
+    # size, so capping the input numel avoids allocating multi-GB inputs (the
+    # generic DEFAULT_SHAPES include 1G-element tensors) for no signal.
+    MAX_NUMEL = 2**24  # 16M elements
+
     def set_shapes(self, shape_file_path=None):
         super().set_shapes(shape_file_path)
+        self.shapes = [
+            shape for shape in self.shapes if math.prod(shape) <= self.MAX_NUMEL
+        ]
         # atleast_1d's defining case is the 0-dim scalar -> (1,) view.
         if () not in self.shapes:
             self.shapes = [()] + list(self.shapes)

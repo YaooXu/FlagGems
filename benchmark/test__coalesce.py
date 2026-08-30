@@ -12,13 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+import sys as _sys
+from pathlib import Path as _Path
 
-import flag_gems
+# pytest --import-mode=importlib imports this module as <pkg>.test__coalesce,
+# where <pkg> is the "tests" or "benchmark" package of the checkout that
+# actually holds this file (the KernelGen verification harness stages a temp
+# copy of the FlagGems tree). When the driving process also has a same-named
+# package on sys.path (e.g. the KernelGen repo's own tests/ directory), a bare
+# relative import below would bind to that foreign package instead. Put the
+# checkout root of *this* file first in sys.path so the relative imports
+# resolve to the support files (accuracy_utils/test_utils/base/consts) that
+# ship next to it.
+_CHECKOUT_ROOT = _Path(__file__).resolve().parent.parent
+if str(_CHECKOUT_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_CHECKOUT_ROOT))
 
-from . import base, consts
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts  # noqa: E402
 
 # ``_coalesce`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly

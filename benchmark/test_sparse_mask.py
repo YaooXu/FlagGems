@@ -15,33 +15,33 @@
 import os
 import sys
 
-import pytest
-import torch
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts`` cannot resolve this checkout's benchmark
+# package through normal package discovery. Put the checkout root on sys.path so
+# the ``benchmark`` package resolves to THIS checkout no matter how pytest is
+# invoked (belt-and-suspenders: the correctness file already does this when it
+# runs first, but this keeps the benchmark file self-contained).
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
 
-# Make sure the FlagGems checkout that physically contains this file is the one
-# used for the sibling ``benchmark`` package. Under pytest
-# ``--import-mode=importlib`` the process sys.path may hold an unrelated entry
-# that shadows this checkout's ``benchmark`` package; insert the checkout root
-# at the front and re-import the package from this file's own directory.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
+import flag_gems  # noqa: E402
 
 from . import base, consts  # noqa: E402
 
-# aten::sparse_mask(self, mask) gathers values of ``self`` at the nonzero
-# positions of ``mask``, so its cost scales with the mask's nnz rather than the
-# dense element count. There are no meaningful dense entries for it in
-# core_shapes.yaml, so benchmark dedicated (dense shape, nnz_ratio) pairs.
+# sparse_mask gathers values from a dense ``self`` at a sparse mask's index
+# positions and returns a sparse COO tensor. There is no public Benchmark family
+# for sparse gather ops, so the benchmark uses the two-phase GenericBenchmark
+# (case_fn + build_inputs_fn). The candidate is resolved at run time from the
+# process-local override (flag_gems.testing.resolve_gems_op) via GenericBenchmark's
+# _resolve_direct_gems_op; flag_gems.sparse_mask does not exist yet as an
+# attribute, so the direct-callable default is fetched with getattr and may be
+# None. The perf reference is the aten op itself (torch.ops.aten.sparse_mask)
+# and both are called with the same (self, mask) signature.
 _SPARSE_MASK_SHAPES = [
     (1024, 1024),
     (2048, 2048),
@@ -52,6 +52,7 @@ _SPARSE_MASK_SHAPES = [
 
 def _case_fn(shape, dtype):
     del dtype
+    # yield generates one BenchmarkCasePlan per (shape, dtype) parametrization.
     yield base.BenchmarkCasePlan(
         shape={"self": shape, "mask": shape},
         params={"nnz_ratio": 0.1},
@@ -62,14 +63,12 @@ def _case_fn(shape, dtype):
 def _build_inputs_fn(plan, dtype, device):
     shape, nnz_ratio = plan.builder_args
     self_t = torch.randn(shape, dtype=dtype, device=device)
-    mask = (torch.rand(shape, device=device) > nnz_ratio).to_sparse()
+    mask_dense = torch.rand(shape, device=device) > (1.0 - nnz_ratio)
+    mask = mask_dense.to_sparse()
     return self_t, mask, {}
 
 
 class SparseMaskBenchmark(base.GenericBenchmark):
-    # sparse_mask is a sparse gather op; override set_shapes so the core shape
-    # file lookup is bypassed and the dedicated (shape, nnz_ratio) pairs above
-    # are used directly.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _SPARSE_MASK_SHAPES
 

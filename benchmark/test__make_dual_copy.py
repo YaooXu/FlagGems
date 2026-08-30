@@ -13,14 +13,26 @@
 # limitations under the License.
 
 import math
+import os
+import sys
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts, utils`` cannot resolve this checkout's benchmark
+# package through normal package discovery. Put the checkout root on sys.path so
+# the ``benchmark`` package resolves to THIS checkout no matter how pytest is
+# invoked.
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
 
-from . import base, consts, utils
+import flag_gems  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
 
 # ``_make_dual_copy`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly
@@ -32,65 +44,68 @@ setattr(
     MarkDecorator(Mark("_make_dual_copy", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# aten::_make_dual_copy(Tensor primal, Tensor tangent, int level) -> Tensor
-# materializes a fresh contiguous copy of the primal. The native reference is
-# only callable on inference tensors (its CompositeExplicitAutograd
-# implementation is guarded by an internal InferenceMode assert), so the input
-# builder creates the tensors inside torch.inference_mode(); the tensors stay
-# inference tensors after the context exits, which is all the reference
-# requires. The candidate kernel only consumes primal's data (the tangent and
-# level are ignored in this execution path), so each case materializes primal
-# + tangent and reads primal once.
+# _make_dual_copy materializes a fresh contiguous copy (the primal at the
+# requested forward-mode AD level; for the plain tensors used here the primal
+# is the tensor itself) of the input, so each case needs input + tangent +
+# output (2x one tensor's memory per case). The default shape set contains
+# 1G-element core shapes whose fp32 input+output would need ~8 GiB and OOM on
+# busy GPUs; cap the shapes while keeping performance-relevant sizes
+# (2**26 elements = 256 MiB fp32 per tensor).
+MAX_ELEMENTS = 2**26
+
+# _make_dual_copy requires (self, tangent, level); the public pointwise
+# families pass only the tensor(s), so a two-phase GenericBenchmark injects
+# the constant level argument explicitly.
 _LEVEL = 0
 
 
 def _case_fn(shape, dtype):
     del dtype
     yield base.BenchmarkCasePlan(
-        shape={"primal": shape, "tangent": shape},
+        shape={"input": shape, "tangent": shape},
         params={"level": _LEVEL},
-        builder_args=(shape, _LEVEL),
+        builder_args=(shape,),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    shape, level = plan.builder_args
+    shape = plan.builder_args[0]
+    # The reference torch.ops.aten._make_dual_copy is only callable on
+    # inference tensors (the native implementation is guarded by an
+    # InferenceMode assert), so the benchmark inputs are created inside
+    # torch.inference_mode().
     with torch.inference_mode():
         primal = utils.generate_tensor_input(shape, dtype, device)
         tangent = utils.generate_tensor_input(shape, dtype, device)
-    return primal, tangent, level
+    # Flat return: unpack_to_args_kwargs appends every Tensor/int/float and
+    # merges the trailing dict into kwargs, so the two tensors must be
+    # returned as separate positional entries (a nested (primal, tangent)
+    # tuple would be appended as a single argument).
+    return primal, tangent, {"level": plan.params["level"]}
 
 
 class MakeDualCopyBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark that supplies primal, tangent and level.
+    """Two-phase GenericBenchmark that passes the level argument.
 
-    aten::_make_dual_copy(Tensor primal, Tensor tangent, int level) -> Tensor
-    needs a level alongside the two tensors, which the binary pointwise
+    aten::_make_dual_copy(Tensor self, Tensor tangent, int level) -> Tensor
+    needs a level alongside the two tensors, which the unary pointwise
     families do not supply, so the case builder and input builder forward it
-    explicitly. The op materializes a fresh copy of the primal, so each case
-    reads primal (+ tangent) and writes the output (2x one tensor's memory per
-    case). The default shape set contains 1G-element core shapes whose fp32
-    primal + tangent + output would need ~12 GiB and OOM on busy GPUs; cap the
-    shapes while keeping performance-relevant sizes (2**26 elements = 256 MiB
-    fp32 per tensor).
-    """
+    explicitly.
 
-    MAX_ELEMENTS = 2**26
+    Only the .default overload is benchmarked. The autogenerated .out overload
+    is fully covered by the correctness tests; its native reference is the
+    same elementwise copy, so timing it adds no signal over the .default path.
+    """
 
     def set_shapes(self, shape_file_path=None):
         super().set_shapes(shape_file_path)
         self.shapes = [
-            shape for shape in self.shapes if math.prod(shape) <= self.MAX_ELEMENTS
+            shape for shape in self.shapes if math.prod(shape) <= MAX_ELEMENTS
         ]
 
 
 @pytest.mark._make_dual_copy
 def test__make_dual_copy():
-    # Only the .default overload is benchmarked. The autogenerated .out
-    # overload is fully covered by the correctness tests; its native reference
-    # can only be invoked inside torch.inference_mode() on inference tensors
-    # (an internal InferenceMode guard), which the benchmark timing path cannot
-    # satisfy, so the .out variant is not a distinct benchmark workload.
     bench = MakeDualCopyBenchmark(
         op_name="_make_dual_copy",
         case_fn=_case_fn,

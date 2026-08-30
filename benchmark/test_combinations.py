@@ -44,7 +44,8 @@ from . import base, consts, utils  # noqa: E402
 # rows), so the case list keeps n modest while still spanning small, medium and
 # large (n, r) pairs for both replacement modes. Each case is a (n, r,
 # with_replacement) triple; the default r=2 / without-replacement workload is
-# the primary one.
+# the primary one. The largest case writes ~16.8M output elements (67 MiB for
+# float32); the with-replacement cases cover the C(n + r - 1, r) growth path.
 _COMBINATIONS_CASES = [
     (64, 2, False),
     (256, 2, False),
@@ -53,6 +54,8 @@ _COMBINATIONS_CASES = [
     (64, 3, False),
     (256, 3, False),
     (64, 3, True),
+    (256, 3, True),
+    (1024, 2, True),
 ]
 
 
@@ -81,7 +84,13 @@ class CombinationsBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
+        del shape_file_path
         self.shapes = _COMBINATIONS_CASES
+
+    def set_more_shapes(self):
+        # GenericBenchmark's extra 1-D/2-D/3-D shapes would be rejected by the
+        # op's 1-D-only contract; the case list above is the full set.
+        return []
 
 
 @pytest.mark.combinations

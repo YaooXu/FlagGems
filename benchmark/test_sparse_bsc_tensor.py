@@ -68,13 +68,20 @@ def _case_fn(shape, dtype):
 def _build_inputs_fn(plan, dtype, device):
     matrix_shape, block, nnz = plan.builder_args
     ccol, row, values = _make_bsc_inputs(matrix_shape, block, nnz, dtype, device)
-    # dtype is passed explicitly: without it the sparse tensor defaults to
-    # Float regardless of the values dtype.
+    # The trailing dict is unpacked into kwargs by the benchmark runner, so
+    # torch_op and gems_op both receive (ccol, row, values, size=...,
+    # dtype=..., layout=..., device=...). dtype is passed explicitly: without
+    # it the sparse tensor defaults to Float regardless of the values dtype.
     return (
         ccol,
         row,
         values,
-        {"size": list(matrix_shape), "dtype": dtype, "device": device},
+        {
+            "size": list(matrix_shape),
+            "dtype": dtype,
+            "layout": torch.sparse_bsc,
+            "device": device,
+        },
     )
 
 

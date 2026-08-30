@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
-
-from . import base
 
 # ``_nested_compute_contiguous_strides_offsets`` starts with an underscore, and
 # ``pytest.mark`` refuses to generate a marker via attribute access for such
@@ -34,15 +35,35 @@ setattr(
     ),
 )
 
+# Make sure the FlagGems checkout that physically contains this file is the one
+# used for the sibling ``benchmark`` package. Under pytest
+# ``--import-mode=importlib`` the process sys.path may hold an unrelated entry
+# that shadows this checkout's ``benchmark`` package; insert the checkout root
+# at the front and re-import the package from this file's own directory.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import benchmark as _bench_pkg  # noqa: E402
+
+if _HERE not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg  # noqa: E402
+
+from . import base  # noqa: E402
+
 # aten::_nested_compute_contiguous_strides_offsets(Tensor nested_size)
 # -> (Tensor, Tensor) computes the contiguous strides and storage offsets of
 # each sub-tensor of a nested tensor from its (num_tensors, num_dims) int64
 # sizes tensor. The sizes metadata tensor is always a CPU tensor (torch creates
 # it that way even for CUDA nested tensors) and the op only touches that
 # metadata, so the benchmark measures dispatch plus the small int64 scan rather
-# than data movement. The default shape set is dominated by huge 1-D tensors
-# that are meaningless for a (num_tensors, num_dims) layout, so the benchmark
-# restricts itself to batch x dim layouts.
+# than data movement. int64 is the only dtype the op accepts (non-int64 inputs
+# raise RuntimeError), so the benchmark runs int64 cases only. The default
+# shape set is dominated by huge 1-D tensors that are meaningless for a
+# (num_tensors, num_dims) layout, so the benchmark restricts itself to
+# batch x dim layouts.
 _NESTED_SIZE_SHAPES = [
     (16, 2),
     (64, 3),
@@ -69,7 +90,11 @@ def _build_inputs_fn(plan, dtype, device):
     num_tensors, num_dims = plan.builder_args[0]
     gen = torch.Generator("cpu").manual_seed(0)
     nested_size = torch.randint(
-        1, 9, (num_tensors, num_dims), dtype=torch.int64, generator=gen
+        1,
+        plan.params["bound"],
+        (num_tensors, num_dims),
+        dtype=torch.int64,
+        generator=gen,
     )
     return (nested_size,)
 

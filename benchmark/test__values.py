@@ -15,11 +15,21 @@
 import os
 import sys
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+# The KernelGen verification harness stages this file in a temporary tree and
+# runs pytest in-process with --import-mode=importlib, where the checkout root
+# is not on sys.path (a `python -m pytest` invocation would normally place it
+# there). Insert the checkout root so the sibling benchmark package (base,
+# consts, conftest) below resolves identically in the in-tree and staged
+# verification layouts.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts  # noqa: E402
 
 # ``_values`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly
@@ -30,24 +40,6 @@ setattr(
     "_values",
     MarkDecorator(Mark("_values", (), {}, _ispytest=True), _ispytest=True),
 )
-
-# Make sure the FlagGems checkout that physically contains this file is the one
-# used for the sibling ``benchmark`` package. Under pytest
-# ``--import-mode=importlib`` the process sys.path may hold an unrelated entry
-# that shadows this checkout's ``benchmark`` package; insert the checkout root
-# at the front and re-import the package from this file's own directory.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
-
-from . import base, consts  # noqa: E402
 
 # (sparse_shape, dense_shape, nnz). _values returns the (nnz,) + dense_shape
 # values tensor of a sparse COO tensor — a metadata accessor whose result is an

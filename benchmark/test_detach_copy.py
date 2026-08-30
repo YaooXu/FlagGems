@@ -12,58 +12,80 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
+import os
+import sys
 
-import flag_gems
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# benchmark files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts`` cannot resolve this checkout's benchmark package
+# through normal package discovery. Put the checkout root on sys.path so the
+# ``benchmark`` package resolves to THIS checkout no matter how pytest is invoked
+# (belt-and-suspenders: the correctness file already does this when it runs
+# first, but this keeps the benchmark file self-contained).
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-from . import base, consts, utils
+import math  # noqa: E402
 
-# aten::detach_copy(Tensor self) -> Tensor is a pure memory copy that returns a
-# new contiguous tensor (no autograd, no aliasing), so the benchmark shapes are
-# chosen to exercise copy bandwidth at several sizes. The default shape set
-# contains a 1 GiB-element tensor, which would need ~4 GB per fp32 input and is
-# impractical for repeated copy runs; the shape list below is therefore
-# restricted to the memory-copy-relevant sizes.
-DETACH_COPY_SHAPES = [
-    (64, 64),
-    (4096, 4096),
-    (64, 512, 512),
-    (256, 1024, 1024),
-    (512, 512, 512),
-]
+import pytest  # noqa: E402
+import torch  # noqa: E402
 
+import flag_gems  # noqa: E402
 
-def _case_fn(shape, dtype):
-    del dtype
-    yield base.BenchmarkCasePlan(
-        shape={"input": shape},
-        params={},
-        builder_args=(shape,),
-    )
+from . import base, consts  # noqa: E402
+
+# detach_copy is a pure memory copy: unary, pointwise in shape space and
+# dtype-agnostic. The public UnaryPointwiseBenchmark family covers the .default
+# overload (single tensor in, fresh tensor out) and UnaryPointwiseOutBenchmark
+# covers the .out overload (caller-supplied out buffer passed as a kwarg). Both
+# use the same call semantics as torch.ops.aten.detach_copy / .out, which are
+# the perf reference; the candidate is passed explicitly via gems_op (the
+# harness override wins through resolve_gems_op inside the Benchmark base).
+#
+# The yaml-provided shapes include 1e9-element tensors (4 GiB fp32 per tensor);
+# the MAX_ELEMENTS cap keeps every timed copy within a few hundred MB so the
+# benchmark does not OOM.
+_MAX_ELEMENTS = 2**26
 
 
-def _build_inputs_fn(plan, dtype, device):
-    shape = plan.builder_args[0]
-    inp = utils.generate_tensor_input(shape, dtype, device)
-    return inp, {}
-
-
-class DetachCopyBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark for the detach_copy memory-copy workload."""
+class DetachCopyBenchmark(base.UnaryPointwiseBenchmark):
+    MAX_ELEMENTS = _MAX_ELEMENTS
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = DETACH_COPY_SHAPES
+        super().set_shapes(shape_file_path)
+        self.shapes = [
+            shape for shape in self.shapes if math.prod(shape) <= self.MAX_ELEMENTS
+        ]
+
+
+class DetachCopyOutBenchmark(base.UnaryPointwiseOutBenchmark):
+    MAX_ELEMENTS = _MAX_ELEMENTS
+
+    def set_shapes(self, shape_file_path=None):
+        super().set_shapes(shape_file_path)
+        self.shapes = [
+            shape for shape in self.shapes if math.prod(shape) <= self.MAX_ELEMENTS
+        ]
 
 
 @pytest.mark.detach_copy
 def test_detach_copy():
     bench = DetachCopyBenchmark(
         op_name="detach_copy",
-        case_fn=_case_fn,
-        build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.detach_copy,
         gems_op=getattr(flag_gems, "detach_copy", None),
+        dtypes=consts.FLOAT_DTYPES,
+    )
+    bench.run()
+
+
+@pytest.mark.detach_copy_out
+def test_detach_copy_out():
+    bench = DetachCopyOutBenchmark(
+        op_name="detach_copy.out",
+        torch_op=torch.ops.aten.detach_copy.out,
+        gems_op=getattr(flag_gems, "detach_copy_out", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

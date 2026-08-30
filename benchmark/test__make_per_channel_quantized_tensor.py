@@ -37,12 +37,13 @@ for _name in (
     )
 
 # aten::_make_per_channel_quantized_tensor copies a plain integer storage
-# tensor (uint8/int8/int32) into a per-channel affine quantized tensor. There
-# is no core_shapes.yaml entry for it, so the base class would fall back to
-# consts.DEFAULT_SHAPES, which includes a 1-B-element 1-D tensor whose
-# allocation cost would dominate the measurement. Use a modest,
-# allocation-friendly shape set that still spans a realistic range of ranks and
-# tensor sizes.
+# tensor (uint8/int8/int32) into a per-channel affine quantized tensor carrying
+# per-channel scale/zero_point metadata, so the benchmark measures copy
+# bandwidth plus output allocation. There is no core_shapes.yaml entry for it,
+# so the base class would fall back to consts.DEFAULT_SHAPES, which includes a
+# 1-B-element 1-D tensor whose allocation cost would dominate the measurement.
+# Use a modest, allocation-friendly shape set that still spans a realistic range
+# of ranks and tensor sizes.
 QUANT_STORAGE_DTYPES = [torch.uint8, torch.int8, torch.int32]
 
 MPCQT_SHAPES = [
@@ -91,6 +92,7 @@ def _build_inputs_fn_out(plan, dtype, device):
     # changing its dtype, so the buffer is created with the quantized dtype
     # derived from the benchmarked storage dtype. The initial metadata is
     # deliberately different so the overwrite performed by the op is observable.
+    # Allocation is not timed.
     out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
         scales=torch.full((num_channels,), 1.0, dtype=torch.float64, device=device),
@@ -103,7 +105,15 @@ def _build_inputs_fn_out(plan, dtype, device):
 
 
 class MakePerChannelQuantizedTensorBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
+    """Two-phase GenericBenchmark restricted to allocation-friendly shapes.
+
+    aten::_make_per_channel_quantized_tensor(Tensor self, Tensor scale, Tensor
+    zero_point, int axis) -> Tensor needs per-channel metadata tensors and an
+    axis scalar alongside the storage tensor, which the pointwise families do
+    not supply, so the case builder and input builder forward them explicitly.
+    The output is a quantized tensor of the same shape (dtype derived from the
+    storage dtype), so each case needs input + output (2x one tensor's memory).
+    """
 
     def set_shapes(self, shape_file_path=None):
         self.shapes = MPCQT_SHAPES
@@ -128,7 +138,7 @@ def test__make_per_channel_quantized_tensor():
 @pytest.mark._make_per_channel_quantized_tensor_out
 def test__make_per_channel_quantized_tensor_out():
     bench = MakePerChannelQuantizedTensorBenchmark(
-        op_name="_make_per_channel_quantized_tensor_out",
+        op_name="_make_per_channel_quantized_tensor.out",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._make_per_channel_quantized_tensor.out,

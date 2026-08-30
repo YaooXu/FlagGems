@@ -15,35 +15,26 @@
 import os
 import sys
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+# The KernelGen verification harness stages this file in a temporary tree and
+# runs pytest in-process with --import-mode=importlib, where the checkout root
+# is not on sys.path (a `python -m pytest` invocation would normally place it
+# there). Insert the checkout root so the sibling accuracy_utils package below
+# resolves identically in the in-tree and staged verification layouts.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
 
-# The KernelGen harness runs pytest in-process with its own ``tests`` package
-# (kernelgen/tests) earlier on sys.path than this checkout's ``tests`` package.
-# With ``--import-mode=importlib`` pytest does not prepend the checkout root, so
-# ``tests`` would resolve to the harness's package and ``from . import
-# accuracy_utils`` would fail with ImportError during collection. Re-point the
-# ``tests`` package at this file's directory before importing the helpers.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import tests as _tests_pkg  # noqa: E402
-
-if _HERE not in getattr(_tests_pkg, "__path__", []):
-    sys.modules.pop("tests", None)
-    import tests as _tests_pkg  # noqa: E402
+import flag_gems  # noqa: E402
 
 from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 
 # ``_values`` starts with an underscore, and ``pytest.mark`` refuses to
-# generate a marker via attribute access for such names. Register it directly
-# on the MarkGenerator so ``@pytest.mark._values`` and ``-m _values`` both
-# work.
+# generate a marker via attribute access for such names. Register the marker
+# directly on the MarkGenerator so ``@pytest.mark._values`` and ``-m _values``
+# both work.
 setattr(
     pytest.mark,
     "_values",
@@ -51,13 +42,35 @@ setattr(
 )
 
 # aten::_values(Tensor(a) self) -> Tensor(a) returns the (nnz,) + dense_shape
-# values tensor of a sparse COO tensor. The result is an alias of the input's
-# internal values storage and is independent of the stored indices, so every
-# workload below feeds a sparse COO tensor. Each (shape, sparse_dim, nnz)
-# triple is a distinct layout: 1-D all-sparse, 2-D/3-D all-sparse, and mixed
-# sparse+dense ranks up to 5-D, with varying nnz so the (nnz,) + dense_shape
-# shape of the result is exercised.
-_VALUES_CASES = [
+# values tensor of a sparse COO tensor as a VIEW that aliases the input's
+# internal values storage (the schema annotation Tensor(a) -> Tensor(a) forces
+# the alias). The returned entries are exactly the stored values, in storage
+# order, independent of the stored indices; no coalescing or filtering of
+# explicit zeros happens. The Sparse* backends are the only dispatch targets
+# (dense and SparseCsr* tensors raise NotImplementedError), so every workload
+# below feeds a sparse COO tensor.
+#
+# Coverage:
+#   * layouts: (shape, sparse_dim, nnz) cases selected from the quick/core/all
+#     shape levels, ranks 1-7, all-sparse and hybrid sparse+dense, with varying
+#     nnz so the (nnz,) + dense_shape shape of the result is exercised;
+#   * value ranges: tu.selected_ranges() over representative layouts, so every
+#     supported storage dtype is exercised with negative, positive, extreme and
+#     degenerate value ranges (all returned verbatim);
+#   * edge cases: empty (nnz == 0, dense and hybrid), uncoalesced (duplicate,
+#     unsorted indices), and nan/inf/-inf/+-0 values (all preserved verbatim);
+#   * negative: dense tensors, SparseCsr tensors and non-tensor inputs are
+#     rejected.
+#
+# No broadcast/backward dimensions apply: the operator is unary and returns a
+# plain alias of the input's storage (there is nothing to broadcast against or
+# differentiate).
+
+_VALUES_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+
+# (shape, sparse_dim, nnz) triples covering 1-D/2-D/3-D all-sparse, 2-D/3-D
+# hybrid, and mixed sparse+dense ranks up to 5-D.
+_VALUES_COO_CASES_CORE = [
     ((5,), 1, 4),
     ((3, 4), 2, 7),
     ((3, 4), 1, 16),
@@ -67,17 +80,39 @@ _VALUES_CASES = [
     ((3, 4, 5, 4, 5), 3, 40),
 ]
 
-# The result is the input's stored values, so the candidate must accept every
-# storage dtype the sparse COO runtime supports: every float, int, and bool
-# family.
-_VALUES_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+# Higher-rank layouts for the "all"/"extended" TEST_LEVEL: 4-D all-sparse and
+# hybrid ranks up to 7-D.
+_VALUES_COO_CASES_ALL = [
+    ((12, 9, 3, 6), 4, 48),
+    ((3, 6, 4, 4, 6, 5), 4, 64),
+    ((7, 3, 12, 4, 2, 15), 5, 80),
+    ((3, 4, 2, 5, 3, 4, 2), 3, 96),
+]
 
 
-def _make_input(shape, sparse_dim, nnz, dtype, seed=0):
-    # Deterministic CPU-side generation, then the sparse tensor is created on
-    # the test device. Indices are drawn with replacement: duplicate indices
-    # are allowed and merely leave the tensor uncoalesced (covered explicitly
-    # below).
+def _coo_cases():
+    """(shape, sparse_dim, nnz) layouts selected by the TEST_LEVEL env var."""
+    if tu.LEVEL == "quick":
+        return [((2, 19, 7), 2, 8)]
+    if tu.LEVEL in ("all", "extended"):
+        return _VALUES_COO_CASES_CORE + _VALUES_COO_CASES_ALL
+    return _VALUES_COO_CASES_CORE
+
+
+def _coo_value_range_cases():
+    """Representative all-sparse + hybrid layouts for the value-range sweep."""
+    if tu.LEVEL == "quick":
+        return [((2, 19, 7), 2, 8)]
+    if tu.LEVEL in ("all", "extended"):
+        return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 48)]
+    return [((3, 4), 2, 7), ((3, 4, 2), 2, 12)]
+
+
+def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
+    # Deterministic CPU-side index generation; the values tensor comes from the
+    # shared value-range helper (tu.make_input) and the sparse tensor is created
+    # on the test device. Duplicate indices are allowed and merely leave the
+    # tensor uncoalesced (covered explicitly below).
     gen = torch.Generator("cpu").manual_seed(seed)
     sparse_shape = shape[:sparse_dim]
     dense_shape = shape[sparse_dim:]
@@ -87,14 +122,7 @@ def _make_input(shape, sparse_dim, nnz, dtype, seed=0):
             for dim in sparse_shape
         ]
     )
-    if dtype.is_floating_point:
-        values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, (nnz,) + dense_shape, dtype=dtype, generator=gen)
-    else:
-        # Keep the magnitude small so the values stay valid for every integer
-        # storage dtype.
-        values = torch.randint(-5, 6, (nnz,) + dense_shape, dtype=dtype, generator=gen)
+    values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
@@ -109,39 +137,59 @@ def _resolve_gems_op():
     )
 
 
-def _assert_result(res_out, ref_out, inp, ref_inp, dtype):
-    # _values returns a fresh view of the input's internal (nnz,) + dense_shape
+def _assert_result(res_out, ref_out, inp, ref_inp):
+    # _values returns a view of the input's internal (nnz,) + dense_shape
     # values tensor. The stored entries are returned verbatim (no coalescing,
     # no filtering of explicit zeros) with the storage dtype preserved, and the
     # schema annotation Tensor(a) self -> Tensor(a) requires the result to
     # alias the input's values storage.
     assert res_out.dtype == ref_out.dtype == inp.dtype
     assert res_out.shape == ref_out.shape == inp._values().shape
-    if dtype.is_floating_point:
-        utils.gems_assert_close(res_out, ref_out, dtype)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
+    # The view must preserve the stored values bit-for-bit (nan/inf included),
+    # so exact equality is required for every dtype.
+    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal values tensor.
     assert res_out.data_ptr() == inp._values().data_ptr()
     assert ref_out.data_ptr() == ref_inp._values().data_ptr()
     # The accessor must not mutate the input: the result still matches the
     # (untouched) values captured on the reference copy before the call.
-    utils.gems_assert_equal(res_out, ref_inp._values())
+    utils.gems_assert_equal(res_out, ref_inp._values(), equal_nan=True)
 
 
 @pytest.mark._values
-@pytest.mark.parametrize("case", _VALUES_CASES)
+@pytest.mark.parametrize("case", _coo_cases())
 @pytest.mark.parametrize("dtype", _VALUES_DTYPES)
-def test__values(case, dtype):
+def test__values_coo(case, dtype):
+    # Layout coverage with values from [-1, 1]: negative and positive values
+    # for every storage dtype (bool/int snap the range to the representable
+    # set). The returned view must preserve them verbatim for every layout.
     shape, sparse_dim, nnz = case
-    inp = _make_input(shape, sparse_dim, nnz, dtype)
+    inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_result(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark._values
+@pytest.mark.parametrize("case", _coo_value_range_cases())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _VALUES_DTYPES)
+def test__values_coo_value_ranges(case, value_range, dtype):
+    # The stored values sweep the full spec range set (positive, negative,
+    # extreme and degenerate); _values must return them verbatim, unchanged and
+    # still aliased to the input's values storage.
+    shape, sparse_dim, nnz = case
+    inp = _make_coo_input(shape, sparse_dim, nnz, dtype, value_range)
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._values(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._values
@@ -159,7 +207,7 @@ def test__values_empty(dtype):
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._values
@@ -176,25 +224,20 @@ def test__values_empty_hybrid(dtype):
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._values
 @pytest.mark.parametrize("dtype", _VALUES_DTYPES)
 def test__values_uncoalesced(dtype):
-    # Duplicate indices leave the tensor uncoalesced; _values must still
-    # return exactly the stored values tensor (never a coalesced/sorted copy).
-    # The (0, 1) coordinate is repeated three times and the entries are NOT
-    # sorted, so a coalescing implementation would visibly change the result.
+    # Duplicate indices leave the tensor uncoalesced; _values must still return
+    # exactly the stored values tensor (never a coalesced/sorted copy) and it
+    # must stay an alias of the input's values storage. The (0, 1) coordinate
+    # is repeated three times and the entries are NOT sorted, so a coalescing
+    # implementation would visibly change the result.
     shape = (3, 4)
     indices = torch.tensor([[0, 0, 1, 2, 0], [1, 1, 2, 3, 1]], dtype=torch.long)
-    gen = torch.Generator("cpu").manual_seed(0)
-    if dtype.is_floating_point:
-        values = torch.randn((5,), dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, (5,), dtype=dtype, generator=gen)
-    else:
-        values = torch.randint(-5, 6, (5,), dtype=dtype, generator=gen)
+    values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
     ref_inp = utils.to_reference(inp)
@@ -202,4 +245,63 @@ def test__values_uncoalesced(dtype):
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_result(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark._values
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+def test__values_nan_inf(dtype):
+    # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
+    # verbatim (equal_nan=True), never sanitized.
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._values(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark._values
+def test__values_dense_raises():
+    # _values dispatches only on the sparse COO backends; dense tensors have no
+    # implementation and raise. The candidate must fail too rather than
+    # silently returning a bogus tensor.
+    inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
+    with pytest.raises(NotImplementedError):
+        torch.ops.aten._values(utils.to_reference(inp))
+    with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
+        _resolve_gems_op()(inp)
+
+
+@pytest.mark._values
+def test__values_csr_raises():
+    # SparseCsr* backends have no kernel for _values: a CSR tensor raises
+    # instead of returning its storage values, and the candidate must fail
+    # too.
+    crow_indices = torch.tensor([0, 1, 2])
+    col_indices = torch.tensor([0, 1])
+    values = tu.make_input(torch.float32, (2,), ["-1", "1"])
+    inp = torch.sparse_csr_tensor(
+        crow_indices, col_indices, values, (2, 3), device=flag_gems.device
+    )
+    with pytest.raises(NotImplementedError):
+        torch.ops.aten._values(utils.to_reference(inp))
+    with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
+        _resolve_gems_op()(inp)
+
+
+@pytest.mark._values
+def test__values_rejects_non_tensor():
+    # The aten schema requires a Tensor; a Python scalar hits the invalid
+    # combination of arguments path and raises.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._values(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()(3.14)

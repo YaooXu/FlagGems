@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -19,7 +22,25 @@ from torch._C._functorch import is_batchedtensor, is_legacy_batchedtensor
 
 import flag_gems
 
-from . import accuracy_utils as utils
+# The KernelGen harness runs pytest in-process with its own ``tests`` package
+# (kernelgen/tests) earlier on sys.path than this checkout's ``tests`` package.
+# With ``--import-mode=importlib`` pytest does not prepend the checkout root, so
+# ``tests`` would resolve to the harness's package and ``from . import
+# accuracy_utils`` would fail with ImportError during collection. Re-point the
+# ``tests`` package at this file's directory before importing the helpers.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import tests as _tests_pkg  # noqa: E402
+
+if _HERE not in getattr(_tests_pkg, "__path__", []):
+    sys.modules.pop("tests", None)
+    import tests as _tests_pkg  # noqa: E402
+
+from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 
 # ``_add_batch_dim`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly
@@ -35,12 +56,16 @@ setattr(
 # functorch/vmap primitive that wraps ``self`` in a legacy BatchedTensorImpl:
 # the physical tensor is kept whole and ``batch_dim`` is hidden behind a lazy
 # vmap batch dimension at ``level``, so the observable (logical) shape drops
-# that dimension. It requires an input of rank >= 1 (0-D inputs raise
-# RuntimeError) and a ``batch_dim`` in [0, dim). Each (shape, batch_dim) pair
-# below is a distinct parametrized workload; ranks 1-5 and both ends of the
-# valid batch_dim range are covered. Element counts stay small (<= 96K) since
-# the op only inspects metadata.
-ADD_BATCH_DIM_SHAPE_CASES = [
+# that dimension. The op is a pure zero-copy metadata view (no arithmetic ever
+# runs through the lazy wrapper), so every storage dtype is supported and the
+# value-range tests only need to verify that unwrapping reproduces the exact
+# stored values. It requires an input of rank >= 1 (0-D inputs raise
+# RuntimeError) and a non-negative ``level``; the candidate must reproduce
+# both validations. Each (shape, batch_dim) pair below is a distinct
+# parametrized workload; ranks 1-5 and both ends of the valid batch_dim range
+# are covered. Element counts stay small (<= 96K) since the op only inspects
+# metadata.
+_ADD_BATCH_DIM_CASES = [
     ((16,), 0),
     ((64, 32), 0),
     ((64, 32), 1),
@@ -56,22 +81,19 @@ ADD_BATCH_DIM_SHAPE_CASES = [
 # every storage dtype is supported. The logical value is materialized (see
 # ``_assert_batched_view``) before comparison, so floating-point dtypes still
 # compare exactly.
-ADD_BATCH_DIM_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+_ADD_BATCH_DIM_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
 
-
-def _make_input(shape, dtype):
-    if dtype.is_floating_point:
-        return torch.randn(shape, dtype=dtype, device=flag_gems.device)
-    if dtype == torch.bool:
-        return torch.randint(0, 2, shape, dtype=dtype, device=flag_gems.device)
-    return torch.randint(-100, 100, shape, dtype=dtype, device=flag_gems.device)
+# Representative rank-3 (shape, batch_dim, level) used by the value-range
+# sweep. The lazy-view semantics do not depend on the shape, so a single
+# mid-range batch_dim is enough to verify that every value range in the spec
+# round-trips bit-for-bit.
+_ADD_BATCH_DIM_VALUE_CASE = ((2, 19, 7), 1, 0)
 
 
 def _resolve_gems_op():
     # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. The default stays None
-    # until flag_gems._add_batch_dim is registered; resolution order is: (1)
-    # override, (2) the direct flag_gems._add_batch_dim callable, (3)
+    # override installed by KernelGen for this run wins. Resolution order is:
+    # (1) override, (2) the direct flag_gems._add_batch_dim callable, (3)
     # LookupError.
     return flag_gems.testing.resolve_gems_op(
         "_add_batch_dim", getattr(flag_gems, "_add_batch_dim", None)
@@ -122,11 +144,14 @@ def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype
 
 
 @pytest.mark._add_batch_dim
-@pytest.mark.parametrize("shape, batch_dim", ADD_BATCH_DIM_SHAPE_CASES)
+@pytest.mark.parametrize("shape, batch_dim", _ADD_BATCH_DIM_CASES)
 @pytest.mark.parametrize("level", [0, 1, 3])
-@pytest.mark.parametrize("dtype", ADD_BATCH_DIM_DTYPES)
+@pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim(shape, batch_dim, level, dtype):
-    inp = _make_input(shape, dtype)
+    # Values are irrelevant to the view itself (a representative [-1, 1] range
+    # keeps every storage dtype valid); the dedicated value-range test below
+    # sweeps the full spec ranges.
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
@@ -136,14 +161,42 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
 
 
 @pytest.mark._add_batch_dim
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
+def test__add_batch_dim_value_ranges(value_range, dtype):
+    # The lazy view must round-trip the exact stored values for every numeric
+    # range in the spec: it exposes the same physical elements, so unwrapping
+    # with the matching level/batch_dim/batch_size reproduces the input
+    # bit-for-bit (tu.assert_result_close compares int/bool exactly and floats
+    # with equal_nan=True).
+    shape, batch_dim, level = _ADD_BATCH_DIM_VALUE_CASE
+    inp = tu.make_input(dtype, shape, value_range)
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
+    res_out = _resolve_gems_op()(inp, batch_dim, level)
+
+    assert is_legacy_batchedtensor(ref_out)
+    assert is_legacy_batchedtensor(res_out)
+    assert res_out.dtype == ref_out.dtype == inp.dtype
+    assert res_out.shape == ref_out.shape
+
+    batch_size = inp.size(batch_dim)
+    ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
+    res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
+    tu.assert_result_close(ref_mat, ref_inp)
+    tu.assert_result_close(res_mat, ref_mat)
+
+
+@pytest.mark._add_batch_dim
 @pytest.mark.parametrize("shape, batch_dim", [((8, 16, 32), 1), ((4, 8, 16, 32), 2)])
 @pytest.mark.parametrize("level", [0, 1])
-@pytest.mark.parametrize("dtype", ADD_BATCH_DIM_DTYPES)
+@pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     # The lazy view must preserve the strides and storage offset of a
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
-    base = _make_input(shape, dtype)
+    base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = utils.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
@@ -153,3 +206,64 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     res_out = _resolve_gems_op()(inp, batch_dim, level)
 
     _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
+
+
+@pytest.mark._add_batch_dim
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+def test__add_batch_dim_nan_inf(dtype):
+    # The view never performs arithmetic, so nan/inf/-inf and signed zeros pass
+    # through the lazy wrapper untouched: unwrapping the batched view must
+    # reproduce them exactly (tu.assert_result_close compares with
+    # equal_nan=True). 1e30 also covers the overflow-to-inf path in fp16/bf16.
+    vals = [
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        0.0,
+        -0.0,
+        1.5,
+        -2.5,
+        1e30,
+        -1e30,
+    ]
+    inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
+    ref_inp = utils.to_reference(inp)
+    batch_dim, level = 0, 0
+
+    ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
+    res_out = _resolve_gems_op()(inp, batch_dim, level)
+
+    assert is_legacy_batchedtensor(ref_out)
+    assert is_legacy_batchedtensor(res_out)
+    # The logical (visible) shape drops the hidden batch dim: for the 1-D
+    # input below with batch_dim=0 the batched view exposes a 0-dim scalar.
+    assert res_out.shape == ref_out.shape
+
+    batch_size = inp.size(batch_dim)
+    ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
+    res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
+    tu.assert_result_close(ref_mat, ref_inp)
+    tu.assert_result_close(res_mat, ref_mat)
+
+
+@pytest.mark._add_batch_dim
+def test__add_batch_dim_rejects_0dim_input():
+    # A 0-dim (scalar) input has no dimension to hide behind a vmap batch dim:
+    # aten rejects it with RuntimeError and the candidate must too.
+    inp = tu.make_input(torch.float32, (), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._add_batch_dim(inp, 0, 0)
+    with pytest.raises(RuntimeError):
+        _resolve_gems_op()(inp, 0, 0)
+
+
+@pytest.mark._add_batch_dim
+def test__add_batch_dim_rejects_negative_level():
+    # level must be non-negative: a vmap batch dim always has a nesting level
+    # >= 0, and aten enforces this with an internal assert that surfaces as
+    # RuntimeError. The candidate must reproduce the validation.
+    inp = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._add_batch_dim(inp, 1, -1)
+    with pytest.raises(RuntimeError):
+        _resolve_gems_op()(inp, 1, -1)

@@ -12,19 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
+import os
+import sys
 
-import flag_gems
+# KernelGen's in-process verification stages the test files into an isolated
+# temp copy of the checkout, where the relative ``from . import base`` cannot
+# resolve this checkout's benchmark package through normal package discovery.
+# Put the checkout root on sys.path so the ``benchmark`` package resolves to
+# THIS checkout no matter how pytest is invoked (belt-and-suspenders: the
+# correctness file already does this when it runs first, but this keeps the
+# benchmark file self-contained).
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-from . import base
+import pytest  # noqa: E402
+import torch  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base  # noqa: E402
 
 # aten::can_cast(ScalarType from_, ScalarType to) -> bool is a pure dtype-
 # metadata query: it allocates nothing and never touches the device, so the
 # benchmark measures pure dispatch/function-call overhead. There are no tensor
 # inputs to materialize; the only meaningful case dimension is the (from_, to)
 # dtype pair. The representative pairs below cover every scalar-type family in
-# both directions, including both True and False outcomes.
+# both directions, including both True (same-family widening, bool -> float,
+# complex widening) and False (float -> int, float -> bool, int -> float16)
+# outcomes. No public Benchmark family covers a tensor-free dtype query, so the
+# two-phase GenericBenchmark drives the case list directly from _case_fn /
+# _build_inputs_fn; the candidate is passed explicitly via gems_op and the perf
+# reference is the aten op itself (torch.ops.aten.can_cast), both called with
+# the same two-dtype signature.
 _CAN_CAST_BENCH_PAIRS = [
     (torch.float16, torch.float32),
     (torch.float32, torch.float16),

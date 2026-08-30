@@ -12,13 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+import os
+import sys
 
-import flag_gems
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base`` cannot resolve this checkout's benchmark package through
+# normal package discovery. Put the checkout root on sys.path so the
+# ``benchmark`` package resolves to THIS checkout no matter how pytest is
+# invoked.
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-from . import base, consts, utils
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
 
 # ``_choose_qparams_per_tensor`` starts with an underscore, and ``pytest.mark``
 # refuses to generate a marker via attribute access for such names. Register it
@@ -33,11 +46,12 @@ setattr(
     ),
 )
 
-# aten::_choose_qparams_per_tensor computes a per-tensor min/max reduction and
-# returns a Python (float, int) pair. There is no core_shapes.yaml entry for it,
-# so the base class would fall back to consts.DEFAULT_SHAPES, which includes a
-# 1-B-element 1-D tensor whose allocation cost would dominate the measurement.
-# Use a modest, allocation-friendly shape set instead.
+# aten::_choose_qparams_per_tensor(Tensor self, bool reduce_range=False)
+# -> (float, int) computes a per-tensor min/max reduction and returns a Python
+# (float, int) pair. There is no core_shapes.yaml entry for it, so the base
+# class would fall back to consts.DEFAULT_SHAPES, which includes a 1-B-element
+# 1-D tensor whose allocation cost would dominate the measurement. Use a
+# modest, allocation-friendly shape set instead.
 CQPT_SHAPES = [
     (65536,),
     (1_048_576,),
@@ -47,18 +61,19 @@ CQPT_SHAPES = [
 
 def _case_fn(shape, dtype):
     del dtype
-    yield base.BenchmarkCasePlan(
-        shape={"input": shape},
-        params={"reduce_range": False},
-        builder_args=(shape,),
-    )
+    for reduce_range in (False, True):
+        yield base.BenchmarkCasePlan(
+            shape={"input": shape},
+            params={"reduce_range": reduce_range},
+            builder_args=(shape,),
+        )
 
 
 def _build_inputs_fn(plan, dtype, device):
     shape = plan.builder_args[0]
     inp = utils.generate_tensor_input(shape, dtype, device)
     # unpack_to_args_kwargs turns the params dict into call kwargs:
-    # op(input, reduce_range=False).
+    # op(input, reduce_range=...).
     return inp, {"reduce_range": plan.params["reduce_range"]}
 
 

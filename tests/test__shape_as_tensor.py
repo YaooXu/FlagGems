@@ -40,25 +40,27 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 
 # aten::_shape_as_tensor(Tensor self) -> Tensor materializes the logical shape
 # of ``self`` as a fresh 1-D int64 tensor. Only the rank and sizes are
 # consulted; the values, dtype, strides, and layout never influence the result,
 # and 0-D inputs yield an empty 1-D int64 tensor. aten always builds the output
 # on the CPU regardless of the input device, so the candidate must do the same.
-# These shapes mirror utils.POINTWISE_SHAPES.
-_SHAPE_AS_TENSOR_SHAPES = (
-    [(2, 19, 7)]
-    if utils.QUICK_MODE
-    else [
-        (),
-        (1,),
-        (1024, 1024),
-        (20, 320, 15),
-        (16, 128, 64, 60),
-        (16, 7, 57, 32, 29),
-    ]
-)
+#
+# Shape coverage follows the regular-operator spec's level selection
+# (quick/core/all via the TEST_LEVEL env var): tu.selected_shapes(), which
+# includes the 0-D scalar (mapped to the empty 1-D output) and ranks up to 8.
+#
+# Adaptation notes for the regular-operator spec:
+# - Broadcast: N/A -- the op takes a single ``self`` tensor.
+# - Backward: N/A -- the output is a fresh int64 metadata tensor with no
+#   autograd support, so there is no gradient to compare.
+# - Value ranges: the input values are semantically irrelevant, so the
+#   value-range dimension below (tu.selected_ranges()) verifies that the
+#   deterministic shape materialization is produced for every storage range.
+# - nan/inf: covered by a dedicated case (non-finite storage values are
+#   ignored; the int64 output compares exactly).
 
 # The op ignores the input values and dtype, so exercise every storage dtype
 # family the runtime supports (float, int, and bool "like" tensors).
@@ -105,53 +107,96 @@ def _resolve_gems_op():
     )
 
 
-def _assert_result(res_out, ref_out, shape):
+def _assert_result(res_out, ref_out, inp, shape):
     # The result is a fresh 1-D int64 CPU tensor holding the logical shape,
     # never a view/alias of the input.
     assert res_out.shape == ref_out.shape == (len(shape),)
     assert res_out.dtype == ref_out.dtype == torch.int64
     assert res_out.device == ref_out.device == torch.device("cpu")
     assert not res_out._is_view()
+    assert res_out.data_ptr() != inp.data_ptr()
     utils.gems_assert_equal(res_out, ref_out)
 
 
 @pytest.mark._shape_as_tensor
-@pytest.mark.parametrize("shape", _SHAPE_AS_TENSOR_SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _SHAPE_AS_TENSOR_INPUT_DTYPES)
-def test__shape_as_tensor(shape, dtype):
-    inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
+def test__shape_as_tensor_value_ranges(shape, value_range, dtype):
+    # The result must be the deterministic shape materialization no matter what
+    # values the storage holds, so every range from the regular-operator spec
+    # is exercised here (this doubles as the value-range migration of the
+    # original zeros-based workload).
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, shape)
+    _assert_result(res_out, ref_out, inp, shape)
 
 
 @pytest.mark._shape_as_tensor
 @pytest.mark.parametrize("shape", _EMPTY_SHAPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _SHAPE_AS_TENSOR_INPUT_DTYPES)
-def test__shape_as_tensor_empty(shape, dtype):
-    inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
+def test__shape_as_tensor_empty(shape, value_range, dtype):
+    # Zero-size dimensions are part of the logical shape; a ``numel == 0`` fast
+    # path that drops them would fail here.
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, shape)
+    _assert_result(res_out, ref_out, inp, shape)
 
 
 @pytest.mark._shape_as_tensor
-@pytest.mark.parametrize("case", _VIEW_CASES)
+@pytest.mark.parametrize("view_case", _VIEW_CASES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _SHAPE_AS_TENSOR_INPUT_DTYPES)
-def test__shape_as_tensor_view(case, dtype):
-    _, view_fn, expected = case
-    base = torch.zeros(4, 8, 6, dtype=dtype, device=flag_gems.device)
+def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
+    # _shape_as_tensor must work on any tensor layout; only the logical shape
+    # is consulted, never the storage.
+    _, view_fn, expected = view_case
+    base = tu.make_input(dtype, (4, 8, 6), value_range)
     inp = view_fn(base)
     assert not inp.is_contiguous()
+    assert inp.shape == expected
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, expected)
+    _assert_result(res_out, ref_out, inp, expected)
+
+
+@pytest.mark._shape_as_tensor
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+def test__shape_as_tensor_nan_inf(dtype):
+    # nan/inf are ordinary storage values for this op and must be ignored: the
+    # result is still the deterministic shape tensor over the logical shape.
+    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"])
+    inp = inp.clone()
+    inp[0, :, 0] = float("inf")
+    inp[1, :, 1] = float("-inf")
+    inp[2, :, 2] = float("nan")
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, (4, 8, 6))
+
+
+@pytest.mark._shape_as_tensor
+def test__shape_as_tensor_rejects_non_tensor_input():
+    # The schema requires a Tensor ``self``; every non-tensor argument is
+    # rejected at binding time by aten, and the candidate must not silently
+    # accept it either.
+    for bad in (5, [1, 2, 3], "abc"):
+        with pytest.raises(RuntimeError):
+            torch.ops.aten._shape_as_tensor(bad)
+        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+            _resolve_gems_op()(bad)

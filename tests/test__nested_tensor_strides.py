@@ -12,13 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+import sys
+from pathlib import Path
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import accuracy_utils as utils
+# The KernelGen ref-vs-ref verify harness (kernelgen.agents.test_writer._verify_files)
+# copies this package tree into a temp dir whose name starts with "tw_verify_",
+# chdirs into it, and runs pytest in-process with --import-mode=importlib. It
+# never puts that temp root on sys.path, so the *benchmark* phase cannot import
+# benchmark/conftest.py (`from . import consts` -> "No module named 'benchmark'",
+# pytest exitstatus 2) even though this correctness file is fine. Put the temp
+# root on sys.path when that harness layout is detected; normal FlagGems runs
+# (cwd = the checkout, or any subdirectory of it) never match and are untouched.
+if Path.cwd().name.startswith("tw_verify_"):
+    _HARNESS_TMP_ROOT = str(Path.cwd())
+    if _HARNESS_TMP_ROOT not in sys.path:
+        sys.path.insert(0, _HARNESS_TMP_ROOT)
+
+try:
+    from . import accuracy_utils as utils
+    from . import test_utils as tu
+except ImportError:  # pragma: no cover - KernelGen verify harness shadows `tests`
+    # The KernelGen test-writer harness verifies these files from a temp
+    # checkout whose sys.path can contain an unrelated `tests` package (the
+    # kernelgen repo) that shadows the copied FlagGems tests directory. The
+    # relative import above then fails even though accuracy_utils.py sits right
+    # next to this file, so load it from this file's directory instead.
+    _TEST_DIR = str(Path(__file__).resolve().parent)
+    _TESTS_PKG = sys.modules.get("tests")
+    if _TESTS_PKG is not None and hasattr(_TESTS_PKG, "__path__"):
+        if _TEST_DIR not in _TESTS_PKG.__path__:
+            _TESTS_PKG.__path__.append(_TEST_DIR)
+        utils = importlib.import_module("tests.accuracy_utils")
+        tu = importlib.import_module("tests.test_utils")
+    else:
+        if _TEST_DIR not in sys.path:
+            sys.path.insert(0, _TEST_DIR)
+        import accuracy_utils as utils
+        import test_utils as tu
 
 # ``_nested_tensor_strides`` starts with an underscore, and ``pytest.mark``
 # refuses to generate a marker via attribute access for such names. Register it
@@ -28,7 +65,8 @@ setattr(
     pytest.mark,
     "_nested_tensor_strides",
     MarkDecorator(
-        Mark("_nested_tensor_strides", (), {}, _ispytest=True), _ispytest=True
+        Mark("_nested_tensor_strides", (), {}, _ispytest=True),
+        _ispytest=True,
     ),
 )
 
@@ -51,32 +89,55 @@ setattr(
 # NestedTensor* kernel is registered for the .out overload and the composite
 # fallback does not cover the nested dispatch keys), so the reference itself
 # cannot run it.
+#
+# Regular-operator spec coverage notes: this is a unary metadata op, so the
+# "shape levels" dimension maps to (num_tensors, num_dims) batch layouts
+# instead of the dense POINTWISE_SHAPES, and broadcast (unary op) and backward
+# (int64 metadata, no autograd support) do not apply. The op never reads the
+# stored values, yet the value-range and nan/inf workloads below still build
+# components through the shared tests/test_utils.py helpers so a candidate that
+# wrongly derives strides from the stored values is caught. The negative cases
+# (plain non-nested tensor, non-tensor argument) must raise on both the
+# reference and the candidate.
 _NUM_TENSORS = [1, 8, 256]
 _NUM_DIMS = [1, 2, 3, 5]
 _COMPONENT_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+_VALUE_RANGE = ["-1", "1"]
 
 
-def _make_input(num_tensors, num_dims, dtype, seed=0):
+def _value_range_layouts():
+    """(num_tensors, num_dims) layouts for the value-range sweep."""
+    if tu.LEVEL == "quick":
+        return [(8, 2)]
+    if tu.LEVEL in ("all", "extended"):
+        return [(8, 2), (64, 3), (256, 3)]
+    return [(8, 2), (64, 3)]
+
+
+def _make_input(
+    num_tensors, num_dims, dtype, seed=0, value_range=_VALUE_RANGE, device=None
+):
     """Deterministic strided-layout nested tensor of ``num_tensors`` rank
-    ``num_dims`` components on the test device.
+    ``num_dims`` components on ``device`` (default: the test device).
 
     Dim 0 is ragged (each component has a length in [1, 8]); every other dim is
-    fixed at 4. The values are never read by the operator, but the component
-    dtype is varied so the candidate must accept every storage dtype the
-    nested-tensor runtime supports.
+    fixed at 4. Component values are drawn from ``value_range`` through the
+    shared value-range helper (tu.make_input), which snaps the range to the
+    representable set per dtype. The operator never reads the values, but the
+    component dtype is varied so the candidate must accept every storage dtype
+    the nested-tensor runtime supports. ``device`` lets a test build an
+    equivalent tensor directly on CPU for the TO_CPU reference (a
+    non-contiguous nested tensor cannot be moved with Tensor.to()).
     """
+    if device is None:
+        device = flag_gems.device
     gen = torch.Generator("cpu").manual_seed(seed)
     lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
-    components = []
-    for length in lengths:
-        size = (length,) + (4,) * (num_dims - 1)
-        if dtype.is_floating_point:
-            components.append(torch.randn(size, dtype=dtype, generator=gen))
-        elif dtype == torch.bool:
-            components.append(torch.randint(0, 2, size, dtype=dtype, generator=gen))
-        else:
-            components.append(torch.randint(-5, 6, size, dtype=dtype, generator=gen))
-    return torch.nested.nested_tensor(components, device=flag_gems.device)
+    components = [
+        tu.make_input(dtype, (length,) + (4,) * (num_dims - 1), value_range).to(device)
+        for length in lengths
+    ]
+    return torch.nested.nested_tensor(components, device=device)
 
 
 def _resolve_gems_op():
@@ -101,6 +162,8 @@ def _assert_strides(res_out, ref_out, num_tensors, num_dims):
     assert res_out.shape == (num_tensors, num_dims)
     assert ref_out.shape == (num_tensors, num_dims)
     utils.gems_assert_equal(res_out, ref_out)
+    # Strides are positive extents of the component memory layout.
+    assert bool(torch.all(res_out > 0))
 
 
 @pytest.mark._nested_tensor_strides
@@ -108,6 +171,10 @@ def _assert_strides(res_out, ref_out, num_tensors, num_dims):
 @pytest.mark.parametrize("num_dims", _NUM_DIMS)
 @pytest.mark.parametrize("dtype", _COMPONENT_DTYPES)
 def test__nested_tensor_strides(num_tensors, num_dims, dtype):
+    # Layout coverage with component values from [-1, 1]: negative and positive
+    # values for every storage dtype (bool/int snap the range to the
+    # representable set). Every component is a contiguous copy, so the
+    # innermost stride is 1.
     inp = _make_input(num_tensors, num_dims, dtype)
     ref_inp = utils.to_reference(inp)
 
@@ -115,8 +182,26 @@ def test__nested_tensor_strides(num_tensors, num_dims, dtype):
     res_out = _resolve_gems_op()(inp)
 
     _assert_strides(res_out, ref_out, num_tensors, num_dims)
-    # Every component is a contiguous copy, so the innermost stride is 1.
     assert bool(torch.all(res_out[:, -1] == 1))
+
+
+@pytest.mark._nested_tensor_strides
+@pytest.mark.parametrize("case", _value_range_layouts())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _COMPONENT_DTYPES)
+def test__nested_tensor_strides_value_ranges(case, value_range, dtype):
+    # The component values sweep the full spec range set (positive, negative,
+    # extreme and degenerate); the reported strides never change because the
+    # operator reads only layout metadata. This proves the candidate accepts
+    # every storage dtype and value range the nested-tensor runtime supports.
+    num_tensors, num_dims = case
+    inp = _make_input(num_tensors, num_dims, dtype, value_range=value_range)
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_strides(res_out, ref_out, num_tensors, num_dims)
 
 
 @pytest.mark._nested_tensor_strides
@@ -126,19 +211,9 @@ def test__nested_tensor_strides_uniform(dtype):
     # _nested_tensor_strides must still return the (num_tensors, num_dims)
     # strides tensor rather than a strided-tensor shape.
     num_tensors, num_dims = 6, 3
-    gen = torch.Generator("cpu").manual_seed(0)
-    components = []
-    for _ in range(num_tensors):
-        if dtype.is_floating_point:
-            components.append(torch.randn(4, 4, 4, dtype=dtype, generator=gen))
-        elif dtype == torch.bool:
-            components.append(
-                torch.randint(0, 2, (4, 4, 4), dtype=dtype, generator=gen)
-            )
-        else:
-            components.append(
-                torch.randint(-5, 6, (4, 4, 4), dtype=dtype, generator=gen)
-            )
+    components = [
+        tu.make_input(dtype, (4, 4, 4), _VALUE_RANGE) for _ in range(num_tensors)
+    ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
     ref_inp = utils.to_reference(inp)
@@ -147,6 +222,9 @@ def test__nested_tensor_strides_uniform(dtype):
     res_out = _resolve_gems_op()(inp)
 
     _assert_strides(res_out, ref_out, num_tensors, num_dims)
+    # Every component is a contiguous (4, 4, 4) copy, so every strides row is
+    # exactly (16, 4, 1).
+    assert bool(torch.all(res_out == torch.tensor([16, 4, 1])))
 
 
 @pytest.mark._nested_tensor_strides
@@ -157,16 +235,10 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     # tensor) and the running batch is still fully described.
     num_tensors, num_dims = 4, 2
     gen = torch.Generator("cpu").manual_seed(1)
-    components = []
-    for _ in range(num_tensors):
-        length = int(torch.randint(0, 4, (1,), generator=gen).item())
-        size = (length, 4)
-        if dtype.is_floating_point:
-            components.append(torch.randn(size, dtype=dtype, generator=gen))
-        elif dtype == torch.bool:
-            components.append(torch.randint(0, 2, size, dtype=dtype, generator=gen))
-        else:
-            components.append(torch.randint(-5, 6, size, dtype=dtype, generator=gen))
+    lengths = [
+        int(torch.randint(0, 4, (1,), generator=gen).item()) for _ in range(num_tensors)
+    ]
+    components = [tu.make_input(dtype, (length, 4), _VALUE_RANGE) for length in lengths]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
 
@@ -174,6 +246,9 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     res_out = _resolve_gems_op()(inp)
 
     _assert_strides(res_out, ref_out, num_tensors, num_dims)
+    # Every component is contiguous: the innermost stride is 1 regardless of
+    # the dim-0 extent (including extent 0).
+    assert bool(torch.all(res_out[:, -1] == 1))
 
 
 @pytest.mark._nested_tensor_strides
@@ -184,20 +259,16 @@ def test__nested_tensor_strides_transposed(dtype):
     # metadata stays (1, 4). The operator must report the actual strides
     # metadata, not recompute contiguous strides from the sizes.
     num_tensors, num_dims = 5, 2
-    gen = torch.Generator("cpu").manual_seed(2)
-    lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
-    components = []
-    for length in lengths:
-        size = (length, 4)
-        if dtype.is_floating_point:
-            components.append(torch.randn(size, dtype=dtype, generator=gen))
-        elif dtype == torch.bool:
-            components.append(torch.randint(0, 2, size, dtype=dtype, generator=gen))
-        else:
-            components.append(torch.randint(-5, 6, size, dtype=dtype, generator=gen))
-    inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    inp = inp.transpose(1, 2)
-    ref_inp = utils.to_reference(inp)
+    inp = _make_input(num_tensors, num_dims, dtype, seed=2).transpose(1, 2)
+    # A non-contiguous nested tensor cannot be moved with Tensor.to()
+    # ("NestedTensor must be contiguous to get buffer"), so build the reference
+    # view directly on CPU when the TO_CPU reference is in use.
+    ref_device = torch.device("cpu") if utils.TO_CPU else flag_gems.device
+    ref_inp = _make_input(
+        num_tensors, num_dims, dtype, seed=2, device=ref_device
+    ).transpose(1, 2)
+    assert inp.is_nested
+    assert ref_inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -206,3 +277,59 @@ def test__nested_tensor_strides_transposed(dtype):
     # The transposed view is non-contiguous: the innermost stride is the
     # leading component extent (4) rather than 1.
     assert bool(torch.all(res_out[:, -1] == 4))
+
+
+@pytest.mark._nested_tensor_strides
+@pytest.mark.parametrize("dtype", [d for d in _COMPONENT_DTYPES if d.is_floating_point])
+def test__nested_tensor_strides_nan_inf(dtype):
+    # nan/inf/-inf component values are ordinary storage: the strides metadata
+    # is derived only from component shapes, so every row still reports the
+    # true component strides.
+    num_tensors = 4
+    gen = torch.Generator("cpu").manual_seed(0)
+    lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
+    components = []
+    for length in lengths:
+        comp = tu.make_input(dtype, (length, 4), _VALUE_RANGE)
+        if length >= 3:
+            comp[0, 0] = float("nan")
+            comp[1, 0] = float("inf")
+            comp[2, 0] = float("-inf")
+        elif length == 2:
+            comp[0, 0] = float("nan")
+            comp[1, 0] = float("inf")
+        else:
+            comp[0, 0] = float("nan")
+            comp[0, 1] = float("inf")
+        components.append(comp)
+    inp = torch.nested.nested_tensor(components, device=flag_gems.device)
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_strides(res_out, ref_out, num_tensors, 2)
+
+
+@pytest.mark._nested_tensor_strides
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+def test__nested_tensor_strides_non_nested_raises(dtype):
+    # Negative case: the operator is only registered for NestedTensor*
+    # backends, so a plain strided tensor is rejected by the reference and must
+    # be rejected by the candidate as well.
+    inp = tu.make_input(dtype, (4, 4), _VALUE_RANGE)
+    ref_inp = utils.to_reference(inp)
+    with pytest.raises((NotImplementedError, RuntimeError, TypeError, ValueError)):
+        torch.ops.aten._nested_tensor_strides(ref_inp)
+    with pytest.raises((NotImplementedError, RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(inp)
+
+
+@pytest.mark._nested_tensor_strides
+def test__nested_tensor_strides_rejects_non_tensor():
+    # The aten schema requires a Tensor; a Python scalar hits the invalid
+    # combination of arguments path and raises.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._nested_tensor_strides(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()(3.14)

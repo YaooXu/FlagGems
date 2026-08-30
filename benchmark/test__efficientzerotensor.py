@@ -12,13 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
+# Same package-resolution bootstrap as the correctness suite: the benchmark
+# package that ships with this file must win over any other top-level
+# ``benchmark`` package already importable on sys.path (the KernelGen harness
+# runs pytest in-process with its own ``benchmark`` package).
+_BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_BENCH_DIR)
+if _PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, _PACKAGE_ROOT)
+_IMPORTED_BENCHMARK = sys.modules.get("benchmark")
+if _IMPORTED_BENCHMARK is not None and os.path.abspath(
+    getattr(_IMPORTED_BENCHMARK, "__file__", "")
+) != os.path.join(_BENCH_DIR, "__init__.py"):
+    del sys.modules["benchmark"]
+
+from . import base, consts  # noqa: E402
 
 # ``_efficientzerotensor`` starts with an underscore, and ``pytest.mark`` refuses
 # to generate a marker via attribute access for such names. Register the markers
@@ -31,7 +48,7 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_efficientzerotensor is a zero-copy factory: on CUDA it returns an
+# aten::_efficientzerotensor is a factory that on many backends returns an
 # all-zero tensor backed by a single shared zero byte (nbytes == 0), so the
 # default-variant benchmark measures dispatch + storage-construction overhead
 # rather than memory bandwidth. The default shape set contains a 1-B-element

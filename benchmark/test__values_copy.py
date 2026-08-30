@@ -43,11 +43,11 @@ setattr(
 
 # (sparse_shape, dense_shape, nnz). _values_copy materializes the
 # (nnz,) + dense_shape values tensor of a sparse COO tensor as a fresh
-# contiguous copy — a data-movement accessor whose cost is proportional to
-# nnz * prod(dense_shape) (the size of the returned values tensor), so
-# benchmark a spread of sparse ranks, dense ranks and nnz values. The
-# device-side allocation stays small relative to the logical size because only
-# nnz entries are stored.
+# contiguous copy -- a metadata accessor whose cost is proportional to
+# nnz * prod(dense_shape) (the size of the returned values tensor) and
+# independent of the sparse index math, so benchmark a spread of sparse ranks,
+# dense ranks and nnz values. The device-side allocation stays small relative
+# to the logical size because only nnz entries are stored.
 _VALUES_COPY_SHAPES = [
     ((1024, 1024), (), 65536),
     ((1024, 1024), (), 1048576),
@@ -62,10 +62,13 @@ def _torch_values_copy(inp):
     # torch.ops.aten._values_copy is registered as
     # CompositeExplicitAutogradNonFunctional, whose dispatch-key set excludes
     # the Sparse functionality key, so it is unreachable on sparse tensors in
-    # the installed build. Benchmark the operator's exact native body —
-    # _values(self).clone(contiguous) — which shares call semantics with the
+    # the installed build. Benchmark the operator's exact native body --
+    # _values(self).clone(contiguous) -- which shares call semantics with the
     # candidate.
-    return torch.ops.aten._values(inp).clone(memory_format=torch.contiguous_format)
+    try:
+        return torch.ops.aten._values_copy(inp)
+    except NotImplementedError:
+        return torch.ops.aten._values(inp).clone(memory_format=torch.contiguous_format)
 
 
 def _case_fn(shape, dtype):
@@ -94,8 +97,8 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 class ValuesCopyBenchmark(base.GenericBenchmark):
-    # _values_copy is a sparse data-movement accessor; there are no meaningful
-    # dense shapes in core_shapes.yaml, so benchmark dedicated (sparse_shape,
+    # _values_copy is a sparse metadata accessor; there are no meaningful dense
+    # shapes in core_shapes.yaml, so benchmark dedicated (sparse_shape,
     # dense_shape, nnz) triples instead.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _VALUES_COPY_SHAPES

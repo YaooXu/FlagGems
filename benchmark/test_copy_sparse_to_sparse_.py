@@ -12,39 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import sys as _sys
+from pathlib import Path as _Path
 
-import pytest
-import torch
+# pytest --import-mode=importlib imports this module as <pkg>.test_copy_sparse_to_sparse_,
+# where <pkg> is the "tests" or "benchmark" package of the checkout that actually
+# holds this file (the KernelGen verification harness stages a temp copy of the
+# FlagGems tree). When the driving process also has a same-named package on
+# sys.path (e.g. the KernelGen repo's own tests/ directory), a bare relative
+# import below would bind to that foreign package instead. Put the checkout root
+# of *this* file first in sys.path so the relative imports resolve to the
+# support files (base/consts) that ship next to it.
+_CHECKOUT_ROOT = _Path(__file__).resolve().parent.parent
+if str(_CHECKOUT_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_CHECKOUT_ROOT))
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# test files into an isolated temp copy of the checkout, where the relative
-# ``from . import base, consts`` cannot resolve this checkout's benchmark
-# package through normal package discovery. Put the checkout root on sys.path
-# and re-point the ``benchmark`` package at THIS checkout (belt-and-suspenders:
-# the correctness file already does this when it runs first, but this keeps the
-# benchmark file self-contained).
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
+import flag_gems  # noqa: E402
 
 from . import base, consts  # noqa: E402
 
-# aten::copy_sparse_to_sparse_(Tensor(a!) self, Tensor src, bool non_blocking=False)
-# -> Tensor(a!) is an in-place sparse-COO-to-sparse-COO copy whose cost scales
-# with nnz (and the dense trailing dims of hybrid layouts), so each case below
-# is a (logical_shape, sparse_dim, nnz) triple. There are no meaningful dense
-# shapes in core_shapes.yaml for this op, so dedicated sparse cases are used.
+# (sparse shape, sparse_dim, nnz). The copy transfers nnz entries, so timing
+# cases sweep nnz from a small working set up to a few million stored entries,
+# across 2-D, batched hybrid, all-sparse 3-D, and 4-D layouts. Every src keeps
+# nnz >= numel so duplicate indices guarantee an uncoalesced source, which is
+# the interesting storage for a verbatim structure copy.
 _COPY_SPARSE_SHAPES = [
     ((1024, 1024), 2, 65536),
     ((1024, 1024), 2, 1048576),
@@ -57,44 +51,37 @@ _COPY_SPARSE_SHAPES = [
 
 
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, device):
-    # Sparse COO input built directly on the benchmark device. Indices are
-    # drawn with replacement (a valid, possibly uncoalesced sparse structure);
-    # the copy cost depends only on nnz and the dense trailing dims.
-    dense_shape = tuple(shape[sparse_dim:])
-    values_shape = (nnz,) + dense_shape
     indices = torch.stack(
         [
             torch.randint(0, dim, (nnz,), dtype=torch.long, device=device)
             for dim in shape[:sparse_dim]
         ]
     )
-    values = torch.randn(values_shape, dtype=dtype, device=device)
+    values = torch.randn((nnz,) + tuple(shape[sparse_dim:]), dtype=dtype, device=device)
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
 def _case_fn(shape, dtype):
     del dtype
-    logical_shape, sparse_dim, nnz = shape
+    shape, sparse_dim, nnz = shape
     yield base.BenchmarkCasePlan(
-        shape={"input": logical_shape},
+        shape={"input": shape},
         params={"nnz": nnz},
-        builder_args=(logical_shape, sparse_dim, nnz),
+        builder_args=(shape, sparse_dim, nnz),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    logical_shape, sparse_dim, nnz = plan.builder_args
-    src = _make_sparse_input(logical_shape, sparse_dim, nnz, dtype, device)
+    shape, sparse_dim, nnz = plan.builder_args
+    src = _make_sparse_input(shape, sparse_dim, nnz, dtype, device)
     dst = torch.zeros_like(src)
-    # In-place copy: the harness measures op(dst, src, non_blocking=False)
-    # repeatedly; each iteration copies src into dst again, so timing is stable.
     return dst, src, {"non_blocking": False}
 
 
 class CopySparseToSparseBenchmark(base.GenericBenchmark):
-    # copy_sparse_to_sparse_ is a sparse-to-sparse copy; the dense default
-    # shapes in core_shapes.yaml do not apply, so benchmark dedicated
-    # (logical_shape, sparse_dim, nnz) triples instead.
+    # copy_sparse_to_sparse_ is a sparse op; there are no meaningful dense
+    # shapes in core_shapes.yaml, so benchmark dedicated (shape, nnz) pairs
+    # instead.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _COPY_SPARSE_SHAPES
 

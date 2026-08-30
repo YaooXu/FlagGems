@@ -31,6 +31,7 @@ import torch  # noqa: E402
 import flag_gems  # noqa: E402
 
 from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 from .conftest import QUICK_MODE  # noqa: E402
 
 # aten::slow_conv_dilated3d(Tensor self, Tensor weight, SymInt[3] kernel_size,
@@ -44,7 +45,9 @@ from .conftest import QUICK_MODE  # noqa: E402
 # dilation) tuple below is one distinct parametrized workload: they cover
 # 1x1x1/2x2x2/3x3x3 kernels, stride 1/2, padding 0/1/2, dilation 1/2, and
 # asymmetric strides/paddings, with and without bias. Element counts stay well
-# below 1M so the correctness run stays fast.
+# below 1M so the correctness run stays fast. Inputs are generated through the
+# value-range framework (tu.make_input) instead of torch.randn so the ranges
+# are explicit and per-dtype.
 if QUICK_MODE:
     SLOW_CONV_DILATED3D_CASES = [
         ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
@@ -69,6 +72,45 @@ else:
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
 
+# Value-range coverage: the conv reduction sums up to C_in*kD*kH*kW products, so
+# the shared tu.selected_ranges() extremes (["0", "max"] / ["min", "0"]) overflow
+# the fp16/bf16 accumulators. Use bounded local ranges that still span positive,
+# negative and mixed-sign values; the shape/dtype/bias grid comes from the main
+# parametrized cases above.
+_VALUE_RANGE_CASES = (
+    SLOW_CONV_DILATED3D_CASES[:1]
+    if QUICK_MODE
+    else [
+        SLOW_CONV_DILATED3D_CASES[0],  # 3x3x3 kernel, padding 1, dilation 1
+        SLOW_CONV_DILATED3D_CASES[5],  # 1x1x1 kernel (pure GEMM path)
+        SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
+    ]
+)
+_VALUE_RANGES = (
+    [["-1", "1"]]
+    if QUICK_MODE
+    else [
+        ["-1", "1"],  # mixed signs (cancellation)
+        ["0", "1"],  # non-negative
+        ["-1", "0"],  # non-positive
+    ]
+)
+
+# The aten op carries its own autograd (registered at the nn module level), so
+# backward is exercised directly. Gradients are only validated on fp32/fp64:
+# fp16/bf16 gradients accumulate too coarsely to compare against the analytic
+# reference gradient.
+_BACKWARD_CASES = (
+    SLOW_CONV_DILATED3D_CASES[:1]
+    if QUICK_MODE
+    else [
+        SLOW_CONV_DILATED3D_CASES[0],  # padding 1, dilation 1
+        SLOW_CONV_DILATED3D_CASES[1],  # no padding
+        SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
+    ]
+)
+_BACKWARD_DTYPES = [torch.float32] if QUICK_MODE else [torch.float32, torch.float64]
+
 
 def _resolve_gems_op():
     # Resolved inside each test (never at import time) so that the process-local
@@ -87,17 +129,35 @@ def _resolve_gems_op_out():
     )
 
 
-def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype):
-    inp = torch.randn(inp_shape, dtype=dtype, device=flag_gems.device)
-    weight = torch.randn(weight_shape, dtype=dtype, device=flag_gems.device)
+def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
+    """(N, C_in, D, H, W) x (C_out, C_in, kD, kH, kW) -> (N, C_out, D_out, H_out, W_out)."""
+
+    def _out_size(in_size, k, s, p, d):
+        return (in_size + 2 * p - d * (k - 1) - 1) // s + 1
+
+    return (inp_shape[0], weight_shape[0]) + tuple(
+        _out_size(
+            inp_shape[2 + i], weight_shape[2 + i], stride[i], padding[i], dilation[i]
+        )
+        for i in range(3)
+    )
+
+
+def _make_conv_inputs(
+    inp_shape, weight_shape, with_bias, dtype, value_range=("-1", "1")
+):
+    # Value-range framework instead of torch.randn: per-dtype explicit ranges.
+    inp = tu.make_input(dtype, inp_shape, value_range)
+    weight = tu.make_input(dtype, weight_shape, value_range)
     if with_bias:
-        bias = torch.randn(weight_shape[0], dtype=dtype, device=flag_gems.device)
+        # bias has one element per output channel (the first weight dim).
+        bias = tu.make_input(dtype, (weight_shape[0],), value_range)
     else:
         bias = None
     return inp, weight, bias
 
 
-def _assert_close(res_out, ref_out, dtype):
+def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     # The reference is computed with an fp64 upcast, so it is exact for the
     # rounded inputs. The torch native op (and any good candidate) accumulates
     # the im2col GEMM in the input dtype: fp16/bf16 tensor cores keep at most
@@ -113,7 +173,7 @@ def _assert_close(res_out, ref_out, dtype):
         atol = 2e-2
     else:
         atol = 1e-4
-    utils.gems_assert_close(res_out, ref_out, dtype, atol=atol)
+    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=equal_nan, atol=atol)
 
 
 @pytest.mark.slow_conv_dilated3d
@@ -143,6 +203,34 @@ def test_slow_conv_dilated3d(
 
     gems_op = _resolve_gems_op()
     res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding, dilation)
+
+    _assert_close(res_out, ref_out, dtype)
+
+
+@pytest.mark.slow_conv_dilated3d
+@pytest.mark.parametrize("case", _VALUE_RANGE_CASES)
+@pytest.mark.parametrize("value_range", _VALUE_RANGES)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("bias", BIASES)
+def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
+    inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
+    inp = tu.make_input(dtype, inp_shape, value_range)
+    weight = tu.make_input(dtype, weight_shape, value_range)
+    bias_t = tu.make_input(dtype, (weight_shape[0],), value_range) if bias else None
+    ref_inp = utils.to_reference(inp, True)
+    ref_weight = utils.to_reference(weight, True)
+    ref_bias = utils.to_reference(bias_t, True)
+
+    ref_out = torch.ops.aten.slow_conv_dilated3d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
+    ).to(dtype)
+
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias_t, stride, padding, dilation
+    )
 
     _assert_close(res_out, ref_out, dtype)
 
@@ -189,3 +277,172 @@ def test_slow_conv_dilated3d_out(
     assert res_ret is out
 
     _assert_close(res_ret, ref_ret, dtype)
+
+
+@pytest.mark.slow_conv_dilated3d_backward
+@pytest.mark.parametrize("case", _BACKWARD_CASES)
+@pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
+def test_slow_conv_dilated3d_backward(case, dtype):
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
+    inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
+    out_shape = _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation)
+
+    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+    weight = tu.make_input(dtype, weight_shape, ["-1", "1"])
+    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
+    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+
+    # Reference graph on the fp64-upcast inputs.
+    ref_inp = utils.to_reference(inp, True).requires_grad_()
+    ref_weight = utils.to_reference(weight, True).requires_grad_()
+    ref_bias = utils.to_reference(bias, True).requires_grad_()
+    ref_grad_out = utils.to_reference(grad_out, True)
+
+    ref_out = torch.ops.aten.slow_conv_dilated3d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
+    )
+    ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+        ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+    )
+
+    # Self-check: the low-level op's autograd must match the standard
+    # F.conv3d backward (same math, im2col vs direct formulation).
+    f_out = torch.nn.functional.conv3d(
+        ref_inp, ref_weight, ref_bias, stride=stride, padding=padding, dilation=dilation
+    )
+    f_gi, f_gw, f_gb = torch.autograd.grad(
+        f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+    )
+    tu.assert_result_close(ref_gi, f_gi)
+    tu.assert_result_close(ref_gw, f_gw)
+    tu.assert_result_close(ref_gb, f_gb)
+
+    # The candidate forward must match the fp64 reference...
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias, stride, padding, dilation
+    )
+    _assert_close(res_out, ref_out.to(dtype), dtype)
+
+    # ...and, if the candidate kernel is autograd-aware, its gradients must
+    # match the reference gradients too.
+    if res_out.requires_grad:
+        res_gi, res_gw, res_gb = torch.autograd.grad(
+            res_out, (inp, weight, bias), grad_outputs=grad_out
+        )
+        _assert_close(res_gi, ref_gi.to(dtype), dtype)
+        _assert_close(res_gw, ref_gw.to(dtype), dtype)
+        _assert_close(res_gb, ref_gb.to(dtype), dtype)
+
+
+@pytest.mark.slow_conv_dilated3d_nan_inf
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+def test_slow_conv_dilated3d_nan_inf(dtype):
+    # A single nan and a single inf in the input, with a positive unit-weight
+    # kernel: every window sum is either a small exact integer, nan (window
+    # touches the nan) or inf (window touches the inf), with no inf/-inf
+    # cancellation, so the reference and any faithful candidate must place the
+    # nan/inf at exactly the same output positions.
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
+    inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
+    inp[0, 0, 1, 1, 1] = float("nan")
+    inp[0, 0, 2, 2, 2] = float("inf")
+    weight = torch.ones((1, 1, 2, 2, 2), dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
+    kernel_size = (2, 2, 2)
+
+    ref_inp = utils.to_reference(inp, True)
+    ref_weight = utils.to_reference(weight, True)
+    ref_bias = utils.to_reference(bias, True)
+    ref_out = torch.ops.aten.slow_conv_dilated3d(
+        ref_inp, ref_weight, kernel_size, ref_bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
+    ).to(dtype)
+
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
+    )
+
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_wrong_kernel_size():
+    # kernel_size must match the weight spatial dims exactly.
+    inp, weight, _ = _make_conv_inputs(
+        (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
+    )
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (2, 2, 2), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (2, 2, 2), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_int_dtype():
+    # Only floating dtypes are implemented for the conv3d.
+    inp = tu.make_input(torch.int32, (1, 2, 5, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.int32, (1, 2, 3, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_wrong_input_dims():
+    # self must be 5-D (N, C_in, D, H, W); a 4-D input is rejected.
+    inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 2, 3, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_invalid_stride_dilation():
+    inp, weight, _ = _make_conv_inputs(
+        (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
+    )
+    # Negative stride.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    # Negative dilation.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
+        )
+    # Dilation so large that the output size becomes negative.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1)
+        )

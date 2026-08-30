@@ -12,12 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
+import sys as _sys
+from pathlib import Path as _Path
 
-import flag_gems
+# pytest --import-mode=importlib imports this module as <pkg>.test_cartesian_prod,
+# where <pkg> is the "tests" or "benchmark" package of the checkout that
+# actually holds this file (the KernelGen verification harness stages a temp
+# copy of the FlagGems tree). When the driving process also has a same-named
+# package on sys.path (e.g. the KernelGen repo's own tests/ directory), a bare
+# relative import below would bind to that foreign package instead. Put the
+# checkout root of *this* file first in sys.path so the relative imports
+# resolve to the support files (base/consts/utils) that ship next to it.
+_CHECKOUT_ROOT = _Path(__file__).resolve().parent.parent
+if str(_CHECKOUT_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_CHECKOUT_ROOT))
 
-from . import base, consts, utils
+import pytest  # noqa: E402
+import torch  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
 
 # aten::cartesian_prod(Tensor[] tensors) consumes 1-D tensors and writes
 # prod(sizes) x len(sizes) output elements. The default shape file and
@@ -37,9 +52,9 @@ _CARTESIAN_PROD_BENCH_SIZES = (
 
 
 class CartesianProdBenchmark(base.GenericBenchmark):
+    # cartesian_prod's defining shape is the list of 1-D input sizes, not a
+    # single dense tensor shape.
     def set_shapes(self, shape_file_path=None):
-        # cartesian_prod's defining shape is the list of 1-D input sizes, not a
-        # single dense tensor shape.
         del shape_file_path
         self.shapes = _CARTESIAN_PROD_BENCH_SIZES
 

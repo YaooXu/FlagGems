@@ -12,12 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
+import math
+import os
+import sys
 
-import flag_gems
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts`` cannot resolve this checkout's benchmark
+# package through normal package discovery. Put the checkout root on sys.path so
+# the ``benchmark`` package resolves to THIS checkout no matter how pytest is
+# invoked (belt-and-suspenders: the correctness file already does this when it
+# runs first, but this keeps the benchmark file self-contained).
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-from . import base, consts, utils
+import pytest  # noqa: E402
+import torch  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
+
+# aten::atleast_3d is a pure view/identity op (0-dim -> (1, 1, 1), 1-dim ->
+# (1, N, 1), 2-dim -> (M, N, 1) views; ndim >= 3 returned as-is). No public
+# Benchmark family models a view identity op, so both overloads use a two-phase
+# GenericBenchmark (case_fn + build_inputs_fn). The 0-dim scalar, 1-dim and
+# 2-dim cases are the defining workloads and are prepended to the shape set.
+# gems_op is resolved through getattr because flag_gems.atleast_3d is not yet
+# registered as a direct callable; KernelGen's override_gems_op("atleast_3d",
+# ...) still wins at run time via flag_gems.testing.resolve_gems_op.
 
 
 def _case_fn(shape, dtype):
@@ -56,8 +80,16 @@ def _sequence_build_inputs_fn(plan, dtype, device):
 
 
 class Atleast3DBenchmark(base.GenericBenchmark):
+    # A view op's latency is dominated by the call overhead, not the tensor
+    # size, so capping the input numel avoids allocating multi-GB inputs (the
+    # generic DEFAULT_SHAPES include 1G-element tensors) for no signal.
+    MAX_NUMEL = 2**24  # 16M elements
+
     def set_shapes(self, shape_file_path=None):
         super().set_shapes(shape_file_path)
+        self.shapes = [
+            shape for shape in self.shapes if math.prod(shape) <= self.MAX_NUMEL
+        ]
         # atleast_3d's defining cases are the 0-dim scalar -> (1, 1, 1),
         # 1-dim -> (1, N, 1) and 2-dim -> (M, N, 1) views.
         if () not in self.shapes:

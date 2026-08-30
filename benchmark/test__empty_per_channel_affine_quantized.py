@@ -12,13 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base
+# The verification harness imports this module as ``tests.test_<op>`` via
+# --import-mode=importlib without creating the parent ``tests`` package and
+# without putting the temp directory on sys.path; put it there so the
+# package-relative imports below resolve.
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
+
+from . import base  # noqa: E402
 
 # ``_empty_per_channel_affine_quantized`` starts with an underscore, and
 # ``pytest.mark`` refuses to generate a marker via attribute access for such

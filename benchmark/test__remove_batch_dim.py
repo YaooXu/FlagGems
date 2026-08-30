@@ -28,11 +28,12 @@ _BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
 _PACKAGE_ROOT = os.path.dirname(_BENCH_DIR)
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
-_IMPORTED_BENCHMARK = sys.modules.get("benchmark")
-if _IMPORTED_BENCHMARK is not None and os.path.abspath(
-    getattr(_IMPORTED_BENCHMARK, "__file__", "")
-) != os.path.join(_BENCH_DIR, "__init__.py"):
-    del sys.modules["benchmark"]
+
+import benchmark as _bench_pkg  # noqa: E402
+
+if _BENCH_DIR not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg  # noqa: E402
 
 from . import base, consts, utils  # noqa: E402
 

@@ -17,21 +17,16 @@ import torch
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
-# aten::sparse_coo_tensor(Tensor indices, Tensor values, int[] size, *,
-#     ScalarType? dtype, ...) -> Tensor constructs a sparse COO tensor of the
-# given ``size`` from the raw (sparse_dim, nnz) int64 index tensor and the
-# (nnz,) + dense values tensor. The measured work is the layout construction
-# from the three components, so the benchmark feeds the components directly
-# (not a pre-built sparse tensor) and both the reference and the candidate
-# receive the exact same call. The size-only and size-inferred overloads are
-# trivial (empty / max+1) and are not benchmarked.
-#
-# Each benchmark case is (tensor_shape, nnz): coordinates are drawn with
-# replacement per sparse dim (kept in random order, so the constructed tensor
-# is uncoalesced), so the storage cost grows with nnz while the logical matrix
-# spans the full (rows, cols) extent.
+# aten::sparse_coo_tensor (the overload group shared by the size-only, the
+# size-inferred ``indices`` and the explicit ``indices_size`` schemas) builds a
+# sparse COO tensor from raw (indices, values, size) components. Construction
+# work scales with the stored nnz and the number of sparse dims, not with the
+# dense logical size, so each case pairs a large logical tensor shape with a
+# bounded nnz. Every shape keeps a 2-D sparse grid (sparse_dim == 2) with the
+# remaining dims dense, matching the dominant COO usage; the last case carries
+# one dense dim. Each pair is a (tensor_shape, nnz) case.
 _BENCH_SHAPES = [
     ((4096, 4096), 10000),
     ((4096, 4096), 100000),
@@ -44,19 +39,19 @@ _BENCH_SHAPES = [
 
 def _make_coo_inputs(shape, nnz, dtype, device, seed=0):
     # Deterministic CPU-side generation of a valid (indices, values) pair for
-    # the explicit-size overload: int64 indices of shape (sparse_dim, nnz) with
-    # coordinates drawn with replacement (kept in random order, so the
-    # constructed tensor is uncoalesced) and values of shape (nnz, dense...).
+    # the explicit-size overload: sparse_dim == 2 with the trailing dims dense,
+    # every stored coordinate in range and the values on the benchmark device.
     gen = torch.Generator("cpu").manual_seed(seed)
-    sparse_dim = min(2, len(shape))
-    sparse_shape = shape[:sparse_dim]
-    dense_shape = shape[sparse_dim:]
-    entries = []
-    for d in range(sparse_dim):
-        entries.append(torch.randint(0, sparse_shape[d], (nnz,), generator=gen))
-    indices = torch.stack(entries, dim=0)
-    values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
-    return indices.to(device), values.to(device)
+    sparse_shape = shape[:2]
+    dense_shape = shape[2:]
+    indices = torch.stack(
+        [
+            torch.randint(0, dim, (nnz,), dtype=torch.long, generator=gen)
+            for dim in sparse_shape
+        ]
+    ).to(device)
+    values = utils.generate_tensor_input((nnz,) + tuple(dense_shape), dtype, device)
+    return indices, values
 
 
 def _case_fn(shape, dtype):
@@ -74,15 +69,15 @@ def _build_inputs_fn(plan, dtype, device):
     indices, values = _make_coo_inputs(tensor_shape, nnz, dtype, device)
     # The trailing dict is unpacked into kwargs by the benchmark runner, so
     # torch_op and gems_op both receive (indices, values, size, dtype=...,
-    # device=...). The dtype keyword is required: without it the aten op forces
-    # float32 and would break the bfloat16/float16 cases.
+    # device=...). dtype is passed explicitly: without it the sparse tensor
+    # defaults to Float regardless of the values dtype.
     return indices, values, list(tensor_shape), {"dtype": dtype, "device": device}
 
 
 class SparseCooTensorBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark feeding the raw COO components to the
-    ``sparse_coo_tensor`` factory call."""
-
+    # sparse_coo_tensor is a sparse construction op; there are no meaningful
+    # dense shapes in core_shapes.yaml, so benchmark dedicated
+    # (tensor_shape, nnz) pairs instead.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _BENCH_SHAPES
 

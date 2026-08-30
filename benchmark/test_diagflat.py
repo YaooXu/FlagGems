@@ -12,12 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 
 import flag_gems
 
-from . import base, consts, utils
+# The KernelGen harness runs pytest in-process with ``--import-mode=importlib``,
+# which does not prepend the checkout root to sys.path, so the ``benchmark``
+# package may resolve to the harness's own package or not resolve at all.
+# Re-point it at this file's directory before importing the benchmark helpers.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import benchmark as _bench_pkg  # noqa: E402
+
+if _HERE not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
 
 # aten::diagflat flattens the input (logical row-major) and writes it onto the
 # diagonal of a square matrix with side length numel(input) + |offset|, so the
@@ -73,6 +91,8 @@ def test_diagflat():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.diagflat,
+        # KernelGen injects the candidate via override_gems_op(); the default
+        # module callable may not exist until the op is merged into FlagGems.
         gems_op=getattr(flag_gems, "diagflat", None),
         dtypes=consts.FLOAT_DTYPES,
     )

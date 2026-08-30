@@ -12,15 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
+# The KernelGen verification harness stages these files in an isolated copy of
+# the FlagGems tree whose parent directory is not on sys.path. Make the
+# ``tests``/``benchmark`` packages importable regardless of the harness
+# process's sys.path so the relative imports below resolve.
+import os
+import sys
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+_PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
 
-import flag_gems
 
-from . import base, consts
+import math  # noqa: E402
+
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts  # noqa: E402
 
 # ``_neg_view_copy`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register the markers

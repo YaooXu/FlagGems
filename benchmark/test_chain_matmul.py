@@ -19,10 +19,13 @@ import flag_gems
 
 from . import base, consts, utils
 
-# chain_matmul multiplies a sequence of 2-D matrices with an optimized
-# parenthesization. Each entry is a chain of (rows, cols) shapes. The default
-# shape set contains 1-D tensors, which chain_matmul rejects, so this benchmark
-# uses its own performance-relevant 2-D chains.
+# chain_matmul (alias of linalg.multi_dot) multiplies a sequence of 2-D matrices
+# with an optimized parenthesization; no public pointwise/reduction/blas
+# Benchmark family covers its list-of-matrices semantics, so the two-phase
+# GenericBenchmark below supplies both the case plan and the input builder.
+# Each entry is a chain of (rows, cols) shapes. The default shape set contains
+# 1-D tensors, which chain_matmul rejects, so this benchmark uses its own
+# performance-relevant 2-D chains.
 CHAIN_SHAPES = [
     [(4, 8), (8, 16), (16, 4)],
     [(64, 128), (128, 256), (256, 256), (256, 64)],

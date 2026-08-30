@@ -13,22 +13,50 @@
 # limitations under the License.
 
 import itertools
+import os
+import sys
 
 import pytest
 import torch
 
 import flag_gems
 
-from . import base, consts
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts`` cannot resolve this checkout's benchmark
+# package through normal package discovery. Put the checkout root on sys.path
+# and re-point the ``benchmark`` package at THIS checkout (belt-and-suspenders:
+# the correctness file already does this when it runs first, but this keeps the
+# benchmark file self-contained).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-# aten::sparse_compressed_tensor constructs a sparse compressed tensor
-# (CSR/CSC/BSR/BSC) from compressed_indices, plain_indices, and values. The
-# generic factory needs layout= (mandatory), and on GPU both dtype= and device=
-# must be passed explicitly (the aten op does not infer dtype from values and
-# creates the instance on CPU when device is omitted). The construction cost is
-# dominated by validation and index/value allocation, so the benchmarks below
-# use (layout, sparse shape, nnz) triples with performance-relevant nnz instead
-# of the dense core_shapes.yaml set.
+import benchmark as _bench_pkg  # noqa: E402
+
+if _HERE not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg  # noqa: E402
+
+from . import base, consts  # noqa: E402
+
+# aten::sparse_compressed_tensor.comp_plain_value_size(Tensor compressed_indices,
+#     Tensor plain_indices, Tensor values, SymInt[] size, *, ScalarType? dtype=None,
+#     Layout? layout=None, Device? device=None, bool? pin_memory=False) -> Tensor
+# constructs a sparse compressed tensor (CSR/CSC/BSR/BSC) from raw index tensors
+# and values. The generic factory needs layout= (mandatory), and on GPU both
+# dtype= and device= must be passed explicitly (the aten op does not infer dtype
+# from values and creates the instance on CPU when device is omitted). The
+# measured work is the layout construction from the component tensors, so the
+# benchmark feeds the components directly (not a pre-built sparse tensor) and
+# both the reference and the candidate receive the exact same call.
+#
+# Each benchmark case is (layout, tensor_shape, nnz). The nnz is distributed
+# over the rows/columns with a deterministic structure, so the index arrays and
+# the values allocation all scale with nnz while the logical matrix spans the
+# full (rows, cols) extent. Block layouts (BSR/BSC) get (nnz, block, block)
+# value tensors.
 _SPARSE_COMPRESSED_SHAPES = [
     (torch.sparse_csr, (1024, 1024), 65536),
     (torch.sparse_csr, (1024, 1024), 262144),
@@ -91,8 +119,10 @@ def _build_inputs_fn(plan, dtype, device):
     compressed, plain, values = _make_input(layout, shape, nnz, dtype, device)
     # The kwargs dict travels at the top level of the returned tuple so
     # unpack_to_args_kwargs places the tensors in args and the dict in kwargs;
-    # layout/device/dtype must go through the dict (they are neither tensors
-    # nor plain scalars).
+    # size/layout/dtype/device must go through the dict (they are neither
+    # tensors nor plain scalars), so torch_op and gems_op receive the exact
+    # same (compressed, plain, values, size, dtype=..., layout=..., device=...)
+    # call.
     return (
         compressed,
         plain,

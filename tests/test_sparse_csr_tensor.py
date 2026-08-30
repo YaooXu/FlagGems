@@ -38,6 +38,7 @@ if _HERE not in getattr(_tests_pkg, "__path__", []):
     import tests as _tests_pkg  # noqa: E402
 
 from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 
 # aten::sparse_csr_tensor.crow_col_value_size(Tensor crow_indices,
 #     Tensor col_indices, Tensor values, int[] size, *,
@@ -65,6 +66,27 @@ from . import accuracy_utils as utils  # noqa: E402
 # dense_dim == 0 (batched CSR carries the batch dims separately), crow/col are
 # the (compressed, plain) index arrays with col entries in [0, n_cols), and
 # values are stored verbatim (the factory performs no arithmetic on them).
+#
+# Regular-operator spec dimensions:
+# - Value ranges: the data path is a pure copy -- the op stores the given
+#   values verbatim, so the value-range dimension is covered by running the
+#   shared tu.selected_ranges() (per-dtype bounds, sign coverage, constants)
+#   over the storage values of every float/exact dtype; a dedicated boundary
+#   case pins the exact finfo min/max/zero round-trip.
+# - Shape levels: tu.selected_shapes() is covered through _shape_level_cases()
+#   (which skips the 0-dim scalar, meaningless for a 2-D sparse layout, and
+#   turns 1-dim entries into square 2-D tensors), plus dedicated 2-D, batched
+#   (3-D) and empty-storage grids.
+# - Broadcast: N/A -- a constructor with three index/value tensors, no
+#   broadcasting semantics.
+# - Backward: N/A -- the op is a structural constructor with no autograd
+#   formula (sparse CSR constructors are non-differentiable).
+# - Negative cases: dtype kwarg contradicting the values dtype, missing dtype
+#   for non-float32 values, cross-device index/value tensors, and a missing
+#   device kwarg on CUDA must raise on the aten reference and the candidate
+#   alike.
+# - nan/inf: non-finite values are stored verbatim and compared with
+#   equal_nan=True.
 
 # Each 2-D case is (size, crow_indices, col_indices): a square matrix with
 # empty trailing rows, ragged rows with an empty middle row, non-square
@@ -122,25 +144,49 @@ _FLOAT_CSR_DTYPES = utils.ALL_FLOAT_DTYPES
 _EXACT_CSR_DTYPES = utils.ALL_INT_DTYPES + utils.BOOL_TYPES
 
 
+def _shape_level_cases():
+    # Derive valid (size, crow_indices, col_indices) grids from
+    # tu.selected_shapes() so the shared shape-level set is covered. The 0-dim
+    # scalar entry has no CSR meaning; 1-dim entries become square 2-D tensors.
+    # The col grid is a deterministic ragged pattern (every row has 1 or 2
+    # entries, alternating), so the matrix always has real content.
+    cases = []
+    for shape in tu.selected_shapes():
+        if len(shape) == 0:
+            continue
+        if len(shape) == 1:
+            batch, rows, cols = (), shape[0], shape[0]
+        else:
+            batch, rows, cols = shape[:-2], shape[-2], shape[-1]
+        gen = torch.Generator("cpu").manual_seed(len(shape))
+        crow = [0]
+        col = []
+        for r in range(rows):
+            k = min(1 + (r % 2), cols)
+            chosen = torch.randperm(cols, generator=gen)[:k].sort().values
+            col.extend(chosen.tolist())
+            crow.append(crow[-1] + k)
+        cases.append((batch + (rows, cols), crow, col))
+    return cases
+
+
 def _make_index_tensor(indices, index_dtype=torch.long):
     return torch.tensor(indices, dtype=index_dtype, device=flag_gems.device)
 
 
-def _make_csr_values(nnz, dtype, batch=None, seed=0):
-    # Deterministic CPU-side generation of the stored values so the exact
-    # structural copy semantics can be asserted; the tensor is moved to the
-    # test device. Shape is (nnz,), or (batch, nnz) for batched CSR.
-    gen = torch.Generator("cpu").manual_seed(seed)
-    shape = ((batch,) if batch is not None else ()) + (nnz,)
-    if dtype.is_floating_point:
-        values = torch.randn(shape, dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, shape, dtype=dtype, generator=gen)
+def _make_csr_values(nnz, dtype, batch=None, value_range=("-1", "1")):
+    # Deterministic generation of the stored values through the shared
+    # value-range helper (per-dtype bounds resolved by tu.resolve_bound), so
+    # the exact structural copy semantics can be asserted. Shape is (nnz,), or
+    # (batch, nnz) for a single batch dim, or batch+(nnz,) for tuple batch
+    # dims. The data path is a pure copy, so any in-range values round-trip.
+    if batch is None:
+        shape = (nnz,)
+    elif isinstance(batch, tuple):
+        shape = batch + (nnz,)
     else:
-        # Keep the magnitude small so the values stay valid for every integer
-        # storage dtype (int16 included).
-        values = torch.randint(-5, 6, shape, dtype=dtype, generator=gen)
-    return values.to(flag_gems.device)
+        shape = (batch,) + (nnz,)
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _assert_csr_structure(out, size, nnz, dtype, batch=None, crow_len=None):
@@ -157,6 +203,10 @@ def _assert_csr_structure(out, size, nnz, dtype, batch=None, crow_len=None):
         assert tuple(out.values().shape) == (nnz,)
         assert len(out.crow_indices()) == expected_crow_len
         assert len(out.col_indices()) == nnz
+    elif isinstance(batch, tuple):
+        assert tuple(out.values().shape) == batch + (nnz,)
+        assert tuple(out.crow_indices().shape) == batch + (expected_crow_len,)
+        assert tuple(out.col_indices().shape) == batch + (nnz,)
     else:
         assert tuple(out.values().shape) == (batch, nnz)
         assert tuple(out.crow_indices().shape) == (batch, expected_crow_len)
@@ -179,12 +229,13 @@ def _resolve_gems_op():
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("case", _CSR_2D_CASES)
 @pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
-def test_sparse_csr_tensor_crow_col_value_size(case, dtype):
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_crow_col_value_size(case, dtype, value_range):
     size, crow, col = case
     nnz = len(col)
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
-    values = _make_csr_values(nnz, dtype)
+    values = _make_csr_values(nnz, dtype, value_range=value_range)
     ref_crow = utils.to_reference(crow_t)
     ref_col = utils.to_reference(col_t)
     ref_values = utils.to_reference(values)
@@ -203,19 +254,24 @@ def test_sparse_csr_tensor_crow_col_value_size(case, dtype):
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
     utils.gems_assert_equal(res_out.values(), ref_out.values())
+    # The constructor reads its inputs; it must not mutate them.
+    utils.gems_assert_equal(crow_t, ref_crow)
+    utils.gems_assert_equal(col_t, ref_col)
+    utils.gems_assert_equal(values, ref_values)
 
 
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("case", _CSR_2D_CASES)
 @pytest.mark.parametrize("dtype", _EXACT_CSR_DTYPES)
-def test_sparse_csr_tensor_crow_col_value_size_exact_dtypes(case, dtype):
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_crow_col_value_size_exact_dtypes(case, dtype, value_range):
     # Integer and bool storages: the values are transferred verbatim, so the
     # comparison is exact (no tolerance).
     size, crow, col = case
     nnz = len(col)
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
-    values = _make_csr_values(nnz, dtype)
+    values = _make_csr_values(nnz, dtype, value_range=value_range)
     ref_crow = utils.to_reference(crow_t)
     ref_col = utils.to_reference(col_t)
     ref_values = utils.to_reference(values)
@@ -237,13 +293,14 @@ def test_sparse_csr_tensor_crow_col_value_size_exact_dtypes(case, dtype):
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("case", _CSR_3D_CASES)
 @pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
-def test_sparse_csr_tensor_crow_col_value_size_batched(case, dtype):
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_crow_col_value_size_batched(case, dtype, value_range):
     size, crow, col = case
     batch = size[0]
     nnz = len(col[0])
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
-    values = _make_csr_values(nnz, dtype, batch=batch)
+    values = _make_csr_values(nnz, dtype, batch=batch, value_range=value_range)
     ref_crow = utils.to_reference(crow_t)
     ref_col = utils.to_reference(col_t)
     ref_values = utils.to_reference(values)
@@ -363,7 +420,8 @@ def test_sparse_csr_tensor_crow_col_value_size_trailing_empty_rows(dtype):
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("case", _CSR_2D_INFERRED_CASES)
 @pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
-def test_sparse_csr_tensor_crow_col_value(case, dtype):
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_crow_col_value(case, dtype, value_range):
     # Size-inferred overload: the 3-argument call (no size) derives the tensor
     # size from crow/col: rows = len(crow)-1, cols = max(col)+1.
     crow, col = case
@@ -371,7 +429,7 @@ def test_sparse_csr_tensor_crow_col_value(case, dtype):
     size = (len(crow) - 1, max(col) + 1)
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
-    values = _make_csr_values(nnz, dtype)
+    values = _make_csr_values(nnz, dtype, value_range=value_range)
     ref_crow = utils.to_reference(crow_t)
     ref_col = utils.to_reference(col_t)
     ref_values = utils.to_reference(values)
@@ -393,14 +451,15 @@ def test_sparse_csr_tensor_crow_col_value(case, dtype):
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("case", _CSR_2D_INFERRED_CASES)
 @pytest.mark.parametrize("dtype", _EXACT_CSR_DTYPES)
-def test_sparse_csr_tensor_crow_col_value_exact_dtypes(case, dtype):
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_crow_col_value_exact_dtypes(case, dtype, value_range):
     # Integer/bool storage through the size-inferred overload.
     crow, col = case
     nnz = len(col)
     size = (len(crow) - 1, max(col) + 1)
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
-    values = _make_csr_values(nnz, dtype)
+    values = _make_csr_values(nnz, dtype, value_range=value_range)
     ref_crow = utils.to_reference(crow_t)
     ref_col = utils.to_reference(col_t)
     ref_values = utils.to_reference(values)
@@ -417,3 +476,246 @@ def test_sparse_csr_tensor_crow_col_value_exact_dtypes(case, dtype):
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
     utils.gems_assert_equal(res_out.values(), ref_out.values())
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.parametrize("case", _shape_level_cases())
+@pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test_sparse_csr_tensor_shape_levels(case, dtype, value_range):
+    # Shape-level dimension: grids derived from tu.selected_shapes() (0-dim
+    # scalar excluded; 1-dim entries become square 2-D tensors, all others keep
+    # their leading batch dims).
+    size, crow, col = case
+    batch = size[:-2] or None
+    nnz = len(col)
+    if batch is None:
+        crow_t = _make_index_tensor(crow)
+        col_t = _make_index_tensor(col)
+    else:
+        crow_t = (
+            torch.tensor(crow, dtype=torch.long, device=flag_gems.device)
+            .expand(batch + (len(crow),))
+            .contiguous()
+        )
+        col_t = (
+            torch.tensor(col, dtype=torch.long, device=flag_gems.device)
+            .expand(batch + (nnz,))
+            .contiguous()
+        )
+    values = _make_csr_values(nnz, dtype, batch=batch, value_range=value_range)
+    ref_crow = utils.to_reference(crow_t)
+    ref_col = utils.to_reference(col_t)
+    ref_values = utils.to_reference(values)
+
+    ref_out = torch.ops.aten.sparse_csr_tensor(
+        ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
+    )
+    res_out = _resolve_gems_op()(
+        crow_t, col_t, values, list(size), dtype=dtype, device=crow_t.device
+    )
+
+    _assert_csr_structure(res_out, size, nnz, dtype, batch=batch)
+    utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
+    utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
+    utils.gems_assert_equal(res_out.values(), ref_out.values())
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
+def test_sparse_csr_tensor_nan_inf_values(dtype):
+    # The nan/inf dimension: non-finite values are stored verbatim (no
+    # arithmetic touches them). Compare with equal_nan=True so nan positions
+    # match and the inf signs agree exactly.
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    values = _make_csr_values(nnz, dtype)
+    values = values.clone()
+    values[0] = float("nan")
+    values[1] = float("inf")
+    values[2] = float("-inf")
+    values[-1] = float("nan")
+    ref_values = utils.to_reference(values)
+
+    ref_crow = torch.tensor([0, 2, 4, 4, 4], dtype=torch.long, device=ref_values.device)
+    ref_col = torch.tensor([0, 1, 0, 1], dtype=torch.long, device=ref_values.device)
+    ref_out = torch.ops.aten.sparse_csr_tensor(
+        ref_crow,
+        ref_col,
+        ref_values,
+        list(size),
+        dtype=dtype,
+        device=ref_values.device,
+    )
+    res_out = _resolve_gems_op()(
+        _make_index_tensor([0, 2, 4, 4, 4]),
+        _make_index_tensor([0, 1, 0, 1]),
+        values,
+        list(size),
+        dtype=dtype,
+        device=values.device,
+    )
+
+    _assert_csr_structure(res_out, size, nnz, dtype)
+    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
+    utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=True)
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.parametrize("dtype", _FLOAT_CSR_DTYPES)
+def test_sparse_csr_tensor_boundary_values(dtype):
+    # torch.testing.make_tensor draws values strictly inside the dtype bounds,
+    # so pin the exact finfo min/max (and a few exact constants) explicitly:
+    # the op stores values verbatim, so the boundary values must round-trip
+    # bit-exactly.
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    finfo = torch.finfo(dtype)
+    specials = torch.tensor(
+        [finfo.min, finfo.max, 0.0, -0.0, 1.0, -1.0],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    values = specials.repeat((nnz + specials.numel() - 1) // specials.numel())[:nnz]
+    ref_values = utils.to_reference(values)
+
+    ref_crow = torch.tensor([0, 2, 4, 4, 4], dtype=torch.long, device=ref_values.device)
+    ref_col = torch.tensor([0, 1, 0, 1], dtype=torch.long, device=ref_values.device)
+    ref_out = torch.ops.aten.sparse_csr_tensor(
+        ref_crow,
+        ref_col,
+        ref_values,
+        list(size),
+        dtype=dtype,
+        device=ref_values.device,
+    )
+    res_out = _resolve_gems_op()(
+        _make_index_tensor([0, 2, 4, 4, 4]),
+        _make_index_tensor([0, 1, 0, 1]),
+        values,
+        list(size),
+        dtype=dtype,
+        device=values.device,
+    )
+
+    _assert_csr_structure(res_out, size, nnz, dtype)
+    utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out.values(), ref_out.values())
+
+
+# ---------------------------------------------------------------------------
+# Negative cases: each invalid request must raise on the aten reference and the
+# candidate must reject it too rather than silently succeeding.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.sparse_csr_tensor
+def test_sparse_csr_tensor_rejects_dtype_mismatch():
+    # The dtype kwarg must match the values dtype; the aten reference raises
+    # RuntimeError ("dtype of values (Half) must match dtype of sparse tensor
+    # (Float)") and the candidate must reject the call too.
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    crow_t = _make_index_tensor(crow)
+    col_t = _make_index_tensor(col)
+    values = _make_csr_values(nnz, torch.float16)
+    ref_crow = utils.to_reference(crow_t)
+    ref_col = utils.to_reference(col_t)
+    ref_values = utils.to_reference(values)
+
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_csr_tensor(
+            ref_crow,
+            ref_col,
+            ref_values,
+            list(size),
+            dtype=torch.float32,
+            device=ref_crow.device,
+        )
+    with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
+        _resolve_gems_op()(
+            crow_t, col_t, values, list(size), dtype=torch.float32, device=crow_t.device
+        )
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.int32])
+def test_sparse_csr_tensor_rejects_missing_dtype(dtype):
+    # Without an explicit dtype the aten op forces float32 and raises for any
+    # other storage dtype; the candidate must reject the same request.
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    crow_t = _make_index_tensor(crow)
+    col_t = _make_index_tensor(col)
+    values = _make_csr_values(nnz, dtype)
+    ref_crow = utils.to_reference(crow_t)
+    ref_col = utils.to_reference(col_t)
+    ref_values = utils.to_reference(values)
+
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_csr_tensor(
+            ref_crow, ref_col, ref_values, list(size), device=ref_crow.device
+        )
+    with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
+        _resolve_gems_op()(crow_t, col_t, values, list(size), device=crow_t.device)
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="cross-device construction requires a CUDA device",
+)
+def test_sparse_csr_tensor_rejects_device_mismatch():
+    # All three storage tensors must share one device; the aten reference
+    # rejects a values tensor on a different device than crow/col ("Values and
+    # crow_indices need to be on the same device").
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    crow_t = _make_index_tensor(crow)
+    col_t = _make_index_tensor(col)
+    values = _make_csr_values(nnz, torch.float32)
+    cpu_values = values.cpu()
+
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_csr_tensor(
+            crow_t,
+            col_t,
+            cpu_values,
+            list(size),
+            dtype=torch.float32,
+            device=crow_t.device,
+        )
+    with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
+        _resolve_gems_op()(
+            crow_t,
+            col_t,
+            cpu_values,
+            list(size),
+            dtype=torch.float32,
+            device=crow_t.device,
+        )
+
+
+@pytest.mark.sparse_csr_tensor
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="the missing-device quirk only exists on CUDA",
+)
+def test_sparse_csr_tensor_rejects_missing_device():
+    # On CUDA this torch build cannot infer the device from the input tensors
+    # ("Values and compressed tensor instance need to be on the same device")
+    # unless the device kwarg is given; the candidate must reject the same
+    # request.
+    size, crow, col = _CSR_2D_CASES[0]
+    nnz = len(col)
+    crow_t = _make_index_tensor(crow)
+    col_t = _make_index_tensor(col)
+    values = _make_csr_values(nnz, torch.float32)
+
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_csr_tensor(
+            crow_t, col_t, values, list(size), dtype=torch.float32
+        )
+    with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
+        _resolve_gems_op()(crow_t, col_t, values, list(size), dtype=torch.float32)

@@ -20,14 +20,21 @@ import torch
 
 import flag_gems
 
-# KernelGen's verification harness stages the test files in a temporary
-# copy of the FlagGems tree and runs pytest with --import-mode=importlib
-# from a working directory that is not on sys.path, so the parent of this
-# package may not be importable yet.  Make it importable before using the
-# relative import below.
-_PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _PACKAGE_PARENT not in sys.path:
-    sys.path.insert(0, _PACKAGE_PARENT)
+# Make sure the FlagGems checkout that physically contains this file is the one
+# used for the sibling ``benchmark`` package. Under pytest
+# ``--import-mode=importlib`` the process sys.path may hold an unrelated entry
+# that shadows this checkout's ``benchmark`` package; insert the checkout root
+# at the front and re-import the package from this file's own directory.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import benchmark as _bench_pkg  # noqa: E402
+
+if _HERE not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg
 
 from . import base, consts  # noqa: E402
 

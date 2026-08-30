@@ -13,14 +13,26 @@
 # limitations under the License.
 
 import math
+import os
+import sys
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import base, consts, utils`` cannot resolve this checkout's benchmark
+# package through normal package discovery. Put the checkout root on sys.path so
+# the ``benchmark`` package resolves to THIS checkout no matter how pytest is
+# invoked.
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-import flag_gems
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
 
-from . import base, consts, utils
+import flag_gems  # noqa: E402
+
+from . import base, consts, utils  # noqa: E402
 
 # ``_fw_primal_copy`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly

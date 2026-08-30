@@ -12,13 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
-from _pytest.mark.structures import Mark, MarkDecorator
+import os
+import sys
 
-import flag_gems
+# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
+# test files into an isolated temp copy of the checkout, where the relative
+# ``from . import accuracy_utils`` cannot resolve this checkout's tests package
+# through normal package discovery. Put the checkout root on sys.path so the
+# ``tests`` package resolves to THIS checkout no matter how pytest is invoked.
+_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CHECKOUT_ROOT not in sys.path:
+    sys.path.insert(0, _CHECKOUT_ROOT)
 
-from . import accuracy_utils as utils
+import pytest  # noqa: E402
+import torch  # noqa: E402
+from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import accuracy_utils as utils  # noqa: E402
+from . import test_utils as tu  # noqa: E402
 
 # ``_fw_primal_copy`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register the markers
@@ -44,25 +57,29 @@ setattr(
 # so the reference must run inside torch.inference_mode(). In that context aten
 # ignores ``level`` and returns the copy for any level, which the candidate
 # must reproduce.
+#
+# Adaptation notes for the regular-operator spec:
+# - Broadcast: N/A -- the op takes a single ``self`` tensor.
+# - Backward: N/A -- the output is a fresh copy with no autograd support (the
+#   op is tagged view_copy and builds no grad_fn), so there is no gradient to
+#   compare.
+# - Value ranges: covered below via tu.make_input + tu.selected_ranges(); the
+#   copy must be bit-exact for every storage range and dtype family.
+# - nan/inf: covered by the dedicated special-values test (a pure copy
+#   round-trips nan/inf/signed-zero bit-for-bit).
 _FW_PRIMAL_COPY_DTYPES = (
-    utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+    utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES + [torch.complex64]
 )
 _FW_PRIMAL_COPY_LEVELS = [0, 1]
-
-
-def _make_input(shape, dtype):
-    if dtype.is_floating_point:
-        return torch.randn(shape, dtype=dtype, device=flag_gems.device)
-    if dtype == torch.bool:
-        return torch.randint(0, 2, shape, dtype=dtype, device=flag_gems.device)
-    return torch.randint(-100, 100, shape, dtype=dtype, device=flag_gems.device)
 
 
 def _resolve_gems_op():
     # Resolved inside each test (never at module import time) so the
     # process-local override injected by KernelGen for this run wins. The
     # .default and .out overloads are resolved through their public operator
-    # names "_fw_primal_copy" and "_fw_primal_copy.out".
+    # names "_fw_primal_copy" and "_fw_primal_copy.out". flag_gems may not
+    # register the underscore-prefixed attribute yet, so getattr supplies a
+    # safe default and resolve_gems_op falls back to the package namespace.
     return flag_gems.testing.resolve_gems_op(
         "_fw_primal_copy", getattr(flag_gems, "_fw_primal_copy", None)
     )
@@ -89,12 +106,18 @@ def _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype):
 
 
 @pytest.mark._fw_primal_copy
-@pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_COPY_DTYPES)
 @pytest.mark.parametrize("level", _FW_PRIMAL_COPY_LEVELS)
-def test__fw_primal_copy(shape, dtype, level):
+def test__fw_primal_copy_value_ranges(shape, value_range, dtype, level):
+    # The result is the deterministic elementwise copy of the input no matter
+    # what values the storage holds, so every range from the regular-operator
+    # spec is exercised here (this is the value-range migration of the original
+    # randn-based workload). tu.make_input produces an inference tensor, which
+    # the aten reference requires.
     with torch.inference_mode():
-        inp = _make_input(shape, dtype)
+        inp = tu.make_input(dtype, shape, value_range)
         ref_inp = utils.to_reference(inp.clone())
 
         ref_out = torch.ops.aten._fw_primal_copy(ref_inp, level)
@@ -104,19 +127,23 @@ def test__fw_primal_copy(shape, dtype, level):
 
 
 @pytest.mark._fw_primal_copy_out
-@pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_COPY_DTYPES)
 def test__fw_primal_copy_out(shape, dtype):
+    # The .out overload must write into and return the caller's buffer,
+    # overwriting any previous contents.
     with torch.inference_mode():
-        inp = _make_input(shape, dtype)
+        inp = tu.make_input(dtype, shape, ["-1", "1"])
         ref_inp = utils.to_reference(inp.clone())
-        out = torch.empty_like(inp)
-        ref_out = torch.empty_like(ref_inp)
+
+        # Garbage-prefilled out buffers: the .out overload must overwrite them.
+        out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
+        ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
 
         ref_ret = torch.ops.aten._fw_primal_copy.out(ref_inp, 0, out=ref_out)
         res_ret = _resolve_gems_op_out()(inp, 0, out=out)
 
-        # The .out variant must write into and return the out tensor itself.
+        # The .out variant writes into and returns the out tensor itself.
         assert res_ret is out
         assert ref_ret is ref_out
         _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp, dtype)
@@ -149,14 +176,87 @@ def test__fw_primal_copy_special_values(dtype):
 def test__fw_primal_copy_non_contiguous(dtype):
     # The copy must read through arbitrary input strides and still emit a
     # contiguous output. Slice on both the test device and the reference
-    # device so the two inputs share the same memory layout.
+    # device so the two inputs share the same memory layout (and the reference
+    # itself sees a non-contiguous inference tensor).
     with torch.inference_mode():
-        base = torch.randn((8, 8, 8), dtype=dtype, device=flag_gems.device)
+        base = tu.make_input(dtype, (8, 8, 8), ["-1", "1"])
         ref_base = utils.to_reference(base)
         inp = base[:, ::2, ::2]
-        ref_inp = ref_base[:, ::2, ::2].clone()
+        ref_inp = ref_base[:, ::2, ::2]
+        assert not inp.is_contiguous()
+        assert not ref_inp.is_contiguous()
 
         ref_out = torch.ops.aten._fw_primal_copy(ref_inp, 0)
         res_out = _resolve_gems_op()(inp, 0)
 
         _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
+
+
+@pytest.mark._fw_primal_copy
+def test__fw_primal_copy_rejects_missing_level():
+    # The schema requires the int ``level``; calling without it fails at
+    # binding time.
+    with torch.inference_mode():
+        inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._fw_primal_copy(inp)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()(inp)
+
+
+@pytest.mark._fw_primal_copy
+def test__fw_primal_copy_rejects_non_integer_level():
+    # The schema requires an int ``level``; a float is rejected at binding time.
+    with torch.inference_mode():
+        inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._fw_primal_copy(inp, 1.5)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()(inp, 1.5)
+
+
+@pytest.mark._fw_primal_copy
+def test__fw_primal_copy_rejects_non_tensor_input():
+    # The aten op requires a Tensor; a Python float hits a different overload
+    # and raises. The candidate must fail too rather than silently accept
+    # scalars.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._fw_primal_copy(3.14, 0)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()(3.14, 0)
+
+
+@pytest.mark._fw_primal_copy_out
+def test__fw_primal_copy_out_rejects_wrong_dtype():
+    # The out buffer must share the input's dtype; aten raises at binding
+    # time and the candidate must fail too.
+    with torch.inference_mode():
+        inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
+        ref_inp = utils.to_reference(inp.clone())
+        out = torch.empty(4, dtype=torch.int32, device=flag_gems.device)
+        ref_out = torch.empty(4, dtype=torch.int32, device=ref_inp.device)
+
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._fw_primal_copy.out(ref_inp, 0, out=ref_out)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op_out()(inp, 0, out=out)
+
+
+@pytest.mark._fw_primal_copy_out
+def test__fw_primal_copy_out_resizes_wrong_shape():
+    # A mismatched out buffer is resized by the autogen out wrapper (with a
+    # deprecation warning) and the same tensor object is returned; the
+    # candidate must reproduce that mutation/alias behavior.
+    with torch.inference_mode():
+        inp = tu.make_input(torch.float32, (4, 8), ["-1", "1"])
+        ref_inp = utils.to_reference(inp.clone())
+        out = torch.empty(2, 2, dtype=torch.float32, device=flag_gems.device)
+        ref_out = torch.empty(2, 2, dtype=torch.float32, device=ref_inp.device)
+
+        ref_ret = torch.ops.aten._fw_primal_copy.out(ref_inp, 0, out=ref_out)
+        res_ret = _resolve_gems_op_out()(inp, 0, out=out)
+
+    assert ref_ret is ref_out
+    assert res_ret is out
+    assert res_ret.shape == ref_ret.shape == (4, 8)
+    tu.assert_result_close(res_ret, ref_ret)

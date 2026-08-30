@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import sys
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
-
-# ``_dimV`` starts with an underscore, and ``pytest.mark`` refuses to generate
-# a marker via attribute access for such names. Register it directly on the
+# ``_dimV`` starts with an underscore, and ``pytest.mark`` refuses to generate a
+# marker via attribute access for such names. Register it directly on the
 # MarkGenerator so ``@pytest.mark._dimV`` and ``-m _dimV`` both work.
 setattr(
     pytest.mark,
@@ -29,50 +30,87 @@ setattr(
     MarkDecorator(Mark("_dimV", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# (sparse_shape, dense_shape, nnz). _dimV is a sparse metadata query whose
-# result is ``len(dense_shape)``; benchmark a spread of sparse ranks, dense
-# ranks and nnz values so candidate strategies see a realistic workload.
-# The device-side allocation stays small relative to the logical size because
-# only nnz entries are stored.
+# Make sure the FlagGems checkout that physically contains this file is the one
+# used for the sibling ``benchmark`` package. Under pytest
+# ``--import-mode=importlib`` the process sys.path may hold an unrelated entry
+# that shadows this checkout's ``benchmark`` package; insert the checkout root
+# at the front and re-import the package from this file's own directory.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import benchmark as _bench_pkg  # noqa: E402
+
+if _HERE not in getattr(_bench_pkg, "__path__", []):
+    sys.modules.pop("benchmark", None)
+    import benchmark as _bench_pkg  # noqa: E402
+
+from . import base, consts  # noqa: E402
+
+# aten::_dimV(Tensor self) -> int reports the dense dimension count of a
+# sparse tensor. It is a pure metadata query (the measured work is dispatch and
+# layout introspection, never data movement), and dense / SparseCsr tensors
+# raise NotImplementedError for it, so every benchmark input is a sparse COO
+# tensor. The shapes below cover representative logical sizes across ranks 2-4;
+# the actual device allocation stays tiny because nnz is fixed and small.
 _DIMV_SHAPES = [
-    ((1024, 1024), (), 65536),
-    ((1024, 1024), (32,), 262144),
-    ((256, 256, 256), (16,), 1048576),
-    ((1024, 1024), (16, 16), 1048576),
-    ((128, 128, 128, 128), (8,), 1048576),
-    ((4096, 4096), (64,), 1048576),
+    (64, 64),
+    (1024, 1024),
+    (4096, 4096),
+    (20, 320, 15),
+    (64, 512, 512),
+    (16, 1024, 1024, 16),
 ]
+
+# Number of stored entries for every benchmark case: the op is O(1), so nnz
+# only affects input allocation, not the measured call.
+_DIMV_NNZ = 1024
+
+
+def _make_sparse_input(shape, dense_dim, dtype, device, nnz=_DIMV_NNZ, seed=0):
+    gen = torch.Generator("cpu").manual_seed(seed)
+    sparse_dim = len(shape) - dense_dim
+    sparse_shape = shape[:sparse_dim]
+    dense_shape = shape[sparse_dim:]
+    indices = torch.stack(
+        [
+            torch.randint(0, dim, (nnz,), dtype=torch.long, generator=gen)
+            for dim in sparse_shape
+        ]
+    )
+    if dtype.is_floating_point:
+        values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
+    elif dtype == torch.bool:
+        values = torch.randint(0, 2, (nnz,) + dense_shape, dtype=dtype, generator=gen)
+    else:
+        values = torch.randint(-5, 6, (nnz,) + dense_shape, dtype=dtype, generator=gen)
+    return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
 def _case_fn(shape, dtype):
     del dtype
-    sparse_shape, dense_shape, nnz = shape
+    # Cover all-sparse 2-D layouts (dense_dim == 0) and mixed sparse+dense
+    # 3-D/4-D layouts (dense_dim == 2); every derived dense_dim stays within
+    # [0, ndim] so additional shapes merged in by the comprehensive bench level
+    # remain valid.
+    dense_dim = 0 if len(shape) <= 2 else 2
     yield base.BenchmarkCasePlan(
-        shape={"input": sparse_shape + dense_shape},
-        params={"nnz": nnz},
-        builder_args=(sparse_shape, dense_shape, nnz),
+        shape={"input": shape},
+        params={"dense_dim": dense_dim},
+        builder_args=(shape, dense_dim),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    sparse_shape, dense_shape, nnz = plan.builder_args
-    indices = torch.stack(
-        [
-            torch.randint(0, dim, (nnz,), dtype=torch.long, device=device)
-            for dim in sparse_shape
-        ]
-    )
-    values_shape = (nnz,) + tuple(dense_shape)
-    values = torch.randn(values_shape, dtype=dtype, device=device)
-    size = tuple(sparse_shape) + tuple(dense_shape)
-    inp = torch.sparse_coo_tensor(indices, values, size, device=device)
+    shape, dense_dim = plan.builder_args
+    inp = _make_sparse_input(shape, dense_dim, dtype, device)
     return inp, {}
 
 
 class DimVBenchmark(base.GenericBenchmark):
-    # _dimV is a sparse op; there are no meaningful dense shapes in
-    # core_shapes.yaml, so benchmark dedicated (sparse_shape, dense_shape, nnz)
-    # triples instead.
+    """Two-phase GenericBenchmark whose inputs are sparse COO tensors."""
+
     def set_shapes(self, shape_file_path=None):
         self.shapes = _DIMV_SHAPES
 

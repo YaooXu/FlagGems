@@ -12,12 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import torch
+import sys as _sys
+from pathlib import Path as _Path
 
-import flag_gems
+# pytest --import-mode=importlib imports this module as <pkg>.test_sparse_bsr_tensor,
+# where <pkg> is the "tests" or "benchmark" package of the checkout that
+# actually holds this file (the KernelGen verification harness stages a temp
+# copy of the FlagGems tree). When the driving process also has a same-named
+# package on sys.path (e.g. the KernelGen repo's own tests/ directory), a bare
+# relative import below would bind to that foreign package instead. Put the
+# checkout root of *this* file first in sys.path so the relative imports
+# resolve to the support files (accuracy_utils/test_utils/base/consts) that
+# ship next to it.
+_CHECKOUT_ROOT = _Path(__file__).resolve().parent.parent
+if str(_CHECKOUT_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_CHECKOUT_ROOT))
 
-from . import base, consts
+import pytest  # noqa: E402
+import torch  # noqa: E402
+
+import flag_gems  # noqa: E402
+
+from . import base, consts  # noqa: E402
 
 # aten::sparse_bsr_tensor.crow_col_value_size(Tensor crow_indices,
 #     Tensor col_indices, Tensor values, int[] size, *, ScalarType? dtype=None,
@@ -32,7 +48,8 @@ from . import base, consts
 # Each benchmark case is (tensor_shape, block). The block grid is fixed at
 # ``_BLOCKS_PER_ROW`` stored blocks per row-block, so the nnz (and thus the
 # values allocation) grows only with the number of row-blocks while the logical
-# matrix spans the full (rows, cols) extent.
+# matrix spans the full (rows, cols) extent. Broadcast/backward do not apply:
+# this is a constructor with no tensor arithmetic between operands.
 _BENCH_SHAPES = [
     ((512, 512), (16, 16)),
     ((1024, 1024), (32, 32)),
