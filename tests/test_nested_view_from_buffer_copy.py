@@ -57,10 +57,10 @@ def test_nested_view_from_buffer_copy(dtype):
         ref_offsets.to("cpu"),
     )
 
-    with flag_gems.use_gems():
-        res_out = flag_gems._nested_view_from_buffer_copy(
-            buffer, sizes, strides, offsets
-        )
+    gems_op = flag_gems.testing.resolve_gems_op(
+        "nested_view_from_buffer_copy", flag_gems._nested_view_from_buffer_copy
+    )
+    res_out = gems_op(buffer, sizes, strides, offsets)
 
     # Verify the nested tensor structure matches
     assert res_out.is_nested

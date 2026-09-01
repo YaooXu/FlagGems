@@ -25,11 +25,6 @@ RNN_HIDDEN_SIZES = [8, 16]
 pytestmark = pytest.mark.rnn_relu
 
 
-def _rnn_relu(*args):
-    gems_op = flag_gems.testing.resolve_gems_op("rnn_relu", flag_gems.rnn_relu)
-    return gems_op(*args)
-
-
 @pytest.mark.skipif(
     cfg.TO_CPU or flag_gems.device != "cuda" or not torch.cuda.is_available(),
     reason="Triton kernel is CUDA-only",
@@ -67,7 +62,8 @@ def test_rnn_relu(seq_len, batch_size, input_size, hidden_size, dtype, batch_fir
         ref_input, ref_hx, ref_params, True, 1, 0.0, False, False, batch_first
     )
 
-    res_out = _rnn_relu(
+    gems_op = flag_gems.testing.resolve_gems_op("rnn_relu", flag_gems.rnn_relu)
+    res_out = gems_op(
         input_tensor, hx, params, True, 1, 0.0, False, False, batch_first
     )
 
@@ -107,7 +103,8 @@ def test_rnn_relu_direct_wrapper(
     hx = torch.randn(1, batch_size, hidden_size, dtype=dtype, device=flag_gems.device)
 
     # Run direct wrapper call
-    out, hidden = _rnn_relu(
+    gems_op = flag_gems.testing.resolve_gems_op("rnn_relu", flag_gems.rnn_relu)
+    out, hidden = gems_op(
         input_tensor, hx, params, True, 1, 0.0, False, False, batch_first
     )
 
@@ -152,9 +149,8 @@ def test_rnn_relu_direct_backward():
     inp_g = inp_data.detach().clone().requires_grad_(True)
     hx_g = hx_data.detach().clone().requires_grad_(True)
     params_g = tuple(p.detach().clone().requires_grad_(True) for p in params_data)
-    out_g, hid_g = _rnn_relu(
-        inp_g, hx_g, params_g, True, 1, 0.0, True, False, False
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("rnn_relu", flag_gems.rnn_relu)
+    out_g, hid_g = gems_op(inp_g, hx_g, params_g, True, 1, 0.0, True, False, False)
     (out_g.sum() + hid_g.sum()).backward()
 
     # Side 2: Native PyTorch recompute (same as backward internals)
@@ -199,7 +195,8 @@ def test_rnn_relu_large_hidden(hidden_size):
     params = tuple(p.detach() for p in rnn._flat_weights)
 
     ref = torch.rnn_relu(inp, hx, params, True, 1, 0.0, False, False, False)
-    out_gems = _rnn_relu(inp, hx, params, True, 1, 0.0, False, False, False)
+    gems_op = flag_gems.testing.resolve_gems_op("rnn_relu", flag_gems.rnn_relu)
+    out_gems = gems_op(inp, hx, params, True, 1, 0.0, False, False, False)
 
     atol = 2e-3
     utils.gems_assert_close(out_gems[0], ref[0], dtype, atol=atol)

@@ -17,6 +17,8 @@ from typing import Generator
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
 
 
@@ -92,6 +94,7 @@ def test_rnn_relu():
         input_fn=rnn_relu_input_fn,
         op_name="rnn_relu",
         torch_op=torch.rnn_relu,
+        gems_op=flag_gems.rnn_relu,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

@@ -16,6 +16,8 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base
 
 # Hardcoded shapes: _euclidean_dist requires (N,D) matrix pairs;
@@ -60,6 +62,7 @@ def test_euclidean_dist():
     bench = EuclideanDistBenchmark(
         op_name="euclidean_dist",
         torch_op=torch._euclidean_dist,
+        gems_op=flag_gems._euclidean_dist,
         # cdist_cuda does not support Half/BFloat16
         dtypes=[torch.float32],
     )

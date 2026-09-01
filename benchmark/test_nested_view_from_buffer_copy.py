@@ -39,13 +39,26 @@ class NestedViewFromBufferCopyBenchmark(base.Benchmark):
             (200000, [[5000], [10000], [15000]], [[1], [1], [1]], [0, 5000, 15000]),
         ]
 
-    def get_input_iter(self, cur_dtype):
-        for buffer_size, sizes, strides, offsets in self.shapes:
-            buffer = torch.randn(buffer_size, dtype=cur_dtype, device=self.device)
-            sizes_t = torch.tensor(sizes, dtype=torch.int64, device=self.device)
-            strides_t = torch.tensor(strides, dtype=torch.int64, device=self.device)
-            offsets_t = torch.tensor(offsets, dtype=torch.int64, device=self.device)
-            yield buffer, sizes_t, strides_t, offsets_t
+    def get_case_iter(self, dtype):
+        for ordinal, (buffer_size, sizes, strides, offsets) in enumerate(self.shapes):
+            yield self._case_from_plan(
+                dtype,
+                ordinal,
+                base.BenchmarkCasePlan(
+                    shape={"buffer": (buffer_size,)},
+                    params={"sizes": sizes, "strides": strides, "offsets": offsets},
+                    builder_args=(buffer_size, sizes, strides, offsets),
+                ),
+            )
+
+    def build_inputs(self, case):
+        plan = case.builder_args[0]
+        buffer_size, sizes, strides, offsets = plan.builder_args
+        buffer = torch.randn(buffer_size, dtype=case.dtype, device=self.device)
+        sizes_t = torch.tensor(sizes, dtype=torch.int64, device=self.device)
+        strides_t = torch.tensor(strides, dtype=torch.int64, device=self.device)
+        offsets_t = torch.tensor(offsets, dtype=torch.int64, device=self.device)
+        return buffer, sizes_t, strides_t, offsets_t
 
     def get_tflops(self, op, *args, **kwargs):
         return 0.0
@@ -60,6 +73,7 @@ def test_nested_view_from_buffer_copy(dtype):
     bench = NestedViewFromBufferCopyBenchmark(
         op_name="nested_view_from_buffer_copy",
         torch_op=flag_gems._nested_view_from_buffer_copy,
+        gems_op=flag_gems._nested_view_from_buffer_copy,
         dtypes=[dtype],
     )
     bench.run()
