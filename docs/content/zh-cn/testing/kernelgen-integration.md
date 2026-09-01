@@ -71,6 +71,18 @@ FlagGems 现有测试并不是全部通过同一种方式找到被测实现：�
 
 过去 KernelGen 若要评测新生成的实现，主要依赖手动替换 FlagGems `ops` 目录中的文件，再运行原有测试。这样可以让原有路由机制找到新代码，但不适合 Agent 高频、自动地测试多个版本，也难以只针对一个 Workload 做分析。
 
+## 当前 `gems_op` 方法无法覆盖的 pytest 类型
+
+当前方法的基本前提是：一次 pytest 命令只选择一个 canonical operator，`--candidate-code-path` 只提供一个导出 `run` 的待测文件，这个 operator 对应一个公开的 FlagGems callable 和一套固定调用签名。此前批量转换中发现，以下三类 pytest 不满足这个前提，不能仅靠补充 `resolve_gems_op()` 或 `gems_op=...` 准确接入：
+
+| 类型 | 已发现的例子 | 无法覆盖的原因 | 建议处理方式 |
+| --- | --- | --- | --- |
+| 同一个 marker 或 `op_name` 混合多个不兼容的 callable | `binary_cross_entropy`、`lu_unpack` 同时覆盖 default 与 out；`float_power_` 同时覆盖 Tensor 与 Scalar overload | 一份待测代码只有一个 `run` 入口和一套签名，不能同时替换两个参数、输出或 mutation 契约不同的公开函数 | 将 variant/overload 拆成独立 marker、`op_name` 和 resolver key；如果确实要求一次注入多个实现，则需要另行设计多入口待测代码协议 |
+| pytest 覆盖的 variant 没有公开 FlagGems callable | `heaviside.out`、`_upsample_nearest_exact2d.out` 只有内部实现或未从 `flag_gems` 公共命名空间导出 | `gems_op` 必须指向可评审、可稳定调用的公共入口；不能用 default 函数冒充 out variant，也不能依赖内部模块路径，否则无法保证 caller-owned out buffer 和返回别名语义 | 先导出独立的公共 callable，再为该 variant 分配独立 marker、`op_name` 和 resolver key |
+| pytest marker 不能唯一隔离目标算子 | `benchmark/test_trunc_.py` 中 `trunc` 与 `trunc_` 共用 `trunc_` marker | `pytest -m <marker>` 会同时收集目标和 sibling；同一份待测代码无法替换 sibling，调用覆盖报告也无法证明所选结果都来自目标实现 | 修正 marker 使其与 canonical operator 一一对应，或让测试协议支持按精确 pytest node/Benchmark `op_name` 选择 |
+
+这里的限制针对的是“一个待测入口能否无歧义地替换一个被测算子”，不表示所有特殊 pytest 都不能使用当前方法。原地算子、独立的 out/backward 算子、自定义 Benchmark、旧式 `input_fn`、lambda/`functools.partial` 和 dispatcher 参数适配，只要能够保留全部 workload 和语义，并改造成一个公开 callable、一套明确签名以及统一的 Workload 枚举与输入构造，就仍然可以通过当前 `gems_op` 方法覆盖。转换时不得通过删除 workload、把 out 参数丢给 default 函数、调用未导出的内部实现或让候选代码隐藏在 wrapper 后面来规避上述限制。
+
 ## 希望 FlagGems 团队配合确认的事项
 
 1. 确认上述三项能力可以作为 FlagGems 测试框架的公共扩展，并共同确定接口边界和默认行为。
@@ -130,12 +142,51 @@ KernelGen 后续编写的测试会统一依赖 `--candidate-code-path` 和直接
 
 1. `gems_op` 必须在测试函数内解析，不得在模块导入阶段缓存。这样 `--candidate-code-path` 指定的待测代码才能在本次 pytest 中生效；不传参数时同一测试仍调用默认实现。
 2. reference 使用 PyTorch 原生实现，待测结果只通过 `gems_op` 获得。不得在待测路径中调用 `torch.ops.*`、`torch.<op>` 或 `use_gems()`，也不得在异常后回退到 PyTorch 实现。
-3. 输入 Tensor 在 `flag_gems.device` 上生成，并使用 `accuracy_utils.to_reference()` 构造 reference 输入。对于原地修改、out、alias 或可能修改输入的算子，reference 与待测代码必须使用内容相同但存储独立的输入，并同时检查返回值和被修改对象。
+3. 输入 Tensor 在 `flag_gems.device` 上生成，并使用 `accuracy_utils.to_reference()` 构造 reference 输入。必须先转换全部 reference 输入，再调用 PyTorch reference；不得先在目标设备执行 reference，再对计算结果调用 `to_reference()`。对于原地修改、out、alias 或可能修改输入的算子，reference 与待测代码必须使用内容相同但存储独立的输入，并同时检查返回值和被修改对象。
 4. 传给直接函数的参数类型必须符合 FlagGems 公开 Python 接口。普通标量使用 Python 的 `int`、`float` 和 `bool`，不得依赖 dispatcher 把 NumPy 标量或其他特殊对象自动转换成 schema 类型。
 5. 浮点结果使用 `gems_assert_close()`，整数、布尔值或必须逐位一致的结果使用 `gems_assert_equal()`。只有算子语义确有需要时才能调整容差，并在代码中说明原因；tuple、多输出、dtype、shape、mutation 和 alias 语义需要分别检查。
 6. shape 和 dtype 优先复用 `accuracy_utils` 中的公共集合。新增本地 case 必须覆盖该算子的关键边界，而不是重复维护一套与正式测试不同的常规 shape。
 7. 随机算子应固定测试所需的随机状态，并按算子语义选择确定性、边界或统计检查。不得通过放宽断言、重试直到通过或无理由 skip 来掩盖随机失败。
 8. 厂商限制只能使用带明确原因的 `pytest.mark.skipif` 或 `xfail` 表达，reason 应关联已知问题或清楚说明硬件限制。不得因为当前待测代码失败而新增平台 skip。
+
+#### `--ref cpu` 的输入转换顺序
+
+`--ref cpu` 不是全局设备拦截器。它只在正确性测试中设置 `TO_CPU=True`，使 `accuracy_utils.to_reference()` 把传入的 Tensor 转到 CPU；Python 不会自动把任意 PyTorch reference 调用改到 CPU。因此测试代码必须先转换输入，再执行 reference。
+
+下面的写法是错误的：Python 会先在目标设备执行内层算子，随后才把已经算出的结果移动到 CPU，无法绕过目标后端缺失的 PyTorch API。
+
+```python
+ref_out = utils.to_reference(
+    torch.nn.functional.scaled_dot_product_attention(query, key, value)
+)
+```
+
+正确写法是先转换全部 reference 输入：
+
+```python
+ref_query = utils.to_reference(query)
+ref_key = utils.to_reference(key)
+ref_value = utils.to_reference(value)
+
+ref_out = torch.nn.functional.scaled_dot_product_attention(
+    ref_query,
+    ref_key,
+    ref_value,
+)
+```
+
+mask、index、weight、bias、out buffer 和其他 Tensor 参数也必须按同样规则转换。若同名底层 API 本身没有 CPU kernel，可以提供语义等价、独立且可审查的 PyTorch CPU reference；无法准确表达相同语义时，应明确标记 CPU reference 不支持，不得回到目标设备计算后再把结果搬到 CPU，也不得改变 workload、dtype 或参数语义来伪装成通过。
+
+当前 Kernel Todo V2 的 84 个设备 Reference 不可用条目中，已经确认以下正确性测试存在 `--ref cpu` 接入问题：
+
+| 问题类型 | 算子 | 当前行为 | 修改要求 |
+| --- | --- | --- | --- |
+| 先执行 reference，再调用 `to_reference()` | `_scaled_dot_product_efficient_attention`、`_scaled_dot_product_fused_attention_overrideable`、`_embedding_bag_dense_backward` | PyTorch reference 仍先在目标设备执行；这 3 类算子涉及摩尔线程、沐曦和昇腾的 8 个“芯片 × 算子”条目 | 先分别转换全部 reference 输入，再调用 PyTorch reference；不得只转换输出 |
+| CPU 模式直接 skip | `rnn_relu` | `TO_CPU=True` 时不执行任何正确性 case | 如果 CPU 能表达相同 reference 语义，应只保留待测实现的真实平台限制，不应因 reference 位于 CPU 而跳过整个测试 |
+| CPU reference 前依赖目标设备专用前置算子 | `cudnn_batch_norm_backward` | 在构造 CPU reference 前，先在目标设备调用 `cudnn_batch_norm` 生成统计量；目标后端缺少该 API 时仍会提前失败 | 使用能够在 CPU 独立构造的等价统计量或 reference 流程，确保 CPU reference 不依赖目标设备 reference API |
+| 非 CUDA 设备直接 skip | `_scaled_dot_product_cudnn_attention` | 摩尔线程和昇腾不会执行正确性 case，即使 reference 可以使用 CPU 的通用 SDPA 表达 | 分开描述待测实现的平台能力与 reference 设备；无法在目标平台执行待测实现时明确记录 candidate 不支持，不要把它误记为 CPU reference 失败 |
+
+这份清单记录的是当前已确认的问题，不是完整枚举。新增或迁移测试时，应检查 reference 调用发生在哪个设备、是否在 `to_reference()` 之前执行了任何设备算子，以及 `--ref cpu` 是否因平台 marker 变成全量 skip。
 
 下面以 `clamp_max` 为例展示推荐形态；其他算子应保留相同结构并替换输入、reference 和断言：
 
