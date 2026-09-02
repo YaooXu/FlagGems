@@ -101,9 +101,8 @@ def _coo_value_range_cases():
     """Representative all-sparse + hybrid layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 2, 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 48)]
-    return [((3, 4), 2, 7), ((3, 4, 2), 2, 12)]
 
 
 def _make_input(shape, sparse_dim, nnz, dtype, value_range=("-1", "1"), seed=0):

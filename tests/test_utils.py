@@ -1,39 +1,39 @@
 """Shared test utilities for the regular-operator test spec.
 
 Implements the value-range / shape-level / broadcast / backward conventions
-from the "常规算子测试用例" spec (quick / core / all levels selected by the
-``TEST_LEVEL`` environment variable). Tests reference these helpers so the
-value-range and shape-selection logic lives in one place instead of being
-copied into every ``tests/test_<op>.py`` file.
+from the "常规算子测试用例" spec (quick / full levels selected by the pytest
+``--quick`` flag, matching FlagGems' own accuracy_utils convention). Tests
+reference these helpers so the value-range and shape-selection logic lives in
+one place instead of being copied into every ``tests/test_<op>.py`` file.
 
 Reference example: the `add` sample (123.py) attached to the spec.
 """
 
-import os
-
 import torch
+
+import flag_gems
+
+from .conftest import QUICK_MODE
 
 # ---------------------------------------------------------------------------
 # Level selection
 # ---------------------------------------------------------------------------
+#
+# Two levels only, matching FlagGems' ``--quick`` pytest flag:
+#   * quick -- smoke subset (``pytest --quick`` sets conftest.QUICK_MODE)
+#   * full  -- everything else (default)
+# ``LEVEL`` is kept as a derived string so files that branch on it
+# (``tu.LEVEL == "quick"`` / ``tu.LEVEL == "all"``) keep working.
 
-LEVEL = os.getenv("TEST_LEVEL", "core")
+LEVEL = "quick" if QUICK_MODE else "all"
 
 
 def selected_shapes():
-    if LEVEL == "quick":
-        return QUICK_SHAPES
-    if LEVEL in ("all", "extended"):
-        return ALL_SHAPES
-    return CORE_SHAPES
+    return QUICK_SHAPES if QUICK_MODE else ALL_SHAPES
 
 
 def selected_ranges():
-    if LEVEL == "quick":
-        return QUICK_RANGES
-    if LEVEL in ("all", "extended"):
-        return ALL_RANGES
-    return CORE_RANGES
+    return QUICK_RANGES if QUICK_MODE else ALL_RANGES
 
 
 # ---------------------------------------------------------------------------
@@ -90,16 +90,16 @@ def make_input(dtype, shape, value_range):
     high = resolve_bound(value_range[1], dtype)
 
     if dtype == torch.bool:
-        return torch.randint(0, 2, shape, device=DEVICE).bool()
+        return torch.randint(0, 2, shape, device=flag_gems.device).bool()
 
     if not (dtype.is_floating_point or dtype.is_complex):
         low, high = int(low), int(high)
 
     if low == high:
-        return torch.full(shape, low, device=DEVICE, dtype=dtype)
+        return torch.full(shape, low, device=flag_gems.device, dtype=dtype)
 
     return torch.testing.make_tensor(
-        shape, dtype=dtype, device=DEVICE, low=low, high=high
+        shape, dtype=dtype, device=flag_gems.device, low=low, high=high
     )
 
 
@@ -130,21 +130,17 @@ def assert_result_close(result, reference):
 # Shapes and value ranges by level
 # ---------------------------------------------------------------------------
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 QUICK_SHAPES = [
     (2, 19, 7),
 ]
 
-CORE_SHAPES = [
+# Full set: representative 0-3 dim shapes plus 5-8 dim high-rank tensors.
+ALL_SHAPES = [
     (),  # 0-dim scalar
     (1,),  # single-element 1-dim
     (256,),  # regular 1-dim
     (1024, 1024),  # regular 2-dim
     (7, 13, 29),  # regular 3-dim
-]
-
-ALL_SHAPES = CORE_SHAPES + [
     (16, 7, 57, 32, 29),  # 5-dim
     (12, 9, 3, 6, 8, 6),  # 6-dim
     (3, 6, 4, 4, 6, 5, 4),  # 7-dim
@@ -155,14 +151,13 @@ QUICK_RANGES = [
     ["-1", "1"],
 ]
 
-CORE_RANGES = QUICK_RANGES + [
+# Full set: core ranges plus half-width and degenerate endpoints.
+ALL_RANGES = [
+    ["-1", "1"],
     ["0", "1"],
     ["-1", "0"],
     ["0", "max"],
     ["min", "0"],
-]
-
-ALL_RANGES = CORE_RANGES + [
     ["0", "max/2"],
     ["min/2", "0"],
     ["0", "0"],

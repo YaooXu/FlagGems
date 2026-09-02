@@ -674,7 +674,10 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
 
 
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+@pytest.mark.skipif(
+    flag_gems.device == "cpu",
+    reason="cross-device construction requires a non-CPU device",
+)
 def test_sparse_csc_tensor_rejects_device_mismatch():
     # Index tensors on a different device than the values are rejected.
     ccol, row, values = _build_default_inputs()
@@ -703,7 +706,10 @@ def test_sparse_csc_tensor_rejects_device_mismatch():
 
 
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+@pytest.mark.skipif(
+    flag_gems.device == "cpu",
+    reason="cross-device construction requires a non-CPU device",
+)
 def test_sparse_csc_tensor_rejects_missing_device():
     # Without an explicit device kwarg the CUDA constructor cannot infer the
     # target device from the index tensors.

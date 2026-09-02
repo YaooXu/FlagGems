@@ -51,7 +51,7 @@ from . import test_utils as tu  # noqa: E402
 #
 # Coverage:
 #   * layouts: strided tensors (ranks 0-8 plus empty), sparse COO (all-sparse
-#     and hybrid), and sparse CSR (2-D and batched 3-D), selected by TEST_LEVEL;
+#     and hybrid), and sparse CSR (2-D and batched 3-D), selected by --quick;
 #   * value ranges: tu.selected_ranges() over representative layouts, so every
 #     storage dtype is exercised with negative, positive, extreme and
 #     degenerate value ranges (the reported sparse-dim count is identical for
@@ -75,7 +75,7 @@ _DENSE_CASES_CORE = [
     ((3, 4, 5, 4, 5), 0),
 ]
 
-# Higher-rank strided tensors for the "all"/"extended" TEST_LEVEL.
+# Higher-rank strided tensors for the "all" level (default, no --quick).
 _DENSE_CASES_ALL = [
     ((3, 6, 4, 4, 6, 5, 4), 0),
     ((7, 3, 12, 4, 2, 15, 2, 2), 0),
@@ -102,7 +102,7 @@ _COO_CASES_CORE = [
     ((3,), (4, 5, 6), 2),
 ]
 
-# Higher-rank hybrid layouts for the "all"/"extended" TEST_LEVEL.
+# Higher-rank hybrid layouts for the "all" level (default, no --quick).
 _COO_CASES_ALL = [
     ((12, 9, 3, 6), (4,), 9),
     ((3, 4, 2, 5, 3), (4, 2), 11),
@@ -116,7 +116,7 @@ _CSR_CASES_CORE = [
     ((3, 5, 7), 3),
 ]
 
-# Additional batched CSR layout for the "all"/"extended" TEST_LEVEL.
+# Additional batched CSR layout for the "all" level (default, no --quick).
 _CSR_CASES_ALL = [
     ((3, 4, 4), 4),
 ]
@@ -129,48 +129,43 @@ _EMPTY_CSR_CASES = [
 
 
 def _dense_cases():
-    """(shape, expected) strided layouts selected by the TEST_LEVEL env var."""
+    """(shape, expected) strided layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 0)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _DENSE_CASES_CORE + _DENSE_CASES_ALL
-    return _DENSE_CASES_CORE
 
 
 def _coo_cases():
-    """(sparse_shape, dense_shape, nnz) COO layouts selected by TEST_LEVEL."""
+    """(sparse_shape, dense_shape, nnz) COO layouts selected by --quick."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), (), 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _COO_CASES_CORE + _COO_CASES_ALL
-    return _COO_CASES_CORE
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid COO layouts for the range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), (), 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [((3, 4), (), 7), ((3, 4), (3,), 8), ((12, 9, 3, 6), (4,), 9)]
-    return [((3, 4), (), 7), ((3, 4), (3,), 8), ((2, 3, 4), (5,), 12)]
 
 
 def _csr_cases():
-    """(shape, nnz) CSR layouts selected by the TEST_LEVEL env var."""
+    """(shape, nnz) CSR layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 3)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _CSR_CASES_CORE + _CSR_CASES_ALL
-    return _CSR_CASES_CORE
 
 
 def _csr_value_range_cases():
     """Representative 2-D + batched CSR layouts for the range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 3)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [((4, 4), 3), ((2, 4, 4), 5)]
-    return [((4, 4), 3), ((2, 4, 4), 5)]
 
 
 def _make_dense(shape, dtype, value_range):

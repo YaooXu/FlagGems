@@ -43,7 +43,7 @@ from . import test_utils as tu  # noqa: E402
 #
 # Coverage follows the regular-operator spec adapted to a data-movement op:
 #   * shape levels: dedicated depth-axis shape sets merged with the shared
-#     tu.selected_shapes() levels (quick/core/all) as self-pairs, bounded so a
+#     tu.selected_shapes() levels (quick/all) as self-pairs, bounded so a
 #     single input stays <= 1M elements (the output is ~2x the input size);
 #   * value ranges: tu.selected_ranges() over small representative shape sets
 #     for every supported dtype (the values must round-trip exactly through
@@ -77,7 +77,7 @@ if tu.LEVEL == "quick":
         [(3,), (3,)],
         [(8, 16, 32), (8, 16, 48)],
     ]
-elif tu.LEVEL in ("all", "extended"):
+elif tu.LEVEL == "all":
     _DSTACK_EXTRA_SHAPE_SETS = [
         [(3,), (3,)],
         [(3, 33), (3, 33)],
@@ -139,7 +139,7 @@ def _dstack_shape_sets():
     """Shape-list levels for the main sweep.
 
     The dedicated depth-axis sets above are merged with the shared shape levels
-    (tu.selected_shapes(), quick/core/all) as self-pairs. Each pair keeps every
+    (tu.selected_shapes(), quick/all) as self-pairs. Each pair keeps every
     dim except dim 2 identical so the depth-axis concatenation is exercised;
     self-pairs whose single input would exceed 1M elements are skipped because
     the output is ~2x the input size.

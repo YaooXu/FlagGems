@@ -47,7 +47,7 @@ from . import test_utils as tu  # noqa: E402
 # values, so every workload below feeds a sparse CSC tensor.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (shape, nnz) layouts from the quick/core/all levels, ranks
+#   * shape levels: (shape, nnz) layouts from the quick/all levels, ranks
 #     2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank multi-batch-dims),
 #     with varying nnz so the (batch_dims + (ncols + 1,)) shape of the result
 #     is exercised;
@@ -78,7 +78,7 @@ _CSC_CASES_CORE = [
     ((2, 3, 4, 5), 8),
 ]
 
-# Higher-rank layouts for the "all"/"extended" TEST_LEVEL: 4-D and batched
+# Higher-rank layouts for the "all" level (no --quick): 4-D and batched
 # ranks up to 7-D.
 _CSC_CASES_ALL = [
     ((12, 9, 3, 6), 9),
@@ -89,21 +89,19 @@ _CSC_CASES_ALL = [
 
 
 def _csc_cases():
-    """(shape, nnz) layouts selected by the TEST_LEVEL env var."""
+    """(shape, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _CSC_CASES_CORE + _CSC_CASES_ALL
-    return _CSC_CASES_CORE
 
 
 def _csc_value_range_cases():
     """Representative 2-D + batched layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
-    return [((5, 4), 7), ((3, 5, 4), 7)]
 
 
 # The result ignores the stored values, but the candidate must accept any

@@ -109,9 +109,8 @@ def _value_range_layouts():
     """(num_tensors, num_dims) layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [(8, 2)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [(8, 2), (64, 3), (256, 3)]
-    return [(8, 2), (64, 3)]
 
 
 def _make_input(

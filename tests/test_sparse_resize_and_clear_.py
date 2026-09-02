@@ -57,7 +57,7 @@ from . import test_utils as tu  # noqa: E402
 #     unchanged/grow, sparse<->dense redistribution, 1-D/4-D/5-D, an
 #     all-dense-view target (sparse_dim == 0) and the empty (nnz == 0) source;
 #   * shape levels: tu.selected_shapes() resizes a fixed source to every
-#     quick/core/all shape level with a legal sparse/dense split;
+#     quick/all shape level with a legal sparse/dense split;
 #   * value ranges: tu.selected_ranges() builds the source storage over the
 #     spec's per-dtype numeric ranges, and nan/inf/-inf values are covered
 #     separately (all discarded by the clear);
@@ -88,8 +88,8 @@ _RESIZE_CASES = [
 # ints, and bool) is exercised.
 _RESIZE_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
 
-# Shape levels and value ranges from the regular-operator spec (quick/core/all
-# selected by TEST_LEVEL at test_utils import time).
+# Shape levels and value ranges from the regular-operator spec (quick/all
+# selected by the pytest --quick flag (read at import time)).
 _SELECTED_SHAPES = tu.selected_shapes()
 _SELECTED_RANGES = tu.selected_ranges()
 
@@ -298,7 +298,7 @@ def test_sparse_resize_and_clear_nan_inf(dtype):
 @pytest.mark.parametrize("shape", _SELECTED_SHAPES)
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_and_clear_shape_levels(shape, dtype):
-    # A fixed non-empty source resized to every shape level (quick/core/all,
+    # A fixed non-empty source resized to every shape level (quick/all,
     # ranks 0-8) with a legal sparse/dense split; the clear keeps the result
     # empty regardless of the target.
     sparse_dim, dense_dim = _split_for_shape(shape)

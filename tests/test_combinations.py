@@ -51,7 +51,7 @@ from . import test_utils as tu  # noqa: E402
 # output dtype always matches the input dtype and the input is never mutated.
 #
 # Coverage follows the regular-operator spec adapted to this 1-D gather op:
-#   * shape levels: 1-D sizes selected by tu.LEVEL (quick/core/all), since the
+#   * shape levels: 1-D sizes selected by tu.LEVEL (quick/all), since the
 #     generic multi-dim shape sets are not valid inputs for combinations;
 #   * value ranges: tu.selected_ranges() over small 1-D inputs for every float
 #     and int dtype (the op round-trips values bit-exactly, so the full
@@ -68,7 +68,7 @@ from . import test_utils as tu  # noqa: E402
 # Each pytest parametrization combo below is one Workload.
 if tu.LEVEL == "quick":
     _COMBINATIONS_SHAPES = [(4,), (8,)]
-elif tu.LEVEL in ("all", "extended"):
+elif tu.LEVEL == "all":
     # The largest all-level case (96, r=3) writes C(96, 3) * 3 = 428,640
     # output elements, staying under the 1M-element correctness cap.
     _COMBINATIONS_SHAPES = [(1,), (2,), (4,), (8,), (16,), (64,), (96,)]

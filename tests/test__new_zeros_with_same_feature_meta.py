@@ -78,8 +78,8 @@ setattr(
 #   * .default and .out overloads over N in [0, self.dim()] with 0-D/1-D/4-D
 #     shapes on both sides, the same-object (self is other) path and zero-sized
 #     dims;
-#   * shape levels: pairs built from tu.selected_shapes() (quick/core/all
-#     selected by TEST_LEVEL), with the output element count bounded so the
+#   * shape levels: pairs built from tu.selected_shapes() (quick/all
+#     selected by --quick), with the output element count bounded so the
 #     zero allocation stays cheap;
 #   * value ranges: tu.selected_ranges() over representative shape pairs and
 #     storage dtypes (the output is identical for every range);
@@ -141,7 +141,7 @@ _VALUE_RANGE_CASES = [
 ]
 
 # The op allocates a zero tensor of the concatenated shape; keep that
-# allocation small so the shape-level sweep stays fast at every TEST_LEVEL.
+# allocation small so the shape-level sweep stays fast at every --quick.
 _MAX_OUTPUT_ELEMENTS = 1_000_000
 
 
@@ -169,7 +169,7 @@ def _shape_level_cases():
 
 
 def _make_value_tensor(dtype, shape, value_range, device):
-    """Device-explicit twin of tu.make_input (which hardcodes its own device)."""
+    """Device-explicit twin of tu.make_input: same logic but on an explicit device."""
     low = tu.resolve_bound(value_range[0], dtype)
     high = tu.resolve_bound(value_range[1], dtype)
     if dtype == torch.bool:

@@ -135,8 +135,8 @@ STORAGE_RANGE_COMBOS = [
 
 
 def _make_storage_input(shape, storage_dtype, value_range):
-    # tu.make_input rerouted to flag_gems.device (the shared helper allocates on
-    # torch.cuda/cpu, which is wrong for non-CUDA FlagGems backends).
+    # tu.make_input rerouted to flag_gems.device (the shared helper allocates there
+    # by default).
     low = tu.resolve_bound(value_range[0], storage_dtype)
     high = tu.resolve_bound(value_range[1], storage_dtype)
     if not storage_dtype.is_floating_point:

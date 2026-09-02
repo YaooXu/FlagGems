@@ -61,7 +61,7 @@ def _resolve(name):
 # - Value ranges: N/A -- there are no input values to vary; the output is
 #   bit-exact zero for every supported dtype, so the value dimension here is the
 #   dtype family (bool / int / float), each compared with exact equality.
-# - Shape levels: tu.selected_shapes() (quick/core/all via TEST_LEVEL).
+# - Shape levels: tu.selected_shapes() (quick/all via --quick).
 # - Broadcast: N/A -- the only "input" is a size list; nothing to broadcast.
 # - Backward: N/A -- a factory with no autograd support (no differentiable
 #   input, output is never a function of another tensor).

@@ -663,8 +663,8 @@ def test_sparse_csr_tensor_rejects_missing_dtype(dtype):
 
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.skipif(
-    not torch.cuda.is_available(),
-    reason="cross-device construction requires a CUDA device",
+    flag_gems.device == "cpu",
+    reason="cross-device construction requires a non-CPU device",
 )
 def test_sparse_csr_tensor_rejects_device_mismatch():
     # All three storage tensors must share one device; the aten reference
@@ -699,7 +699,7 @@ def test_sparse_csr_tensor_rejects_device_mismatch():
 
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.skipif(
-    not torch.cuda.is_available(),
+    flag_gems.device != "cuda",
     reason="the missing-device quirk only exists on CUDA",
 )
 def test_sparse_csr_tensor_rejects_missing_device():

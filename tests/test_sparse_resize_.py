@@ -92,8 +92,8 @@ _VALUE_RANGE_CASES = [
     ((4, 5, 6), 2, 3, [6, 5, 6], 2, 1),
 ]
 
-# Shape-level dimension: the shared selected_shapes (quick/core/all levels via
-# TEST_LEVEL) minus the 0-dim scalar, which is not representable as a sparse
+# Shape-level dimension: the shared selected_shapes (quick/all levels via
+# --quick) minus the 0-dim scalar, which is not representable as a sparse
 # COO tensor (at least one sparse dimension is required).
 _SPARSE_SHAPE_LEVELS = tuple(s for s in tu.selected_shapes() if len(s) > 0)
 

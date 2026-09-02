@@ -58,7 +58,7 @@ setattr(
 # NotImplementedError), so every workload below feeds a sparse COO tensor.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/core/all
+#   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/all
 #     levels, ranks 1-7, all-sparse and hybrid sparse+dense, with varying nnz
 #     so the (sparse_dim, nnz) shape of the result is exercised;
 #   * value ranges: tu.selected_ranges() over representative layouts, so every
@@ -92,7 +92,7 @@ _INDICES_COO_CASES_CORE = [
     ((3, 4, 5, 4, 5), 3, 40),
 ]
 
-# Higher-rank layouts for the "all"/"extended" TEST_LEVEL: 4-D all-sparse and
+# Higher-rank layouts for the "all" level (no --quick): 4-D all-sparse and
 # hybrid ranks up to 7-D.
 _INDICES_COO_CASES_ALL = [
     ((12, 9, 3, 6), 4, 9),
@@ -103,21 +103,19 @@ _INDICES_COO_CASES_ALL = [
 
 
 def _coo_cases():
-    """(shape, sparse_dim, nnz) layouts selected by the TEST_LEVEL env var."""
+    """(shape, sparse_dim, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 2, 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _INDICES_COO_CASES_CORE + _INDICES_COO_CASES_ALL
-    return _INDICES_COO_CASES_CORE
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 2, 8)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 9)]
-    return [((3, 4), 2, 7), ((3, 4, 2), 2, 12)]
 
 
 def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):

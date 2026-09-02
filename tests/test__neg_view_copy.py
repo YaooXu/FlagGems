@@ -56,7 +56,7 @@ setattr(
 # The .out overload writes into and returns the caller's buffer.
 #
 # Coverage follows the regular-operator spec adapted to a view_copy op:
-#   * shape levels: tu.selected_shapes() (ranks 0-8, selected by TEST_LEVEL);
+#   * shape levels: tu.selected_shapes() (ranks 0-8, selected by --quick);
 #   * value ranges: tu.selected_ranges() over representative ranks, so every
 #     supported dtype is exercised with negative, positive, extreme and
 #     degenerate ranges;

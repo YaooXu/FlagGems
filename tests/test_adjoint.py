@@ -46,7 +46,7 @@ from . import test_utils as tu  # noqa: E402
 # involution (adjoint is its own inverse), so d(adjoint(x))/dx == adjoint(dy).
 #
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
-#   * shape levels: rank >= 2 shapes selected by TEST_LEVEL plus representative
+#   * shape levels: rank >= 2 shapes selected by --quick plus representative
 #     matrix / batch-of-matrices shapes (0-D/1-D get dedicated edge-case tests);
 #   * value ranges: tu.selected_ranges() over representative ranks so every
 #     supported dtype is exercised with negative, positive, extreme and

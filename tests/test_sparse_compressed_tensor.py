@@ -58,7 +58,7 @@ from . import test_utils as tu  # noqa: E402
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * shape levels: (layout, shape, nnz, index_dtype) structures from the
-#     quick/core/all TEST_LEVELs: 2-D CSR/CSC, 2-D block BSR/BSC (2x2 blocks),
+#     quick vs all levels via --quick: 2-D CSR/CSC, 2-D block BSR/BSC (2x2 blocks),
 #     and 3-D/4-D batched CSR/CSC/BSR with int64 and int32 index tensors;
 #   * value ranges: tu.selected_ranges() over representative layouts, so every
 #     storage dtype is exercised with negative, positive, extreme and degenerate
@@ -87,7 +87,7 @@ _CORE_CASES = [
     (torch.sparse_csr, (3, 5, 4), 7, torch.int32),
 ]
 
-# Higher-rank / multi-batch-dims structures for the "all"/"extended" TEST_LEVEL.
+# Higher-rank / multi-batch-dims structures for the "all" level (default, no --quick).
 _ALL_CASES = _CORE_CASES + [
     (torch.sparse_bsr, (2, 4, 6, 4), 8, torch.int64),
     (torch.sparse_csc, (3, 4, 5, 6), 9, torch.int32),
@@ -142,21 +142,19 @@ _BLOCK_SIZE = 2
 
 
 def _layout_cases():
-    """(layout, shape, nnz, index_dtype) structures by TEST_LEVEL."""
+    """(layout, shape, nnz, index_dtype) structures by --quick."""
     if tu.LEVEL == "quick":
         return _QUICK_CASES
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _ALL_CASES
-    return _CORE_CASES
 
 
 def _value_range_cases():
-    """Representative structures for the value-range sweep by TEST_LEVEL."""
+    """Representative structures for the value-range sweep by --quick."""
     if tu.LEVEL == "quick":
         return _QUICK_VALUE_CASES
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _ALL_VALUE_CASES
-    return _CORE_VALUE_CASES
 
 
 def _make_input(

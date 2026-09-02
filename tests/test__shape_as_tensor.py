@@ -49,7 +49,7 @@ from . import test_utils as tu  # noqa: E402
 # on the CPU regardless of the input device, so the candidate must do the same.
 #
 # Shape coverage follows the regular-operator spec's level selection
-# (quick/core/all via the TEST_LEVEL env var): tu.selected_shapes(), which
+# (quick/all via the pytest --quick flag): tu.selected_shapes(), which
 # includes the 0-D scalar (mapped to the empty 1-D output) and ranks up to 8.
 #
 # Adaptation notes for the regular-operator spec:

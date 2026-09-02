@@ -65,8 +65,8 @@ setattr(
 #   * layout pairs: plain/transposed/row-slice/narrowed/expanded views, both
 #     True and False outcomes, including cases where the logical shapes agree
 #     but the storage sizes differ;
-#   * shape levels: tu.selected_shapes() plain-vs-plain pairs (quick/core/all
-#     selected by TEST_LEVEL), 0-D scalar through 8-D;
+#   * shape levels: tu.selected_shapes() plain-vs-plain pairs (quick/all
+#     selected by --quick), 0-D scalar through 8-D;
 #   * value ranges: tu.selected_ranges() over representative shapes, so every
 #     supported storage dtype is exercised with negative, positive, extreme and
 #     degenerate ranges (the answer is identical for all of them);
@@ -137,7 +137,7 @@ def _make_tensor(spec, dtype, device):
 
 
 def _make_value_tensor(dtype, shape, value_range, device):
-    """Device-explicit twin of tu.make_input (which hardcodes its own device)."""
+    """Device-explicit twin of tu.make_input: same logic but on an explicit device."""
     low = tu.resolve_bound(value_range[0], dtype)
     high = tu.resolve_bound(value_range[1], dtype)
     if dtype == torch.bool:

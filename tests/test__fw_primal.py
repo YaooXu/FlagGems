@@ -65,7 +65,7 @@ setattr(
 # The op is pure metadata manipulation, so every storage dtype is supported and
 # the result compares bit-for-bit. Coverage follows the regular-operator spec
 # adapted to a view op:
-#   * shape levels: tu.selected_shapes() (ranks 0-8, selected by TEST_LEVEL);
+#   * shape levels: tu.selected_shapes() (ranks 0-8, selected by --quick);
 #   * value ranges: tu.selected_ranges() over representative shapes, so every
 #     supported dtype is exercised with negative, positive, extreme and
 #     degenerate ranges (the view round-trips all of them);

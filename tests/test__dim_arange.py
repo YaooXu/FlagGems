@@ -51,7 +51,7 @@ from . import test_utils as tu  # noqa: E402
 # workloads below and covered by the negative tests instead.
 #
 # Shape coverage follows the regular-operator spec's level selection
-# (quick/core/all via the TEST_LEVEL env var): tu.selected_shapes() minus the
+# (quick/all via the pytest --quick flag): tu.selected_shapes() minus the
 # 0-D scalar. Every valid dim is exercised in both the positive and negative
 # indexing conventions, which aten normalizes identically.
 #

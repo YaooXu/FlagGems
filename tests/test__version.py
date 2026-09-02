@@ -61,7 +61,7 @@ setattr(
 # Coverage:
 #   * fresh tensors start at version 0 (0-D to 5-D, all float dtypes);
 #   * every storage dtype family the runtime supports is accepted;
-#   * shape levels: tu.selected_shapes() (quick/core/all via TEST_LEVEL);
+#   * shape levels: tu.selected_shapes() (quick/all via --quick);
 #   * value ranges: tu.selected_ranges() over representative shapes -- the
 #     answer is data-independent, so it is 0 for every range;
 #   * nan/inf payloads are ignored by the metadata query;
@@ -111,7 +111,7 @@ def _make_input(shape, dtype):
 
 
 def _make_value_tensor(dtype, shape, value_range, device):
-    """Device-explicit twin of tu.make_input (which hardcodes its own device)."""
+    """Device-explicit twin of tu.make_input: same logic but on an explicit device."""
     low = tu.resolve_bound(value_range[0], dtype)
     high = tu.resolve_bound(value_range[1], dtype)
     if dtype == torch.bool:

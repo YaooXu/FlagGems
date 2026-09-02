@@ -53,8 +53,8 @@ from . import test_utils as tu  # noqa: E402
 # through the same layouts.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (layout, size, nnz, blocks) cases from the quick/core/all
-#     TEST_LEVELs — 2-D CSR (incl. single-row, single-column, square, full
+#   * shape levels: (layout, size, nnz, blocks) cases from the quick/all
+#     --quicks — 2-D CSR (incl. single-row, single-column, square, full
 #     and nnz == 0), batched CSR (multi-batch-dims), 2-D BSR with varied block
 #     shapes (incl. blocks that do not divide the matrix), and batched BSR,
 #     ranks 2-5;
@@ -90,7 +90,7 @@ _COLS_CORE = [
     ("bsr_batch", (2, 4, 6), 6, (2, 2)),
 ]
 
-# Higher-rank / wider layouts for the "all"/"extended" TEST_LEVEL: a multi-
+# Higher-rank / wider layouts for the "all" level (default, no --quick): a multi-
 # batch-dim batched CSR, a BSR whose blocks do not divide the matrix, and a
 # batched BSR with a bigger block.
 _COLS_ALL = [
@@ -101,19 +101,18 @@ _COLS_ALL = [
 
 
 def _cols_cases():
-    """(layout, size, nnz, blocks) layouts selected by the TEST_LEVEL env var."""
+    """(layout, size, nnz, blocks) layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
         return [("csr_batch", (2, 19, 7), 20, None)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return _COLS_CORE + _COLS_ALL
-    return _COLS_CORE
 
 
 def _cols_value_range_cases():
     """Representative row-compressed + batched layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [("csr", (5, 4), 6, None)]
-    if tu.LEVEL in ("all", "extended"):
+    if tu.LEVEL == "all":
         return [
             ("csr", (5, 4), 6, None),
             ("csr_batch", (2, 6, 8), 12, None),
@@ -160,7 +159,7 @@ def _make_values(dtype, values_shape, value_range, gen):
         return torch.randint(0, 2, values_shape, dtype=dtype, generator=gen).to(
             flag_gems.device
         )
-    # tu.make_input creates the tensor on tu.DEVICE (cuda when available); move
+    # tu.make_input already creates the tensor on flag_gems.device; the .to()
     # it to flag_gems.device so it always matches the index tensors.
     return tu.make_input(dtype, values_shape, list(value_range)).to(flag_gems.device)
 
