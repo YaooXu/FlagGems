@@ -352,6 +352,16 @@ class Benchmark:
             "Each Benchmark must implement its own input iterator."
         )
 
+    def _resolve_direct_gems_op(self):
+        try:
+            op = flag_gems.testing.resolve_gems_op(self.op_name, self.gems_op)
+        except LookupError:
+            return None, None
+        source = flag_gems.testing.gems_op_source(self.op_name, op)
+        if source == "override" or self.gems_op is not None:
+            return op, source
+        return None, None
+
     def get_tflops(self, op, *args, **kwargs):
         """This method is currently not really implemented and serves as a placeholder.
         A proper implementation will be developed in the future."""
@@ -442,10 +452,13 @@ class Benchmark:
                             self.torch_op, *args, **kwargs
                         )
                     if "latency" in self.to_bench_metrics:
-                        if self.gems_op:
-                            metric.latency = self.get_latency(
-                                self.gems_op, *args, **kwargs
-                            )
+                        gems_op, candidate_source = self._resolve_direct_gems_op()
+                        if gems_op is not None:
+                            metric.candidate_source = candidate_source
+                            with flag_gems.testing.gems_op_case(self.op_name, None):
+                                metric.latency = self.get_latency(
+                                    gems_op, *args, **kwargs
+                                )
                         else:
                             if self.op_name == "zero_":
                                 with flag_gems.use_gems():

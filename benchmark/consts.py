@@ -92,6 +92,9 @@ def model_shapes():
 
 @dataclass
 class BenchmarkMetrics:
+    # Candidate route selected outside the measured interval. This is report
+    # metadata, not a benchmark metric.
+    candidate_source: Optional[str] = None
     # Legacy shape information for backward compatibility
     # This field corresponds to the 'size' field in the previous version's benchmark.
     legacy_shape: Optional[int] = None
@@ -118,6 +121,7 @@ class BenchmarkMetrics:
 
 
 ALL_AVAILABLE_METRICS = set(map(lambda x: x.name, fields(BenchmarkMetrics))) - {
+    "candidate_source",
     "legacy_shape",
     "shape_detail",
 }
