@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import itertools
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -92,6 +92,8 @@ def model_shapes():
 
 @dataclass
 class BenchmarkMetrics:
+    # Stable identity assigned by the benchmark case provider.
+    case_id: Optional[str] = None
     # Candidate route selected outside the measured interval. This is report
     # metadata, not a benchmark metric.
     candidate_source: Optional[str] = None
@@ -121,6 +123,7 @@ class BenchmarkMetrics:
 
 
 ALL_AVAILABLE_METRICS = set(map(lambda x: x.name, fields(BenchmarkMetrics))) - {
+    "case_id",
     "candidate_source",
     "legacy_shape",
     "shape_detail",
@@ -204,6 +207,59 @@ class OperationAttribute:
 
     def to_dict(self) -> dict:
         return self.__dict__
+
+
+@dataclass(frozen=True)
+class BenchmarkCasePlan:
+    """Tensor-free description produced by the case planning stage."""
+
+    shape: Dict[str, Any]
+    params: Dict[str, Any] = field(default_factory=dict)
+    builder_args: Tuple[Any, ...] = field(default_factory=tuple, repr=False)
+
+
+@dataclass(frozen=True)
+class BenchmarkCaseSpec:
+    """Lightweight description of one benchmark case.
+
+    ``builder_args`` are private runner state. They are intentionally excluded
+    from the JSON case-list contract and are only consumed when the case is
+    selected for execution.
+    """
+
+    case_id: str
+    ordinal: int
+    dtype: torch.dtype
+    shape: Dict[str, Any]
+    params: Dict[str, Any] = field(default_factory=dict)
+    builder_args: Tuple[Any, ...] = field(default_factory=tuple, repr=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "case_id": self.case_id,
+            "ordinal": self.ordinal,
+            "dtype": str(self.dtype),
+            "shape": self.shape,
+            "params": self.params,
+        }
+
+
+@dataclass(frozen=True)
+class BenchmarkCaseList:
+    op_name: str
+    level: str
+    cases: Tuple[BenchmarkCaseSpec, ...]
+    phase: str = "timing"
+    schema_version: str = "flaggems.benchmark-case-list/v2"
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "op_name": self.op_name,
+            "phase": self.phase,
+            "level": self.level,
+            "cases": [case.to_dict() for case in self.cases],
+        }
 
 
 def custom_json_encoder(obj):

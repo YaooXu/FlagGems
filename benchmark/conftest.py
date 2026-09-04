@@ -46,6 +46,7 @@ BUILTIN_MARKS = (
 )
 REGISTERED_MARKS = []
 TEST_RESULTS = {}
+CASE_LISTS = []
 REPORT_FILE = "benchmark_result.json"
 
 
@@ -56,6 +57,10 @@ def update_result(op, data):
     TEST_RESULTS.setdefault(op, {})
     TEST_RESULTS[op].setdefault("details", [])
     TEST_RESULTS[op]["details"].append(data)
+
+
+def update_case_list(data):
+    CASE_LISTS.append(data)
 
 
 def emit_record_logger(message: str) -> None:
@@ -97,6 +102,16 @@ class BenchConfig:
         self.shape_file = os.path.join(os.path.dirname(__file__), "core_shapes.yaml")
         self.query = False
         self.parallel = 0
+        self.list_cases = False
+        self.case_ids = None
+        self.preflight_only = False
+        self.profile_only = False
+        self.profile_warmup = 10
+        self.profile_iterations = 1
+        self.current_nodeid = None
+        self.available_case_ids = set()
+        self.executed_case_ids = set()
+        self.output = REPORT_FILE
         self.mm_layout = None
 
 
@@ -139,6 +154,56 @@ def pytest_addoption(parser):
 
     parser.addoption(
         "--query", action="store_true", default=False, help="Enable query mode"
+    )
+
+    parser.addoption(
+        "--list-cases",
+        action="store_true",
+        default=False,
+        help="List benchmark cases without materializing inputs or running operators.",
+    )
+
+    parser.addoption(
+        "--case-id",
+        action="append",
+        default=None,
+        help="Run only the benchmark case with this exact ID. May be repeated.",
+    )
+
+    parser.addoption(
+        "--preflight-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Materialize every selected benchmark case and invoke only the "
+            "FlagGems implementation once, without reference or timing."
+        ),
+    )
+
+    parser.addoption(
+        "--profile-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Replay exactly one --case-id using only the FlagGems implementation "
+            "for an external profiler."
+        ),
+    )
+
+    parser.addoption(
+        "--profile-warmup",
+        action="store",
+        type=int,
+        default=10,
+        help="Candidate-only warmup invocation count for --profile-only.",
+    )
+
+    parser.addoption(
+        "--profile-iterations",
+        action="store",
+        type=int,
+        default=1,
+        help="Candidate-only captured invocation count for --profile-only.",
     )
 
     parser.addoption(
@@ -249,6 +314,44 @@ def pytest_configure(config):
     Config.mode = consts.BenchMode(mode_value)
 
     Config.query = config.getoption("--query")
+    Config.list_cases = config.getoption("--list-cases")
+    Config.case_ids = config.getoption("--case-id")
+    Config.preflight_only = config.getoption("--preflight-only")
+    Config.profile_only = config.getoption("--profile-only")
+    Config.profile_warmup = config.getoption("--profile-warmup")
+    Config.profile_iterations = config.getoption("--profile-iterations")
+
+    if Config.case_ids is not None and len(Config.case_ids) != len(
+        set(Config.case_ids)
+    ):
+        raise pytest.UsageError("Duplicate --case-id values are not allowed.")
+
+    exclusive_modes = sum(
+        int(value)
+        for value in (
+            Config.list_cases,
+            Config.preflight_only,
+            Config.profile_only,
+        )
+    )
+    if exclusive_modes > 1:
+        raise pytest.UsageError(
+            "--list-cases, --preflight-only and --profile-only are mutually exclusive."
+        )
+    if Config.preflight_only and Config.case_ids is not None:
+        raise pytest.UsageError(
+            "--preflight-only always runs every timing case and cannot use --case-id."
+        )
+    if Config.profile_only and (
+        Config.case_ids is None or len(Config.case_ids) != 1
+    ):
+        raise pytest.UsageError(
+            "--profile-only requires exactly one --case-id."
+        )
+    if Config.profile_warmup < 0:
+        raise pytest.UsageError("--profile-warmup must be non-negative.")
+    if Config.profile_iterations < 1:
+        raise pytest.UsageError("--profile-iterations must be positive.")
 
     level_value = config.getoption("--level")
     Config.bench_level = consts.BenchLevel(level_value)
@@ -274,7 +377,7 @@ def pytest_configure(config):
 
     Config.parallel = int(config.getoption("--parallel") or 0)
     Config.mm_layout = config.getoption("--mm-layout")
-    if Config.record_json:
+    if Config.record_json or Config.list_cases:
         Config.output = config.getoption("--output")
         REPORT_FILE = Config.output
 
@@ -310,9 +413,14 @@ def setup_once(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def clear_function_cache():
-    yield
-    torch_device_fn.empty_cache()
+def clear_function_cache(request):
+    previous_nodeid = Config.current_nodeid
+    Config.current_nodeid = request.node.nodeid
+    try:
+        yield
+    finally:
+        Config.current_nodeid = previous_nodeid
+        torch_device_fn.empty_cache()
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -405,6 +513,15 @@ def pytest_runtest_logreport(report):
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Combine and dump the result into JSON."""
+    if Config.list_cases:
+        data = {
+            "schema_version": "flaggems.benchmark-case-list/v2",
+            "benchmarks": CASE_LISTS,
+        }
+        with open(REPORT_FILE, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        return
+
     if not Config.record_json:
         return
 
@@ -417,6 +534,24 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     with open(REPORT_FILE, "w") as f:
         json.dump(data, f, indent=2, default=str)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    del exitstatus
+    if Config is None or Config.case_ids is None:
+        return
+    requested = set(Config.case_ids)
+    missing = sorted(requested - Config.available_case_ids)
+    not_executed = sorted(requested - Config.executed_case_ids)
+    if not missing and not not_executed:
+        return
+    details = []
+    if missing:
+        details.append("unknown=" + ", ".join(missing))
+    if not_executed:
+        details.append("not_executed=" + ", ".join(not_executed))
+    print("FlagGems case selection failed: " + "; ".join(details))
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_collection_modifyitems(session, config, items):
