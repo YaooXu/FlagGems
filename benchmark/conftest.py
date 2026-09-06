@@ -112,6 +112,7 @@ class BenchConfig:
         self.available_case_ids = set()
         self.executed_case_ids = set()
         self.output = REPORT_FILE
+        self.mm_layout = None
 
 
 def pytest_addoption(parser):
@@ -274,6 +275,18 @@ def pytest_addoption(parser):
         ),
     )
 
+    parser.addoption(
+        "--mm-layout",
+        action="store",
+        default=None,
+        choices=["nn", "nt", "both"],
+        help=(
+            "Select the B layout for the MM benchmark: nn uses row-major B, "
+            "nt uses column-major B, and both runs both layouts. By default, "
+            "core runs nn while comprehensive runs both."
+        ),
+    )
+
     try:
         parser.addoption(
             "--collect-marks",
@@ -363,6 +376,7 @@ def pytest_configure(config):
     Config.record_json = config.getoption("--record") == "json"
 
     Config.parallel = int(config.getoption("--parallel") or 0)
+    Config.mm_layout = config.getoption("--mm-layout")
     if Config.record_json or Config.list_cases:
         Config.output = config.getoption("--output")
         REPORT_FILE = Config.output
