@@ -270,12 +270,7 @@ def _reference_col_indices_copy(inp):
     # The KernelGen ref-vs-ref verification overrides the candidate
     # (resolve_gems_op) with this same function so both sides run the same
     # native body.
-    try:
-        return torch.ops.aten.col_indices_copy(inp)
-    except NotImplementedError:
-        return torch.ops.aten.col_indices(inp).clone(
-            memory_format=torch.contiguous_format
-        )
+    return torch.ops.aten.col_indices_copy(inp)
 
 
 def _reference_col_indices_copy_out(inp, out):
@@ -290,12 +285,7 @@ def _reference_col_indices_copy_out(inp, out):
             "Expected out tensor to have dtype long int, "
             f"but got {out.dtype} instead"
         )
-    try:
-        return torch.ops.aten.col_indices_copy.out(inp, out=out)
-    except NotImplementedError:
-        computed = _reference_col_indices_copy(inp)
-        torch.ops.aten.copy_(out, computed)
-        return out
+    return torch.ops.aten.col_indices_copy.out(inp, out=out)
 
 
 def _resolve_gems_op():

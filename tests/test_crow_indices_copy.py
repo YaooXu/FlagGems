@@ -153,37 +153,14 @@ def _make_input(shape, nnz, dtype, value_range, seed=0):
 
 
 def _reference_crow_indices_copy(inp):
-    # Prefer the literal ATen op as the reference. Some PyTorch builds register
-    # crow_indices_copy as CompositeExplicitAutogradNonFunctional, whose
-    # dispatch-key set excludes the SparseCsr functionality key, so calling
-    # torch.ops.aten.crow_indices_copy directly on a sparse CSR tensor raises
-    # NotImplementedError. In that case fall back to the operator's exact
-    # native body -- crow_indices(self).clone(contiguous) -- composed from ATen
-    # ops, which IS reachable on sparse CSR tensors.
-    #
-    # The KernelGen ref-vs-ref verification overrides the candidate
-    # (resolve_gems_op) with this same function so both sides run the same
-    # native body.
-    try:
-        return torch.ops.aten.crow_indices_copy(inp)
-    except NotImplementedError:
-        return torch.ops.aten.crow_indices(inp).clone(
-            memory_format=torch.contiguous_format
-        )
+    # crow_indices_copy is callable on the sparse layout in this torch build, so use
+    # the literal ATen op as the reference.
+    return torch.ops.aten.crow_indices_copy(inp)
 
 
 def _reference_crow_indices_copy_out(inp, out):
-    # Same strategy as _reference_crow_indices_copy for the .out overload:
-    # compute the materialized copy and write it into out (the .out contract
-    # returns out itself).
-    try:
-        return torch.ops.aten.crow_indices_copy.out(inp, out=out)
-    except NotImplementedError:
-        computed = torch.ops.aten.crow_indices(inp).clone(
-            memory_format=torch.contiguous_format
-        )
-        torch.ops.aten.copy_(out, computed)
-        return out
+    # The .out overload is callable on sparse; write into out directly.
+    return torch.ops.aten.crow_indices_copy.out(inp, out=out)
 
 
 def _resolve_gems_op():
