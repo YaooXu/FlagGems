@@ -12,28 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import math
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# benchmark files into an isolated temp copy of the checkout, where the relative
-# ``from . import base, consts`` cannot resolve this checkout's benchmark package
-# through normal package discovery. Put the checkout root on sys.path so the
-# ``benchmark`` package resolves to THIS checkout no matter how pytest is invoked
-# (belt-and-suspenders: the correctness file already does this when it runs
-# first, but this keeps the benchmark file self-contained).
-_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _CHECKOUT_ROOT not in sys.path:
-    sys.path.insert(0, _CHECKOUT_ROOT)
+import pytest
+import torch
 
-import math  # noqa: E402
+import flag_gems
 
-import pytest  # noqa: E402
-import torch  # noqa: E402
-
-import flag_gems  # noqa: E402
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # detach_copy is a pure memory copy: unary, pointwise in shape space and
 # dtype-agnostic. The public UnaryPointwiseBenchmark family covers the .default

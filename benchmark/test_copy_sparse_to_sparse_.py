@@ -12,27 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys as _sys
-from pathlib import Path as _Path
+import pytest
+import torch
 
-# pytest --import-mode=importlib imports this module as <pkg>.test_copy_sparse_to_sparse_,
-# where <pkg> is the "tests" or "benchmark" package of the checkout that actually
-# holds this file (the KernelGen verification harness stages a temp copy of the
-# FlagGems tree). When the driving process also has a same-named package on
-# sys.path (e.g. the KernelGen repo's own tests/ directory), a bare relative
-# import below would bind to that foreign package instead. Put the checkout root
-# of *this* file first in sys.path so the relative imports resolve to the
-# support files (base/consts) that ship next to it.
-_CHECKOUT_ROOT = _Path(__file__).resolve().parent.parent
-if str(_CHECKOUT_ROOT) not in _sys.path:
-    _sys.path.insert(0, str(_CHECKOUT_ROOT))
+import flag_gems
 
-import pytest  # noqa: E402
-import torch  # noqa: E402
-
-import flag_gems  # noqa: E402
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # (sparse shape, sparse_dim, nnz). The copy transfers nnz entries, so timing
 # cases sweep nnz from a small working set up to a few million stored entries,

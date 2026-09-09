@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
+
+from . import base, consts, utils
 
 # ``_dim_arange`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly on
@@ -30,16 +29,6 @@ setattr(
     "_dim_arange",
     MarkDecorator(Mark("_dim_arange", (), {}, _ispytest=True), _ispytest=True),
 )
-
-# The KernelGen verification harness stages this file in a temporary copy of the
-# FlagGems tree and runs pytest in-process with ``--import-mode=importlib`` from
-# that temp root, which is not placed on ``sys.path``. Bootstrap the checkout
-# root from ``__file__`` so the relative imports below resolve.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-from . import base, consts, utils  # noqa: E402
 
 # aten::_dim_arange(like, dim) builds a fresh 1-D int64 tensor of length
 # like.size(dim). The measured work is proportional to the extent of the

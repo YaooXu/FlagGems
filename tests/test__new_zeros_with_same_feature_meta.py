@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import math
-import os
-import sys
 
 import pytest
 import torch
@@ -22,26 +20,8 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# test files into an isolated temp copy of the checkout, where the relative
-# ``from . import accuracy_utils`` cannot resolve this checkout's tests package
-# through normal package discovery. Put the checkout root on sys.path and
-# re-point the ``tests`` package at this file's directory before importing the
-# helpers (under ``--import-mode=importlib`` pytest does not prepend the
-# checkout root automatically).
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import tests as _tests_pkg  # noqa: E402
-
-if _HERE not in getattr(_tests_pkg, "__path__", []):
-    sys.modules.pop("tests", None)
-    import tests as _tests_pkg  # noqa: E402
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # ``_new_zeros_with_same_feature_meta`` starts with an underscore, and
 # ``pytest.mark`` refuses to generate a marker via attribute access for such

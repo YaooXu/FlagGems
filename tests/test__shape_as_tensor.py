@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
+
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # ``_shape_as_tensor`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly on
@@ -30,17 +30,6 @@ setattr(
     "_shape_as_tensor",
     MarkDecorator(Mark("_shape_as_tensor", (), {}, _ispytest=True), _ispytest=True),
 )
-
-# The KernelGen verification harness stages this file in a temporary copy of the
-# FlagGems tree and runs pytest in-process with ``--import-mode=importlib`` from
-# that temp root, which is not placed on ``sys.path``. Bootstrap the checkout
-# root from ``__file__`` so the relative import below resolves.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
 
 # aten::_shape_as_tensor(Tensor self) -> Tensor materializes the logical shape
 # of ``self`` as a fresh 1-D int64 tensor. Only the rank and sizes are

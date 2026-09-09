@@ -12,30 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 
 import flag_gems
 
-# The KernelGen harness runs pytest in-process with ``--import-mode=importlib``,
-# which does not prepend the checkout root to sys.path, so the ``benchmark``
-# package may resolve to the harness's own package or not resolve at all.
-# Re-point it at this file's directory before importing the benchmark helpers.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
-
-from . import base, consts, utils  # noqa: E402
+from . import base, consts, utils
 
 # aten::combinations(Tensor self, int r=2, bool with_replacement=False) -> Tensor
 # materializes all length-r combinations of a 1-D input: C(n, r) rows without

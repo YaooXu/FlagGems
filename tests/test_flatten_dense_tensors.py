@@ -12,24 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys as _sys
-from pathlib import Path as _Path
-
 import pytest
 import torch
 
 import flag_gems
 
-# The KernelGen integration harness verifies this file inside a temporary copy
-# of the FlagGems tree. That process is launched with sys.path[0] pointing at
-# the harness script, not the tree root, so the parent `tests` package would
-# not resolve. Insert the tree root so the relative import below always works.
-_TREE_ROOT = str(_Path(__file__).resolve().parents[1])
-if _TREE_ROOT not in _sys.path:
-    _sys.path.insert(0, _TREE_ROOT)
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # aten::flatten_dense_tensors(Tensor[] tensors) -> Tensor is the DDP
 # gradient-flattening utility: it flattens every input to a contiguous 1-D

@@ -12,32 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 
 import flag_gems
 
-# The KernelGen harness runs pytest in-process with its own ``benchmark``
-# package earlier on sys.path than this checkout's ``benchmark`` package. With
-# ``--import-mode=importlib`` pytest does not prepend the checkout root, so
-# ``benchmark`` would resolve to the harness's package and ``from . import
-# base, consts`` would fail with ImportError during collection. Re-point the
-# ``benchmark`` package at this file's directory before importing the helpers.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # aten::dim(Tensor self) -> int reports the number of dimensions of a tensor:
 # ``len(self.size())`` for strided tensors and the full logical rank for sparse

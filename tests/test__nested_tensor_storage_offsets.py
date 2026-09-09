@@ -12,50 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-# The KernelGen ref-vs-ref verify harness (kernelgen.agents.test_writer._verify_files)
-# copies this package tree into a temp dir whose name starts with "tw_verify_",
-# chdirs into it, and runs pytest in-process with --import-mode=importlib. It
-# never puts that temp root on sys.path, so the *benchmark* phase cannot import
-# benchmark/conftest.py (`from . import consts` -> "No module named 'benchmark'",
-# pytest exitstatus 2) even though this correctness file is fine. Put the temp
-# root on sys.path when that harness layout is detected; normal FlagGems runs
-# (cwd = the checkout, or any subdirectory of it) never match and are untouched.
-if Path.cwd().name.startswith("tw_verify_"):
-    _HARNESS_TMP_ROOT = str(Path.cwd())
-    if _HARNESS_TMP_ROOT not in sys.path:
-        sys.path.insert(0, _HARNESS_TMP_ROOT)
-
-try:
-    from . import accuracy_utils as utils
-    from . import test_utils as tu
-except ImportError:  # pragma: no cover - KernelGen verify harness shadows `tests`
-    # The KernelGen test-writer harness verifies these files from a temp
-    # checkout whose sys.path can contain an unrelated `tests` package (the
-    # kernelgen repo) that shadows the copied FlagGems tests directory. The
-    # relative import above then fails even though accuracy_utils.py sits right
-    # next to this file, so load it from this file's directory instead.
-    _TEST_DIR = str(Path(__file__).resolve().parent)
-    _TESTS_PKG = sys.modules.get("tests")
-    if _TESTS_PKG is not None and hasattr(_TESTS_PKG, "__path__"):
-        if _TEST_DIR not in _TESTS_PKG.__path__:
-            _TESTS_PKG.__path__.append(_TEST_DIR)
-        utils = importlib.import_module("tests.accuracy_utils")
-        tu = importlib.import_module("tests.test_utils")
-    else:
-        if _TEST_DIR not in sys.path:
-            sys.path.insert(0, _TEST_DIR)
-        import accuracy_utils as utils
-        import test_utils as tu
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # ``_nested_tensor_storage_offsets`` starts with an underscore, and ``pytest.mark``
 # refuses to generate a marker via attribute access for such names. Register it

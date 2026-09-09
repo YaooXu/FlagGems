@@ -12,30 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-# Same package-resolution bootstrap as the correctness suite: the benchmark
-# package that ships with this file must win over any other top-level
-# ``benchmark`` package already importable on sys.path.
-_BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
-_PACKAGE_ROOT = os.path.dirname(_BENCH_DIR)
-if _PACKAGE_ROOT not in sys.path:
-    sys.path.insert(0, _PACKAGE_ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _BENCH_DIR not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
-
-from . import base, consts, utils  # noqa: E402
+from . import base, consts, utils
 
 # ``_remove_batch_dim`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly

@@ -12,27 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# test files into an isolated temp copy of the checkout, where the relative
-# ``from . import accuracy_utils`` cannot resolve this checkout's tests package
-# through normal package discovery. Put the checkout root on sys.path so the
-# ``tests`` package resolves to THIS checkout no matter how pytest is invoked.
-_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _CHECKOUT_ROOT not in sys.path:
-    sys.path.insert(0, _CHECKOUT_ROOT)
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import conftest as cfg  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import conftest as cfg
+from . import test_utils as tu
 
 # ``_efficientzerotensor`` starts with an underscore, and ``pytest.mark`` refuses
 # to generate a marker via attribute access for such names. Register the markers

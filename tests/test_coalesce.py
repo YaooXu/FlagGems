@@ -12,55 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-from pathlib import Path
-
 import pytest
 import torch
 
 import flag_gems
 
-
-def _unshadow_packages():
-    """Realign sys.path / sys.modules so the ``tests`` and ``benchmark`` packages
-    that physically contain this file win over same-named packages on the process
-    sys.path.
-
-    The KernelGen TestWriter harness stages a temporary copy of the FlagGems tree
-    and runs ``pytest --import-mode=importlib`` from the kernelgen repo process,
-    whose sys.path contains the kernelgen root (which ships its own ``tests/``
-    package). That package would otherwise shadow the real one and break the
-    relative imports below. Leaving the real package root at ``sys.path[0]`` also
-    lets the benchmark phase of the same process import its ``benchmark`` package
-    the same way.
-    """
-    pkg_root = Path(__file__).resolve().parents[1]
-    for name in ("tests", "benchmark"):
-        real = pkg_root / name
-        if not real.is_dir():
-            continue
-        mod = sys.modules.get(name)
-        if mod is not None and getattr(mod, "__file__", None):
-            try:
-                if Path(mod.__file__).resolve().parent == real.resolve():
-                    continue  # already the real package
-            except Exception:
-                pass
-        prefix = name + "."
-        for key in [
-            k
-            for k in sys.modules
-            if (k == name or k.startswith(prefix)) and k != __name__
-        ]:
-            sys.modules.pop(key, None)
-        if str(pkg_root) not in sys.path:
-            sys.path.insert(0, str(pkg_root))
-
-
-_unshadow_packages()
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # aten::coalesce(Tensor(a) self) -> Tensor(a) is the public method variant of
 # sparse-tensor coalescing. It merges duplicate entries of an uncoalesced

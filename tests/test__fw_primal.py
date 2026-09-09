@@ -12,35 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import pytest
+import torch
+from _pytest.mark.structures import Mark, MarkDecorator
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) runs
-# pytest in-process with its own ``tests`` package earlier on sys.path than this
-# checkout's ``tests`` package. With ``--import-mode=importlib`` pytest does not
-# prepend the checkout root, so ``tests`` would resolve to the harness's package
-# and ``from . import accuracy_utils`` would fail with ImportError during
-# collection. Re-point the ``tests`` package at this file's directory before
-# importing the helpers.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+import flag_gems
 
-import tests as _tests_pkg  # noqa: E402
-
-if _HERE not in getattr(_tests_pkg, "__path__", []):
-    sys.modules.pop("tests", None)
-    import tests as _tests_pkg  # noqa: E402
-
-import pytest  # noqa: E402
-import torch  # noqa: E402
-from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
-
-import flag_gems  # noqa: E402
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # ``_fw_primal`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly

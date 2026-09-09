@@ -13,24 +13,13 @@
 # limitations under the License.
 
 import itertools
-import os
-import sys
 
 import pytest
 import torch
 
 import flag_gems
 
-# KernelGen's verification harness stages the test files in a temporary
-# copy of the FlagGems tree and runs pytest with --import-mode=importlib
-# from a working directory that is not on sys.path, so the parent of this
-# package may not be importable yet.  Make it importable before using the
-# relative import below.
-_PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _PACKAGE_PARENT not in sys.path:
-    sys.path.insert(0, _PACKAGE_PARENT)
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # aten::col_indices(Tensor(a) self) -> Tensor(a) returns the batch_dims +
 # (nnz,) int64 column index tensor of a sparse CSR tensor -- a metadata

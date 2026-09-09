@@ -12,26 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import pytest
+import torch
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# test files into an isolated temp copy of the checkout, where the relative
-# ``from . import accuracy_utils`` cannot resolve this checkout's tests package
-# through normal package discovery. Put the checkout root on sys.path so the
-# ``tests`` package (and, for the sibling benchmark file, ``benchmark``) resolve
-# to THIS checkout no matter how pytest is invoked.
-_CHECKOUT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _CHECKOUT_ROOT not in sys.path:
-    sys.path.insert(0, _CHECKOUT_ROOT)
+import flag_gems
 
-import pytest  # noqa: E402
-import torch  # noqa: E402
-
-import flag_gems  # noqa: E402
-
-from . import accuracy_utils as utils  # noqa: E402
-from . import test_utils as tu  # noqa: E402
+from . import accuracy_utils as utils
+from . import test_utils as tu
 
 # aten::adjoint(Tensor(a) self) -> Tensor(a) returns the conjugate-transpose
 # (Hermitian adjoint) of a matrix or batch of matrices as a zero-copy aliasing

@@ -12,24 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import pytest
+import torch
+from _pytest.mark.structures import Mark, MarkDecorator
 
-# The KernelGen verification harness stages this file in a temporary tree and
-# runs pytest in-process with --import-mode=importlib, where the checkout root
-# is not on sys.path (a `python -m pytest` invocation would normally place it
-# there). Insert the checkout root so the sibling benchmark package (base,
-# consts, conftest) below resolves identically in the in-tree and staged
-# verification layouts.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import flag_gems
 
-import pytest  # noqa: E402
-import torch  # noqa: E402
-from _pytest.mark.structures import Mark, MarkDecorator  # noqa: E402
-
-import flag_gems  # noqa: E402
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # ``_values`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly

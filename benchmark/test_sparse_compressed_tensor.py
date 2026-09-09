@@ -13,33 +13,13 @@
 # limitations under the License.
 
 import itertools
-import os
-import sys
 
 import pytest
 import torch
 
 import flag_gems
 
-# KernelGen's in-process verification (override_gems_op + pytest.main) stages the
-# test files into an isolated temp copy of the checkout, where the relative
-# ``from . import base, consts`` cannot resolve this checkout's benchmark
-# package through normal package discovery. Put the checkout root on sys.path
-# and re-point the ``benchmark`` package at THIS checkout (belt-and-suspenders:
-# the correctness file already does this when it runs first, but this keeps the
-# benchmark file self-contained).
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-import benchmark as _bench_pkg  # noqa: E402
-
-if _HERE not in getattr(_bench_pkg, "__path__", []):
-    sys.modules.pop("benchmark", None)
-    import benchmark as _bench_pkg  # noqa: E402
-
-from . import base, consts  # noqa: E402
+from . import base, consts
 
 # aten::sparse_compressed_tensor.comp_plain_value_size(Tensor compressed_indices,
 #     Tensor plain_indices, Tensor values, SymInt[] size, *, ScalarType? dtype=None,
