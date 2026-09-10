@@ -33,41 +33,93 @@ setattr(
 )
 
 # aten::_add_batch_dim(Tensor self, int batch_dim, int level) -> Tensor is the
-# functorch/vmap primitive that wraps ``self`` in a legacy BatchedTensorImpl:
-# the physical tensor is kept whole and ``batch_dim`` is hidden behind a lazy
-# vmap batch dimension at ``level``, so the observable (logical) shape drops
-# that dimension. The op is a pure zero-copy metadata view (no arithmetic ever
-# runs through the lazy wrapper), so every storage dtype is supported and the
-# value-range tests only need to verify that unwrapping reproduces the exact
-# stored values. It requires an input of rank >= 1 (0-D inputs raise
-# RuntimeError) and a non-negative ``level``; the candidate must reproduce
-# both validations. Each (shape, batch_dim) pair below is a distinct
-# parametrized workload; ranks 1-5 and both ends of the valid batch_dim range
-# are covered. Element counts stay small (<= 96K) since the op only inspects
-# metadata.
-_ADD_BATCH_DIM_CASES = [
-    ((16,), 0),
-    ((64, 32), 0),
-    ((64, 32), 1),
-    ((2, 19, 7), 0),
-    ((2, 19, 7), 1),
-    ((2, 19, 7), 2),
-    ((20, 320, 15), 1),
-    ((4, 8, 16, 32), 2),
-    ((4, 7, 5, 3, 6), 3),
+# functorch/vmap "wrap" primitive: it hides the physical dimension ``batch_dim``
+# of ``self`` behind a lazy vmap batch dimension at nesting ``level``. The
+# returned tensor is a zero-copy BatchedTensorImpl (legacy batched tensor): the
+# storage is kept whole and the observable (logical) shape is ``self.shape``
+# with ``batch_dim`` removed. Removing the hidden dim again with the matching
+# level/batch_size/batch_dim reproduces the physical input exactly.
+#
+# The op performs no arithmetic (the result is a lazy metadata view), so every
+# storage dtype is supported and the value-range tests only verify that
+# unwrapping reproduces the exact stored values.
+#
+# Coverage map:
+#   * shapes: the spec's seven shape levels minus the 0-dim scalar, which the op
+#     rejects because there is no dimension to hide (covered as a negative case);
+#     ranks 1-5, driven by ``pytest --quick`` through ``tu.selected_shapes()``;
+#   * batch_dim: both ends (front / back) and the middle of the valid range;
+#   * levels: vmap nesting levels 0, 1 and 3 (level is pure bookkeeping and must
+#     not change the visible values);
+#   * value ranges: all five spec ranges over every supported dtype, using the
+#     shared ``tu.make_input`` helper;
+#   * dtypes: fp16/bf16/fp32/fp64, int16/int32/int64, int8/uint8, float8_e4m3fn
+#     /float8_e5m2 and bool (the op is a view, so all are accepted);
+#   * non-contiguous inputs (strides and storage offset must survive);
+#   * nan/inf/-inf and signed zeros must round-trip unchanged;
+#   * negative: 0-dim input, negative ``level`` and non-tensor inputs are
+#     rejected (matching aten's own validation).
+#
+# No broadcast dimension applies (the op is unary) and autograd does not run
+# through the functorch batch wrapper (``torch.autograd.grad`` raises inside a
+# BatchedTensor), so neither is tested here.
+
+# The op is a pure metadata view, so it accepts every storage dtype. int8/uint8
+# and the two float8 flavours are added on top of the shared dtype sets to meet
+# the required dtype coverage.
+_SPECIAL_VALUE_DTYPES = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
 ]
 
-# The op is a pure zero-copy view: no arithmetic happens at creation time, so
-# every storage dtype is supported. The logical value is materialized (see
-# ``_assert_batched_view``) before comparison, so floating-point dtypes still
-# compare exactly.
-_ADD_BATCH_DIM_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+_ADD_BATCH_DIM_DTYPES = (
+    utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + utils.BOOL_TYPES
+    + _SPECIAL_VALUE_DTYPES
+)
 
-# Representative rank-3 (shape, batch_dim, level) used by the value-range
-# sweep. The lazy-view semantics do not depend on the shape, so a single
-# mid-range batch_dim is enough to verify that every value range in the spec
-# round-trips bit-for-bit.
-_ADD_BATCH_DIM_VALUE_CASE = ((2, 19, 7), 1, 0)
+# float8 tensors cannot be fed directly to torch.testing.assert_close (and CUDA
+# has no exp kernel for them), so comparisons upcast them losslessly to
+# float32 first; the view is bit-exact, so the round-trip changes nothing.
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+
+# The spec's [-1, 0] range has no representable unsigned counterpart (it
+# collapses to the empty [0, 0) interval), so it is skipped for uint8.
+_UNSIGNED_INT_DTYPES = (torch.uint8,)
+
+
+def _view_shapes():
+    # _add_batch_dim needs an existing dimension to hide: rank >= 1. The shared
+    # shape set contains a 0-dim scalar, which is filtered out here and covered
+    # as an explicit negative case instead.
+    return [shape for shape in tu.selected_shapes() if len(shape) >= 1]
+
+
+def _batch_dims(shape):
+    # Front, back and middle of the valid batch_dim range (deduplicated for
+    # short shapes).
+    return sorted({0, len(shape) // 2, len(shape) - 1})
+
+
+def _add_batch_dim_cases():
+    if tu.LEVEL == "quick":
+        shapes = [(2, 19, 7)]
+    else:
+        shapes = _view_shapes()
+    return [(shape, batch_dim) for shape in shapes for batch_dim in _batch_dims(shape)]
+
+
+def _dtype_range_pairs():
+    pairs = []
+    for dtype in _ADD_BATCH_DIM_DTYPES:
+        for value_range in tu.selected_ranges():
+            if dtype in _UNSIGNED_INT_DTYPES and value_range == ["-1", "0"]:
+                continue
+            pairs.append((dtype, value_range))
+    return pairs
 
 
 def _resolve_gems_op():
@@ -80,57 +132,67 @@ def _resolve_gems_op():
     )
 
 
+def _as_comparable(t):
+    if t.dtype in _FP8_DTYPES:
+        return t.to(torch.float32)
+    return t
+
+
+def _assert_materialized_equal(res, ref):
+    res = _as_comparable(res)
+    ref = _as_comparable(ref)
+    if res.dtype == torch.bool or not res.is_floating_point():
+        utils.gems_assert_equal(res, ref)
+    else:
+        utils.gems_assert_close(res, ref, res.dtype, equal_nan=True)
+
+
 def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype):
-    # The op's whole purpose is to return a lazy BatchedTensorImpl, so the
-    # candidate must produce one too. This is asserted explicitly because a
-    # plain logical view would silently satisfy a naive round-trip for some
-    # (shape, batch_dim) combinations: on a non-batched tensor _remove_batch_dim
-    # falls back to unsqueeze + expand, which can accidentally rebuild the
-    # input.
+    # The candidate must actually return a legacy BatchedTensorImpl, not a plain
+    # logical view: on a non-batched tensor _remove_batch_dim falls back to
+    # unsqueeze + expand, which can accidentally rebuild the input for some
+    # (shape, batch_dim) combinations.
     assert is_legacy_batchedtensor(ref_out)
     assert is_legacy_batchedtensor(res_out)
     assert is_batchedtensor(res_out) == is_batchedtensor(ref_out)
 
-    # Logical view metadata must match aten exactly: same dtype, shape and
-    # storage layout of the visible (batch-dim-stripped) view.
-    assert res_out.dtype == ref_out.dtype
-    assert res_out.dtype == inp.dtype
+    # Visible metadata must match aten exactly.
+    assert res_out.dtype == ref_out.dtype == inp.dtype
     assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()
 
-    # Removing the hidden batch dim with the matching level, batch_dim and
-    # batch_size reproduces the physical input; the candidate and the reference
-    # must agree bit-for-bit (the materialization is a zero-copy view).
+    # Unwrapping with the matching level/batch_size/batch_dim reproduces the
+    # physical input; candidate and reference must agree exactly.
     batch_size = inp.size(batch_dim)
     ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
     res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    utils.gems_assert_equal(ref_mat, ref_inp)
-    utils.gems_assert_equal(res_mat, ref_mat)
+    _assert_materialized_equal(ref_mat, ref_inp)
+    _assert_materialized_equal(res_mat, ref_mat)
 
-    # For floating-point inputs, route an elementwise op through both batched
-    # views: the candidate's view must expose the exact same logical elements
-    # as aten's, so the materialized result equals exp() of the physical input.
-    if dtype.is_floating_point:
-        res_obs = torch.exp(res_out)
+    # Route an elementwise op through both batched views: the candidate's view
+    # must expose the exact same logical elements as aten's. float8 is skipped
+    # because CUDA has no exp kernel for it (the exact materialization above
+    # already validates the view).
+    if dtype.is_floating_point and dtype not in _FP8_DTYPES:
         ref_obs = torch.exp(ref_out)
-        res_val = torch.ops.aten._remove_batch_dim(
-            res_obs, level, batch_size, batch_dim
-        )
+        res_obs = torch.exp(res_out)
         ref_val = torch.ops.aten._remove_batch_dim(
             ref_obs, level, batch_size, batch_dim
         )
-        utils.gems_assert_close(res_val, ref_val, dtype)
+        res_val = torch.ops.aten._remove_batch_dim(
+            res_obs, level, batch_size, batch_dim
+        )
+        _assert_materialized_equal(res_val, ref_val)
 
 
 @pytest.mark._add_batch_dim
-@pytest.mark.parametrize("shape, batch_dim", _ADD_BATCH_DIM_CASES)
+@pytest.mark.parametrize("shape, batch_dim", _add_batch_dim_cases())
 @pytest.mark.parametrize("level", [0, 1, 3])
 @pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim(shape, batch_dim, level, dtype):
-    # Values are irrelevant to the view itself (a representative [-1, 1] range
-    # keeps every storage dtype valid); the dedicated value-range test below
-    # sweeps the full spec ranges.
+    # [-1, 1] keeps every storage dtype valid (bool ignores the range); the
+    # value-range sweep below covers all five spec ranges.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
@@ -141,31 +203,20 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
 
 
 @pytest.mark._add_batch_dim
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
-def test__add_batch_dim_value_ranges(value_range, dtype):
-    # The lazy view must round-trip the exact stored values for every numeric
-    # range in the spec: it exposes the same physical elements, so unwrapping
-    # with the matching level/batch_dim/batch_size reproduces the input
-    # bit-for-bit (tu.assert_result_close compares int/bool exactly and floats
-    # with equal_nan=True).
-    shape, batch_dim, level = _ADD_BATCH_DIM_VALUE_CASE
+@pytest.mark.parametrize("shape", _view_shapes())
+@pytest.mark.parametrize("dtype, value_range", _dtype_range_pairs())
+def test__add_batch_dim_value_ranges(shape, dtype, value_range):
+    # The lazy view must round-trip the exact stored values for every spec range
+    # (int/bool bit-exact, floats with equal_nan=True).
+    batch_dim = len(shape) // 2
+    level = 0
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-    assert is_legacy_batchedtensor(ref_out)
-    assert is_legacy_batchedtensor(res_out)
-    assert res_out.dtype == ref_out.dtype == inp.dtype
-    assert res_out.shape == ref_out.shape
-
-    batch_size = inp.size(batch_dim)
-    ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
-    res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    tu.assert_result_close(ref_mat, ref_inp)
-    tu.assert_result_close(res_mat, ref_mat)
+    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
 
 
 @pytest.mark._add_batch_dim
@@ -192,9 +243,8 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test__add_batch_dim_nan_inf(dtype):
     # The view never performs arithmetic, so nan/inf/-inf and signed zeros pass
-    # through the lazy wrapper untouched: unwrapping the batched view must
-    # reproduce them exactly (tu.assert_result_close compares with
-    # equal_nan=True). 1e30 also covers the overflow-to-inf path in fp16/bf16.
+    # through the lazy wrapper untouched. 1e30 also covers the overflow-to-inf
+    # path in fp16/bf16.
     vals = [
         float("inf"),
         float("-inf"),
@@ -215,15 +265,15 @@ def test__add_batch_dim_nan_inf(dtype):
 
     assert is_legacy_batchedtensor(ref_out)
     assert is_legacy_batchedtensor(res_out)
-    # The logical (visible) shape drops the hidden batch dim: for the 1-D
-    # input below with batch_dim=0 the batched view exposes a 0-dim scalar.
+    # The logical (visible) shape drops the hidden batch dim: for the 1-D input
+    # below with batch_dim=0 the batched view exposes a 0-dim scalar.
     assert res_out.shape == ref_out.shape
 
     batch_size = inp.size(batch_dim)
     ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
     res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    tu.assert_result_close(ref_mat, ref_inp)
-    tu.assert_result_close(res_mat, ref_mat)
+    _assert_materialized_equal(ref_mat, ref_inp)
+    _assert_materialized_equal(res_mat, ref_mat)
 
 
 @pytest.mark._add_batch_dim
@@ -247,3 +297,13 @@ def test__add_batch_dim_rejects_negative_level():
         torch.ops.aten._add_batch_dim(inp, 1, -1)
     with pytest.raises(RuntimeError):
         _resolve_gems_op()(inp, 1, -1)
+
+
+@pytest.mark._add_batch_dim
+def test__add_batch_dim_rejects_non_tensor():
+    # The aten schema requires a Tensor; a Python scalar is rejected. The
+    # candidate must fail too rather than silently wrapping a non-tensor.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._add_batch_dim(3.14, 0, 0)
+    with pytest.raises((TypeError, ValueError, AttributeError, RuntimeError)):
+        _resolve_gems_op()(3.14, 0, 0)

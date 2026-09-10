@@ -21,10 +21,11 @@ from . import base, consts
 
 # aten::sparse_dim(Tensor self) -> int reports the number of sparse dimensions
 # of a tensor: 0 for strided (dense) tensors, ``len(sparse_shape)`` for sparse
-# COO and 2 for sparse CSR. It is a pure metadata query (the measured work is
-# dispatch and layout introspection, never data movement), but the candidate
-# must accept every layout the operator dispatches to, so the benchmark covers
-# dense, sparse COO and sparse CSR inputs below.
+# COO and 2 for sparse CSR (including CSR layouts that carry dense dims). It is
+# a pure metadata query -- the measured work is dispatch and layout
+# introspection, never data movement -- but the candidate must accept every
+# layout the operator dispatches to, so the benchmark covers dense, sparse COO
+# and sparse CSR inputs below.
 #
 # Case descriptors:
 #   ("dense", shape)
@@ -102,6 +103,9 @@ def _build_inputs_fn(plan, dtype, device):
     col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, device=device)
     values = torch.randn(nnz, dtype=dtype, device=device)
     if len(shape) == 3:
+        # Batched CSR: every batch stores the same nnz entries (shared
+        # crow/col pattern) so the candidate sees the same 2-D sparse layout
+        # per batch.
         crow_indices = crow_indices.expand(shape[0], -1).contiguous()
         col_indices = col_indices.expand(shape[0], -1).contiguous()
         values = values.expand(shape[0], -1).contiguous()
@@ -116,6 +120,7 @@ class SparseDimBenchmark(base.GenericBenchmark):
     CSR tensors."""
 
     def set_shapes(self, shape_file_path=None):
+        del shape_file_path
         self.shapes = _BENCH_CASES
 
 

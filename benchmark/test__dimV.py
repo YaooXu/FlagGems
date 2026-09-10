@@ -18,7 +18,7 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # ``_dimV`` starts with an underscore, and ``pytest.mark`` refuses to generate a
 # marker via attribute access for such names. Register it directly on the
@@ -29,57 +29,68 @@ setattr(
     MarkDecorator(Mark("_dimV", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# aten::_dimV(Tensor self) -> int reports the dense dimension count of a
-# sparse tensor. It is a pure metadata query (the measured work is dispatch and
-# layout introspection, never data movement), and dense / SparseCsr tensors
-# raise NotImplementedError for it, so every benchmark input is a sparse COO
-# tensor. The shapes below cover representative logical sizes across ranks 2-4;
-# the actual device allocation stays tiny because nnz is fixed and small.
-_DIMV_SHAPES = [
-    (64, 64),
-    (1024, 1024),
-    (4096, 4096),
-    (20, 320, 15),
-    (64, 512, 512),
-    (16, 1024, 1024, 16),
+# aten::_dimV(Tensor self) -> int reports the dense dimension count of a sparse
+# tensor. It is a pure metadata query (the measured work is dispatch and layout
+# introspection, never data movement), and dense / SparseCsr tensors raise
+# NotImplementedError for it, so every benchmark input is a sparse COO tensor.
+#
+# Case descriptors: (shape, dense_dim), the exact complement of the _dimI
+# benchmark's (shape, sparse_dim) pairs, covering
+#   * all-sparse layouts (dense_dim == 0), ranks 1-5;
+#   * hybrid layouts (0 < dense_dim < ndim) of rank 2-5.
+# The logical shapes are performance-relevant while the actual allocation stays
+# tiny, because nnz is fixed and small.
+_BENCH_CASES = [
+    ((256,), 0),
+    ((64, 64), 0),
+    ((1024, 1024), 0),
+    ((1024, 1024), 1),
+    ((20, 320, 15), 0),
+    ((20, 320, 15), 1),
+    ((64, 512, 512), 0),
+    ((64, 512, 512), 1),
+    ((16, 1024, 1024, 16), 1),
+    ((8, 16, 16, 16, 16), 0),
 ]
 
-# Number of stored entries for every benchmark case: the op is O(1), so nnz
-# only affects input allocation, not the measured call.
+# Number of stored entries for every benchmark case: the op is O(1), so nnz only
+# affects input allocation, not the measured call.
 _DIMV_NNZ = 1024
 
 
 def _make_sparse_input(shape, dense_dim, dtype, device, nnz=_DIMV_NNZ, seed=0):
-    gen = torch.Generator("cpu").manual_seed(seed)
+    """Sparse COO input whose reported ``dense_dim`` is ``dense_dim``.
+
+    Indices are generated deterministically on the CPU and the values use the
+    shared benchmark input generator on the test device; the exact numbers do
+    not affect the measured op (it only reads layout metadata).
+    """
+    shape = tuple(shape)
     sparse_dim = len(shape) - dense_dim
+    if sparse_dim < 1:
+        raise ValueError("sparse COO tensors need at least one sparse dimension")
     sparse_shape = shape[:sparse_dim]
     dense_shape = shape[sparse_dim:]
+    gen = torch.Generator("cpu").manual_seed(seed)
     indices = torch.stack(
         [
             torch.randint(0, dim, (nnz,), dtype=torch.long, generator=gen)
             for dim in sparse_shape
         ]
     )
-    if dtype.is_floating_point:
-        values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, (nnz,) + dense_shape, dtype=dtype, generator=gen)
-    else:
-        values = torch.randint(-5, 6, (nnz,) + dense_shape, dtype=dtype, generator=gen)
+    values = utils.generate_tensor_input((nnz,) + dense_shape, dtype, device)
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
-def _case_fn(shape, dtype):
+def _case_fn(case, dtype):
+    # ``set_shapes`` feeds each (shape, dense_dim) pair from _BENCH_CASES
+    # through case_fn as one case descriptor.
     del dtype
-    # Cover all-sparse 2-D layouts (dense_dim == 0) and mixed sparse+dense
-    # 3-D/4-D layouts (dense_dim == 2); every derived dense_dim stays within
-    # [0, ndim] so additional shapes merged in by the comprehensive bench level
-    # remain valid.
-    dense_dim = 0 if len(shape) <= 2 else 2
+    shape, dense_dim = case
     yield base.BenchmarkCasePlan(
-        shape={"input": shape},
+        shape={"input": tuple(shape)},
         params={"dense_dim": dense_dim},
-        builder_args=(shape, dense_dim),
+        builder_args=(tuple(shape), dense_dim),
     )
 
 
@@ -90,10 +101,11 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 class DimVBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark whose inputs are sparse COO tensors."""
+    """Two-phase GenericBenchmark whose inputs are sparse COO tensors covering
+    all-sparse and hybrid sparse+dense layouts."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _DIMV_SHAPES
+        self.shapes = _BENCH_CASES
 
 
 @pytest.mark._dimV

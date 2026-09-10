@@ -63,6 +63,7 @@ def _build_inputs_fn(plan, dtype, device):
     inp_shape, weight_shape, kernel_size, stride, padding, dilation = plan.builder_args
     inp = utils.generate_tensor_input(inp_shape, dtype, device)
     weight = utils.generate_tensor_input(weight_shape, dtype, device)
+    # weight is (C_out, C_in, kH, kW): bias has C_out elements.
     bias = utils.generate_tensor_input((weight_shape[0],), dtype, device)
     return inp, weight, kernel_size, bias, stride, padding, dilation, {}
 
@@ -81,6 +82,8 @@ def test_slow_conv_dilated2d():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.slow_conv_dilated2d,
+        # Resolved from the flag_gems namespace when the candidate is registered;
+        # the KernelGen override is picked up by resolve_gems_op internally.
         gems_op=getattr(flag_gems, "slow_conv_dilated2d", None),
         dtypes=consts.FLOAT_DTYPES,
     )

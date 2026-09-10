@@ -20,10 +20,9 @@ import flag_gems
 
 from . import base, consts, utils
 
-# ``_fw_primal`` starts with an underscore, and ``pytest.mark`` refuses to
-# generate a marker via attribute access for such names. Register it directly
-# on the MarkGenerator so ``@pytest.mark._fw_primal`` and ``-m _fw_primal`` both
-# work.
+# ``_fw_primal`` starts with an underscore and ``pytest.mark`` refuses to
+# generate a marker via attribute access for such names, so register it on the
+# MarkGenerator directly (``@pytest.mark._fw_primal`` and ``-m _fw_primal``).
 setattr(
     pytest.mark,
     "_fw_primal",
@@ -32,18 +31,17 @@ setattr(
 
 # aten::_fw_primal(Tensor(a) self, int level) -> Tensor(a) is a zero-copy
 # forward-mode-AD view: it shares the input storage and allocates nothing, so
-# the benchmark measures dispatch and view-construction overhead. The default
-# shape set contains a 1-B-element 1-D tensor whose cost would be dominated by
-# input allocation; use allocation-friendly shapes instead (the largest case
-# below is 128 MiB fp32, so the two tensor inputs of the timing harness fit
-# comfortably on busy GPUs).
+# the benchmark measures dispatch and view-construction overhead rather than
+# memory traffic. The default shape set is dominated by 1G/268M-element inputs
+# whose allocation cost swamps the signal, so use allocation-friendly shapes
+# instead (the largest case below is a 128 MiB fp32 tensor).
 FW_PRIMAL_SHAPES = [
+    (1024,),
     (64, 64),
     (256, 256),
     (1024, 1024),
-    (4096, 4096),
-    (64, 512, 512),
-    (128, 512, 512),
+    (64, 128, 128),
+    (8, 256, 512),
 ]
 
 
@@ -69,6 +67,9 @@ class FwPrimalBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
+        # Ignore the 1G/268M-element entries in the default shape file: this
+        # view op is latency-bound, not bandwidth-bound.
+        del shape_file_path
         self.shapes = FW_PRIMAL_SHAPES
 
 
@@ -79,6 +80,9 @@ def test__fw_primal():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._fw_primal,
+        # flag_gems._fw_primal is not registered as a direct callable yet;
+        # KernelGen's override_gems_op("_fw_primal", ...) still wins at run time
+        # through flag_gems.testing.resolve_gems_op.
         gems_op=getattr(flag_gems, "_fw_primal", None),
         dtypes=consts.FLOAT_DTYPES,
     )

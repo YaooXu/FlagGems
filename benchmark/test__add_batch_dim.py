@@ -48,11 +48,12 @@ ADD_BATCH_DIM_SHAPES = [
 
 def _case_fn(shape, dtype):
     del dtype
-    batch_dim = 1 if len(shape) > 1 else 0
+    # batch_dim=1 is valid for every shape above (all ranks >= 2); level=0 is
+    # the common non-nested vmap case.
     yield base.BenchmarkCasePlan(
         shape={"input": shape},
-        params={"batch_dim": batch_dim, "level": 0},
-        builder_args=(shape, batch_dim, 0),
+        params={"batch_dim": 1, "level": 0},
+        builder_args=(shape, 1, 0),
     )
 
 

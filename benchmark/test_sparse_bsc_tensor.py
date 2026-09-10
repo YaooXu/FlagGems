@@ -70,8 +70,9 @@ def _build_inputs_fn(plan, dtype, device):
     ccol, row, values = _make_bsc_inputs(matrix_shape, block, nnz, dtype, device)
     # The trailing dict is unpacked into kwargs by the benchmark runner, so
     # torch_op and gems_op both receive (ccol, row, values, size=...,
-    # dtype=..., layout=..., device=...). dtype is passed explicitly: without
-    # it the sparse tensor defaults to Float regardless of the values dtype.
+    # dtype=..., layout=..., device=...) with identical call semantics. dtype is
+    # passed explicitly: without it the sparse tensor defaults to Float
+    # regardless of the values dtype.
     return (
         ccol,
         row,

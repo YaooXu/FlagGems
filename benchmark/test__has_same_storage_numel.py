@@ -32,11 +32,15 @@ setattr(
     ),
 )
 
-# aten::_has_same_storage_numel is a pure storage-metadata query: it compares
-# self.storage().numel() with other.storage().numel() and allocates nothing, so
-# the benchmark measures dispatch overhead. The default shape set contains a
-# 1-B-element 1-D tensor whose cost would be dominated by input allocation; use
-# allocation-friendly shapes instead.
+# aten::_has_same_storage_numel(Tensor self, Tensor other) -> bool is a pure
+# storage-metadata query: it compares the two storage element counts and reads
+# no payload, so the benchmark mostly measures dispatch overhead. No public
+# Benchmark family covers a two-tensor predicate returning a bool, hence the
+# two-phase GenericBenchmark below (case_fn + build_inputs_fn).
+#
+# The default core-shape set contains a 1-B-element 1-D tensor whose cost would
+# be dominated by input allocation; use allocation-friendly shapes instead so
+# the measured latency reflects the operator itself.
 _HAS_SAME_STORAGE_NUMEL_SHAPES = [
     (64, 64),
     (1024, 1024),
@@ -62,7 +66,7 @@ def _build_inputs_fn(plan, dtype, device):
     return self_inp, other_inp
 
 
-class HasSameStorageNumelBenchmark(base.GenericBenchmark):
+class _HasSameStorageNumelBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
@@ -71,7 +75,7 @@ class HasSameStorageNumelBenchmark(base.GenericBenchmark):
 
 @pytest.mark._has_same_storage_numel
 def test__has_same_storage_numel():
-    bench = HasSameStorageNumelBenchmark(
+    bench = _HasSameStorageNumelBenchmark(
         op_name="_has_same_storage_numel",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,

@@ -12,6 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Correctness tests for ``aten::diagflat(Tensor self, int offset=0) -> Tensor``.
+
+``diagflat`` flattens ``self`` (in logical row-major view order) into a 1-D
+vector and returns a NEW 2-D square matrix whose ``offset``-th diagonal holds
+that vector, with zeros everywhere else. The output side length is
+``numel(self) + |offset|``, so the output is quadratic in the input element
+count: the correctness shapes are therefore bounded (~1M output elements max)
+and whole ranks rather than the generic multi-million-element levels are used.
+
+Coverage follows the regular-operator spec adapted to a pure data-movement op:
+
+* dtype coverage is probed with :func:`tu.supported_dtypes` (all of the spec's
+  required dtypes -- int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64
+  -- plus bool are supported on the active backend here);
+* shape levels span 0-D .. 5-D plus the empty input, bounded so the quadratic
+  output stays small;
+* value ranges: the spec's five ranges via :func:`tu.make_input` (the values
+  round-trip exactly through the diagonal placement);
+* edge cases: empty inputs, large offsets (|offset| > numel), non-contiguous
+  (transposed and strided) inputs and nan/inf/-inf passthrough;
+* backward: ``autograd.grad`` validated against the analytic
+  ``diag(grad_out, offset)`` gradient;
+* negative: non-tensor input and non-int offset raise on both paths.
+"""
+
 import pytest
 import torch
 
@@ -20,36 +45,47 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::diagflat(Tensor self, int offset=0) -> Tensor flattens ``self`` into a
-# 1-D vector (in logical row-major view order) and returns a NEW 2-D square
-# matrix whose ``offset``-th diagonal holds that vector while every other entry
-# is zero. The output side length is numel(self) + |offset|, so the output is
-# quadratic in the input element count: correctness shapes are therefore bounded
-# to keep the output under ~1M elements, and offsets whose magnitude may exceed
-# numel are covered by a dedicated test. The op never transforms the stored
-# values, so every storage dtype aten supports is exercised (float incl. float64
-# when available, int, and bool) and nan/inf/+-0.0 round-trip unchanged.
-#
-# Coverage follows the regular-operator spec adapted to a pure data-movement op:
-#   * shape levels: bounded shapes (0-D up to 5-D plus the empty input) merged
-#     with the small shapes from tu.selected_shapes(); the generic multi-dim
-#     levels whose numel would make the quadratic output explode are excluded;
-#   * value ranges: tu.selected_ranges() over small representative shapes for
-#     every supported dtype (the values must round-trip exactly through the
-#     diagonal placement);
-#   * edge cases: empty inputs, large offsets (|offset| > numel), non-contiguous
-#     (transposed and strided) inputs, and nan/inf/-inf/+-0.0 passthrough;
-#   * backward: autograd.grad() against the analytic diag(grad_out, offset)
-#     gradient (a diagonal extraction with no arithmetic);
-#   * negative: non-tensor inputs and non-int offsets raise on both paths.
-_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-_INT_DTYPES = utils.ALL_INT_DTYPES
-_DIAGFLAT_DTYPES = _FLOAT_DTYPES + _INT_DTYPES + utils.BOOL_TYPES
+# ---------------------------------------------------------------------------
+# Dtype support (probe before writing cases, per the spec)
+# ---------------------------------------------------------------------------
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+
+_PROBE_DTYPES = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float32,
+    torch.bfloat16,
+    torch.float16,
+    torch.int32,
+    torch.int64,
+    torch.int16,
+    torch.float64,
+    torch.bool,
+]
+# The probe builds a tiny input per dtype and calls the real aten op, treating
+# any exception as "unsupported" (see tests/test_utils.py).
+_DIAGFLAT_DTYPES = tu.supported_dtypes("diagflat", _PROBE_DTYPES)
+if not _DIAGFLAT_DTYPES:
+    _DIAGFLAT_DTYPES = list(utils.FLOAT_DTYPES)
+
+# nan/inf cannot be represented/produced by the fp8 narrow types (e4m3fn is
+# finite-only), so the special-value case is restricted to regular floats.
+_NAN_INF_DTYPES = [
+    d for d in _DIAGFLAT_DTYPES if d.is_floating_point and d not in _FP8_DTYPES
+]
+# double precision gives an exact analytic-gradient check; other float types
+# only get the candidate-vs-reference check when autograd is available.
+_GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d in (torch.float32, torch.float64)] or [
+    torch.float32
+]
 
 _DIAGFLAT_OFFSETS = [-2, -1, 0, 1, 2]
 
-# Bounded shape levels: (32, 32) is the largest input (numel 1024 -> output
-# side 1026, ~1M output elements, at the correctness cap).
+# Bounded shape levels: 0-D .. 5-D plus the empty input. (32, 32) is the
+# largest input (numel 1024 -> output side 1025, ~1M output elements, at the
+# correctness cap).
 _DIAGFLAT_SHAPES = [
     (),
     (1,),
@@ -63,8 +99,7 @@ _DIAGFLAT_SHAPES = [
     (2, 2, 2, 2, 3),
 ]
 
-# Small inputs for the value-range sweep: diagflat is a pure diagonal gather, so
-# a few sizes suffice to exercise the full spec range list per dtype.
+# Small inputs for the value-range sweep.
 _DIAGFLAT_RANGE_SHAPES = [(8,), (2, 3), (4, 5, 6)]
 
 _DIAGFLAT_NONCONTIG_SHAPES = [(4, 8), (6, 3), (2, 3, 4)]
@@ -81,42 +116,65 @@ def _numel(shape):
     return n
 
 
+def _bounded_selected_shapes(limit=1024):
+    """The generic shape levels whose quadratic output stays small enough."""
+    return [shape for shape in tu.selected_shapes() if _numel(shape) <= limit]
+
+
 def _diagflat_shapes():
     """Bounded shape levels for the main sweep.
 
     The generic multi-dim levels from ``tu.selected_shapes()`` (e.g.
-    ``(1024, 1024)`` or ``(7, 13, 29)``) would make the quadratic diagflat
-    output explode, so only the shapes whose numel keeps the output under ~1M
-    elements are merged into the dedicated bounded set above.
+    ``(1024, 1024)``) would make the quadratic diagflat output explode, so only
+    the small levels are merged into the dedicated bounded set above.
     """
     if tu.LEVEL == "quick":
-        base = [(2, 19, 7)]
-    else:
-        base = list(_DIAGFLAT_SHAPES)
-    for shape in tu.selected_shapes():
-        if _numel(shape) <= 1024 and shape not in base:
-            base.append(shape)
-    return base
+        return [(2, 19, 7)]
+    shapes = list(_DIAGFLAT_SHAPES)
+    for shape in _bounded_selected_shapes():
+        if shape not in shapes:
+            shapes.append(shape)
+    return shapes
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.diagflat callable, (3) LookupError.
+    # Resolved inside each test (never at import time) so the process-local
+    # override installed by KernelGen for this run wins.
     return flag_gems.testing.resolve_gems_op(
         "diagflat", getattr(flag_gems, "diagflat", None)
     )
 
 
+def _adapt_range(value_range, dtype):
+    """Make a spec range valid for unsigned dtypes.
+
+    ``torch.testing.make_tensor`` cannot sample a range whose upper bound is
+    negative for ``uint8``; clamp the symbols to 0 so ``[-1, 0]`` becomes the
+    valid constant range ``[0, 0]`` (still one distinct Workload).
+    """
+    if dtype == torch.uint8:
+        return [
+            ("0" if bound in ("-1", "min", "min/2") else bound) for bound in value_range
+        ]
+    return value_range
+
+
+def _make_input(dtype, shape, value_range):
+    return tu.make_input(dtype, shape, _adapt_range(value_range, dtype))
+
+
 def _assert_output(res_out, ref_out, dtype):
     # diagflat materializes a new contiguous tensor (never an aliasing view):
-    # the shape, dtype, contiguity, view-ness and the diagonal placement must
-    # all match the aten reference.
+    # shape, dtype, contiguity, view-ness and the diagonal placement must all
+    # match the aten reference.
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.is_contiguous()
     assert not res_out._is_view()
-    if dtype in _FLOAT_DTYPES:
+    if dtype in _FP8_DTYPES:
+        # assert_close does not handle fp8 pairs directly; compare in fp32.
+        tu.assert_result_close(res_out.float(), ref_out.float())
+    elif dtype.is_floating_point:
         utils.gems_assert_close(res_out, ref_out, dtype)
     else:
         utils.gems_assert_equal(res_out, ref_out)
@@ -127,10 +185,9 @@ def _assert_output(res_out, ref_out, dtype):
 @pytest.mark.parametrize("offset", _DIAGFLAT_OFFSETS)
 @pytest.mark.parametrize("dtype", _DIAGFLAT_DTYPES)
 def test_diagflat(shape, offset, dtype):
-    # Shape levels x offsets x every supported dtype, with values drawn from the
-    # default [-1, 1] range (negative and positive for each dtype). 0-D, 1-D,
-    # empty, 2-D, 3-D, 4-D and 5-D inputs are all covered.
-    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    # Shape levels x offsets x every supported dtype with values in the default
+    # [-1, 1] range (0-D, 1-D, empty, 2-D, 3-D, 4-D and 5-D are all covered).
+    inp = _make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
@@ -145,18 +202,15 @@ def test_diagflat(shape, offset, dtype):
 @pytest.mark.parametrize("dtype", _DIAGFLAT_DTYPES)
 def test_diagflat_value_ranges(shape, value_range, dtype):
     # The op never transforms the stored values, so the full spec range sweep
-    # (including 0/max/min and the degenerate constant ranges) must round-trip
-    # exactly through the diagonal placement. bool ignores the range and is
-    # covered by the shape-level test above.
-    inp = tu.make_input(dtype, shape, value_range)
+    # (including 0/max/min and the degenerate ranges) must round-trip exactly
+    # through the diagonal placement.
+    inp = _make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    tu.assert_result_close(res_out, ref_out)
+    _assert_output(res_out, ref_out, dtype)
 
 
 @pytest.mark.diagflat
@@ -165,9 +219,9 @@ def test_diagflat_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", _DIAGFLAT_DTYPES)
 def test_diagflat_large_offset(shape, offset, dtype):
     # Offsets whose magnitude may exceed the number of elements: the flattened
-    # vector must be placed on a diagonal that starts past the main diagonal,
+    # vector is placed on a diagonal that starts past the main diagonal,
     # leaving extra zero rows/columns around it.
-    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    inp = _make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
@@ -185,7 +239,7 @@ def test_diagflat_non_contiguous(shape, offset, dtype):
     # input must produce a different diagonal order than a contiguous one.
     # Transpose on both the test device and the reference device so the two
     # inputs share the same memory layout.
-    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    inp = _make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
     inp = inp.transpose(-1, -2)
     ref_inp = ref_inp.transpose(-1, -2)
@@ -204,7 +258,7 @@ def test_diagflat_strided(shape, offset, dtype):
     # A strided slice (non-unit strides along the last dim) must be flattened
     # in logical view order too, so the candidate must read through the input's
     # actual strides. Slice on both devices so the layouts match.
-    base = tu.make_input(dtype, shape, ["-1", "1"])
+    base = _make_input(dtype, shape, ["-1", "1"])
     ref_base = utils.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
@@ -217,14 +271,23 @@ def test_diagflat_strided(shape, offset, dtype):
 
 
 @pytest.mark.diagflat
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
 def test_diagflat_nan_inf(dtype):
     # diagflat is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the diagonal (equal_nan=True is active on the float path of
-    # assert_result_close; 1e30 overflows to inf in fp16/bf16 on both paths
-    # identically).
+    # unchanged onto the diagonal (assert_result_close uses equal_nan=True;
+    # 1e30 overflows to inf in fp16/bf16 identically on both paths).
     values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
         dtype=dtype,
         device=flag_gems.device,
     )
@@ -244,7 +307,7 @@ def test_diagflat_nan_inf(dtype):
 def test_diagflat_empty_input(offset, dtype):
     # An empty input has no elements to place: offset 0 yields a 0x0 output and
     # |offset| > 0 yields an all-zero |offset| x |offset| matrix.
-    inp = tu.make_input(dtype, (0,), ["-1", "1"])
+    inp = _make_input(dtype, (0,), ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
@@ -256,17 +319,17 @@ def test_diagflat_empty_input(offset, dtype):
 @pytest.mark.diagflat
 @pytest.mark.parametrize("shape", _DIAGFLAT_BACKWARD_SHAPES)
 @pytest.mark.parametrize("offset", [-1, 0, 1])
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", _GRAD_DTYPES)
 def test_diagflat_backward(shape, offset, dtype):
     # The forward op places flat_inp[k] at out[k, k+offset], so
-    # d(diagflat(x))/dx extracts the offset-th diagonal of the grad_output and
+    # d(diagflat(x))/dx extracts the offset-th diagonal of grad_output and
     # reshapes it back to the input shape (a pure gather, no arithmetic).
     # Validate the autograd reference against that analytic value, then check
-    # the candidate forward output and - only when the candidate output is
-    # differentiable - its gradient against the reference gradient.
+    # the candidate forward output and -- only when the candidate output is
+    # differentiable -- its gradient against the reference gradient.
     n = _numel(shape)
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    grad = tu.make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
+    inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = _make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
     ref_inp = utils.to_reference(inp)
     ref_grad = utils.to_reference(grad)
 
@@ -301,7 +364,7 @@ def test_diagflat_rejects_non_tensor():
 def test_diagflat_rejects_non_int_offset():
     # The schema demands an int offset; passing a float must raise on both
     # paths.
-    inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
+    inp = _make_input(torch.float32, (4,), ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     with pytest.raises(RuntimeError):

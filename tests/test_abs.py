@@ -31,11 +31,15 @@ from . import test_utils as tu
 # whose default implementation is the adapter below; KernelGen may override
 # "abs.out" with a real out-kernel.
 #
-# Dtype coverage: the op is defined for every storage dtype; the value-range
-# tests run over the full float (fp16/fp32/bf16/fp64), int (int16/int32/int64)
-# and bool families.
+# Dtype coverage: the op is defined for every storage dtype. The value-range
+# tests run over the full float (fp16/fp32/bf16/fp64), int
+# (int8/uint8/int16/int32/int64) and bool families. fp8 is deliberately absent:
+# torch.ops.aten.abs raises "abs_cuda" not implemented for Float8E4M3FN/E5M2, so
+# the operator (reference and candidate alike) has no fp8 kernel to test.
+# complex is absent too: the candidate (flag_gems.abs) has no complex kernel.
 _ABS_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-_ABS_INT_DTYPES = utils.ALL_INT_DTYPES
+_ABS_INT_DTYPES = utils.ALL_INT_DTYPES + [torch.int8, torch.uint8]
+_ABS_SIGNED_INT_DTYPES = [d for d in _ABS_INT_DTYPES if d.is_signed]
 _ABS_DTYPES = _ABS_FLOAT_DTYPES + _ABS_INT_DTYPES + utils.BOOL_TYPES
 
 # Shapes that exercise 0-dim scalars, degenerate/empty tensors and
@@ -46,6 +50,27 @@ _ABS_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
 # Backward shapes stay small (the autograd graph is built on the CPU reference
 # and the analytic comparison below is elementwise).
 _ABS_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
+
+
+def _make_input(dtype, shape, value_range):
+    """tu.make_input with an unsigned-dtype fallback.
+
+    For unsigned dtypes a negative range bound is clamped to 0 by the shared
+    helper's make_tensor call, which then rejects the degenerate interval
+    (e.g. uint8 over ["-1", "0"] collapses to [0, 0]). Materialize the clamped
+    interval locally instead so every spec range is still exercised.
+    """
+    try:
+        return tu.make_input(dtype, shape, value_range)
+    except RuntimeError:
+        info = torch.iinfo(dtype)
+        low = max(int(tu.resolve_bound(value_range[0], dtype)), info.min)
+        high = min(int(tu.resolve_bound(value_range[1], dtype)), info.max)
+        if low == high:
+            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
+        return torch.testing.make_tensor(
+            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
+        )
 
 
 def _resolve_gems_op():
@@ -76,7 +101,7 @@ def _resolve_gems_op_out():
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
 def test_abs_float_value_ranges(shape, value_range, dtype):
-    inp = tu.make_input(dtype, shape, value_range)
+    inp = _make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -90,7 +115,7 @@ def test_abs_float_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_INT_DTYPES + utils.BOOL_TYPES)
 def test_abs_int_value_ranges(shape, value_range, dtype):
-    inp = tu.make_input(dtype, shape, value_range)
+    inp = _make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -119,9 +144,11 @@ def test_abs_nan_inf(dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", _ABS_INT_DTYPES)
+@pytest.mark.parametrize("dtype", _ABS_SIGNED_INT_DTYPES)
 def test_abs_int_min_stays(dtype):
     # |INT_MIN| == INT_MIN in PyTorch (no wrap-around); pin this contract.
+    # Unsigned dtypes have no negative minimum, so only the signed path is
+    # meaningful here.
     min_val = torch.iinfo(dtype).min
     inp = torch.tensor(
         [min_val, min_val + 1, 0, 1, -1], dtype=dtype, device=flag_gems.device
@@ -152,7 +179,7 @@ def test_abs_empty(shape, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_noncontiguous(shape, dtype):
     # transposed views have non-unit strides; the kernel must honor them.
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
+    inp = _make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -165,8 +192,8 @@ def test_abs_noncontiguous(shape, dtype):
 @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_abs_backward(shape, dtype):
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    grad = tu.make_input(dtype, shape, ["-1", "1"])
+    inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = _make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
     ref_grad = utils.to_reference(grad)
 
@@ -196,7 +223,7 @@ def test_abs_backward(shape, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs__value_ranges(shape, value_range, dtype):
-    inp = tu.make_input(dtype, shape, value_range)
+    inp = _make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.abs_(ref_inp)
@@ -213,7 +240,7 @@ def test_abs__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_out(shape, value_range, dtype):
-    inp = tu.make_input(dtype, shape, value_range)
+    inp = _make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
@@ -238,3 +265,12 @@ def test_abs_rejects_non_tensor():
         torch.ops.aten.abs(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(3.14)
+
+
+@pytest.mark.abs_negative
+def test_abs_rejects_string():
+    # A non-numeric, non-tensor argument must be rejected, not coerced.
+    with pytest.raises((TypeError, RuntimeError)):
+        torch.ops.aten.abs("not-a-tensor")
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        _resolve_gems_op()("not-a-tensor")

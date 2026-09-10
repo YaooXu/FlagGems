@@ -21,12 +21,12 @@ from . import base, consts
 
 # (layout, size, nnz, blocks). ccol_indices_copy materializes the compressed
 # column index array of a sparse column-compressed tensor (CSC or BSC) as a
-# fresh contiguous int64 copy -- a metadata accessor whose cost is proportional
-# to the compressed extent (n_cols + 1 for CSC, n_col_blocks + 1 for BSC,
-# times the batch size) and independent of the stored values, so benchmark a
-# spread of compressed extents, block sizes and nnz values. The device-side
-# allocation stays small relative to the logical size because only nnz entries
-# (plus the tiny ccol array) are stored.
+# fresh contiguous int64 copy. It is a metadata accessor whose cost is
+# proportional to the compressed extent -- n_cols + 1 for CSC, n_col_blocks + 1
+# for BSC, times the batch size -- and independent of the stored values, so the
+# benchmark sweeps a spread of compressed extents, block sizes and nnz values.
+# The device-side allocation stays small relative to the logical size because
+# only nnz entries (plus the tiny ccol array) are stored.
 _CCOLS = [
     ("csc", (1024, 1024), 65536, None),
     ("csc", (4096, 4096), 1048576, None),
@@ -113,18 +113,20 @@ def _make_input(layout, size, nnz, blocks, dtype, device):
 
 
 def _torch_ccol_indices_copy(inp):
-    # torch.ops.aten.ccol_indices_copy is registered as
-    # CompositeExplicitAutogradNonFunctional; some builds restrict its
-    # dispatch-key set to dense backends and raise NotImplementedError on
-    # sparse tensors. Benchmark the operator's exact native body --
-    # ccol_indices(self).clone(contiguous) -- which shares call semantics with
-    # the candidate on every build.
-    try:
-        return torch.ops.aten.ccol_indices_copy(inp)
-    except NotImplementedError:
-        return torch.ops.aten.ccol_indices(inp).clone(
-            memory_format=torch.contiguous_format
-        )
+    # torch_op is the perf comparison reference and shares call semantics with
+    # the candidate: the real ATen operator, probed invocable on sparse CSC/BSC
+    # tensors, so no composed simulation is used.
+    return torch.ops.aten.ccol_indices_copy(inp)
+
+
+def _gems_ccol_indices_copy(inp):
+    # Resolved through the direct-callable route (override-aware) rather than
+    # going through the dispatcher. getattr keeps this importable while
+    # flag_gems has no public ccol_indices_copy attribute yet.
+    op = flag_gems.testing.resolve_gems_op(
+        "ccol_indices_copy", getattr(flag_gems, "ccol_indices_copy", None)
+    )
+    return op(inp)
 
 
 def _case_fn(shape, dtype):
@@ -145,9 +147,10 @@ def _build_inputs_fn(plan, dtype, device):
 
 class CcolIndicesCopyBenchmark(base.GenericBenchmark):
     # ccol_indices_copy is a sparse metadata accessor; there are no meaningful
-    # dense shapes in core_shapes.yaml, so benchmark dedicated (layout, size,
-    # nnz, blocks) cases instead.
+    # dense shapes in core_shapes.yaml, so benchmark dedicated
+    # (layout, size, nnz, blocks) cases instead.
     def set_shapes(self, shape_file_path=None):
+        del shape_file_path
         self.shapes = _CCOLS
 
 
@@ -158,7 +161,7 @@ def test_ccol_indices_copy():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=_torch_ccol_indices_copy,
-        gems_op=getattr(flag_gems, "ccol_indices_copy", None),
+        gems_op=_gems_ccol_indices_copy,
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

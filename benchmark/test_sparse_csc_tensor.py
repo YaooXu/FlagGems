@@ -27,6 +27,10 @@ from . import base, consts
 # logical matrix size, so the benchmark pairs large logical matrices with a
 # bounded nnz. Each case is a (logical matrix shape, nnz) pair; the nnz
 # entries are spread evenly across the columns.
+#
+# The shape-inferred sibling (ccol_row_value, 3 positional args) shares the
+# same public callable and the same copy-bound cost, so benchmarking the
+# explicit-size overload covers the operator.
 _CSC_SHAPES = [
     ((1024, 1024), 65536),
     ((1024, 1024), 262144),
@@ -99,6 +103,9 @@ def test_sparse_csc_tensor():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.sparse_csc_tensor,
+        # None here lets resolve_gems_op fall back to a KernelGen-injected
+        # override first; the benchmark harness resolves the candidate through
+        # the same process-local registry as the correctness tests.
         gems_op=getattr(flag_gems, "sparse_csc_tensor", None),
         dtypes=consts.FLOAT_DTYPES,
     )

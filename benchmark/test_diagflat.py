@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Benchmark for ``aten::diagflat(Tensor self, int offset=0) -> Tensor``.
+
+``diagflat`` flattens the input (logical row-major) and writes it onto the
+diagonal of a square matrix with side length ``numel(input) + |offset|``, so the
+output is quadratic in the input element count. The default shape collection
+contains huge tensors whose quadratic output would exhaust device memory, so the
+two-phase :class:`GenericBenchmark` is restricted to the bounded shapes below
+(~4096 input elements -> ~16M output elements, the largest case).
+"""
+
 import pytest
 import torch
 
@@ -19,29 +29,30 @@ import flag_gems
 
 from . import base, consts, utils
 
-# aten::diagflat flattens the input (logical row-major) and writes it onto the
-# diagonal of a square matrix with side length numel(input) + |offset|, so the
-# output is quadratic in the input element count. The shape set is therefore
-# bounded (~4096 input elements -> ~16M output elements) to keep the baseline
-# and candidate allocations reasonable.
 DIAGFLAT_SHAPES = [
     (64,),
     (256,),
     (1024,),
     (2048,),
     (4096,),
+    (32, 32),
     (64, 64),
     (16, 16, 16),
 ]
 
+# offsets exercised per shape: the main diagonal plus a shifted one (the output
+# side grows by |offset|).
+DIAGFLAT_OFFSETS = [0, 3]
+
 
 def _case_fn(shape, dtype):
     del dtype
-    yield base.BenchmarkCasePlan(
-        shape={"input": shape},
-        params={"offset": 0},
-        builder_args=(shape, 0),
-    )
+    for offset in DIAGFLAT_OFFSETS:
+        yield base.BenchmarkCasePlan(
+            shape={"input": shape},
+            params={"offset": offset},
+            builder_args=(shape, offset),
+        )
 
 
 def _build_inputs_fn(plan, dtype, device):
@@ -53,12 +64,13 @@ def _build_inputs_fn(plan, dtype, device):
 class DiagFlatBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to bounded input shapes.
 
-    The default shape collection contains huge tensors whose quadratic diagflat
-    output would exhaust device memory, so the case list is restricted to the
-    small shapes above.
+    The default shape levels would make the quadratic diagflat output explode,
+    so the case list is restricted to the small shapes above and the extra
+    comprehensive shapes are disabled.
     """
 
     def set_shapes(self, shape_file_path=None):
+        del shape_file_path
         self.shapes = DIAGFLAT_SHAPES
         self.shape_desc = "input numel (output side = numel + |offset|)"
 

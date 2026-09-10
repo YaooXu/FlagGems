@@ -28,13 +28,32 @@ from .conftest import QUICK_MODE
 # is (C_out, C_in, kD, kH, kW) and ``kernel_size`` must match the weight spatial
 # dims. The output is (N, C_out, D_out, H_out, W_out) with
 #   D_out = (D + 2*pD - dil_d*(kD - 1) - 1) // sD + 1
-# and likewise for H and W. Each (input, weight, kernel_size, stride, padding,
-# dilation) tuple below is one distinct parametrized workload: they cover
-# 1x1x1/2x2x2/3x3x3 kernels, stride 1/2, padding 0/1/2, dilation 1/2, and
-# asymmetric strides/paddings, with and without bias. Element counts stay well
-# below 1M so the correctness run stays fast. Inputs are generated through the
-# value-range framework (tu.make_input) instead of torch.randn so the ranges
-# are explicit and per-dtype.
+# and likewise for H and W.
+#
+# Dtype probe (tu.supported_dtypes / direct ATen calls on the active device):
+# the CUDA kernel is implemented only for the floating dtypes fp16 / fp32 /
+# bf16 / fp64 -- int8, uint8, float8_e4m3fn, float8_e5m2, int32 and int64 all
+# raise `"slow_conv_dilated<>" not implemented for '<Int/Float8...>'`. The
+# correctness grid therefore uses utils.ALL_FLOAT_DTYPES; integer/fp8 rejection
+# is covered by the negative dtype test below instead of being silently
+# dropped.
+#
+# Rank probe: although the schema also accepts an unbatched 4-D input
+# (C_in, D, H, W), the CUDA reference kernel is non-deterministic on that path
+# (two identical ATen calls on identical fp64 inputs disagree, and the result
+# does not match F.conv3d), so it cannot serve as an oracle. Only the reliable
+# 5-D batched route is exercised; the 6-D rejection test covers the rank check.
+#
+# Shape coverage: the operator is rank-fixed and structurally constrained
+# (C_in must agree between input and weight, kernel_size must agree with the
+# weight), so the generic tu.selected_shapes() set cannot be applied directly.
+# The explicit (input, weight, kernel_size, stride, padding, dilation) tuples
+# below play the role of the shape levels: they span 1x1x1/2x2x2/3x3x3 kernels,
+# stride 1/2, padding 0/1/2, dilation 1/2, asymmetric strides/paddings, and
+# with/without bias. Element counts stay well below 1M so the correctness run
+# stays fast. Inputs are generated through the value-range framework
+# (tu.make_input) instead of torch.randn so the ranges are explicit and
+# per-dtype.
 if QUICK_MODE:
     SLOW_CONV_DILATED3D_CASES = [
         ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
@@ -59,11 +78,14 @@ else:
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
 
-# Value-range coverage: the conv reduction sums up to C_in*kD*kH*kW products, so
-# the shared tu.selected_ranges() extremes (["0", "max"] / ["min", "0"]) overflow
-# the fp16/bf16 accumulators. Use bounded local ranges that still span positive,
-# negative and mixed-sign values; the shape/dtype/bias grid comes from the main
-# parametrized cases above.
+# Value-range coverage: the conv reduction sums up to C_in*kD*kH*kW = 108
+# products of independently drawn input/weight values, so the shared
+# tu.selected_ranges() extremes (["0", "max"] / ["min", "0"]) overflow every
+# floating accumulator (e.g. fp32 max^2 = inf). Use bounded local ranges that
+# still span mixed-sign, non-negative and non-positive values; the
+# shape/dtype/bias grid comes from the main parametrized cases above. This is
+# the documented per-operator adaptation the spec allows for multiplicative
+# reductions.
 _VALUE_RANGE_CASES = (
     SLOW_CONV_DILATED3D_CASES[:1]
     if QUICK_MODE
@@ -83,7 +105,7 @@ _VALUE_RANGES = (
     ]
 )
 
-# The aten op carries its own autograd (registered at the nn module level), so
+# The aten op carries its own autograd (SlowConvDilated3DBackward0), so
 # backward is exercised directly. Gradients are only validated on fp32/fp64:
 # fp16/bf16 gradients accumulate too coarsely to compare against the analytic
 # reference gradient.
@@ -122,12 +144,13 @@ def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
     def _out_size(in_size, k, s, p, d):
         return (in_size + 2 * p - d * (k - 1) - 1) // s + 1
 
-    return (inp_shape[0], weight_shape[0]) + tuple(
+    spatial = tuple(
         _out_size(
             inp_shape[2 + i], weight_shape[2 + i], stride[i], padding[i], dilation[i]
         )
         for i in range(3)
     )
+    return (inp_shape[0], weight_shape[0]) + spatial
 
 
 def _make_conv_inputs(
@@ -149,11 +172,12 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     # rounded inputs. The torch native op (and any good candidate) accumulates
     # the im2col GEMM in the input dtype: fp16/bf16 tensor cores keep at most
     # fp16/bf16 precision per add, so the native op itself deviates from the
-    # fp64 reference by up to ~8e-3 (fp16) and ~1.1e-1 (bf16) on the larger
-    # 3D reductions (up to C_in*kD*kH*kW = 108 terms). Measure the deviation
-    # over multiple seeds and shapes: fp16 -> 2e-2 and bf16 -> 2e-1 give a
-    # ~2x margin; fp32 with TF32 disabled (set at the top of each test) stays
-    # at ~9e-6, comfortably inside the default 1e-4.
+    # fp64 reference by up to ~8e-3 (fp16) and ~1.3e-1 (bf16) on the larger
+    # 3D reductions (up to C_in*kD*kH*kW = 108 terms). Measured over multiple
+    # seeds and shapes: fp16 -> 2e-2 and bf16 -> 2e-1 give a comfortable margin
+    # (flag_gems.testing.assert_close also adds rtol=1e-3 / 0.016), while fp32
+    # with TF32 disabled (set at the top of each test) stays at ~1e-5,
+    # comfortably inside the default 1e-4.
     if dtype == torch.bfloat16:
         atol = 2e-1
     elif dtype == torch.float16:
@@ -372,10 +396,10 @@ def test_slow_conv_dilated3d_rejects_wrong_kernel_size():
 
 
 @pytest.mark.slow_conv_dilated3d_negative
-def test_slow_conv_dilated3d_rejects_int_dtype():
-    # Only floating dtypes are implemented for the conv3d.
-    inp = tu.make_input(torch.int32, (1, 2, 5, 5, 5), ["-1", "1"])
-    weight = tu.make_input(torch.int32, (1, 2, 3, 3, 3), ["-1", "1"])
+def test_slow_conv_dilated3d_rejects_channel_mismatch():
+    # input.size(1) (C_in) must equal weight.size(1).
+    inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 3, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
@@ -387,9 +411,26 @@ def test_slow_conv_dilated3d_rejects_int_dtype():
 
 
 @pytest.mark.slow_conv_dilated3d_negative
-def test_slow_conv_dilated3d_rejects_wrong_input_dims():
-    # self must be 5-D (N, C_in, D, H, W); a 4-D input is rejected.
-    inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
+def test_slow_conv_dilated3d_rejects_int_dtype():
+    # Only floating dtypes are implemented for the conv3d; int8/uint8/fp8/int32
+    # all raise on the native path.
+    for bad_dtype in (torch.int8, torch.uint8, torch.float8_e4m3fn, torch.int32):
+        inp = tu.make_input(bad_dtype, (1, 2, 5, 5, 5), ["-1", "1"])
+        weight = tu.make_input(bad_dtype, (1, 2, 3, 3, 3), ["-1", "1"])
+        with pytest.raises(RuntimeError):
+            torch.ops.aten.slow_conv_dilated3d(
+                inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+            )
+        with pytest.raises((RuntimeError, TypeError, ValueError)):
+            _resolve_gems_op()(
+                inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+            )
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_6d_input():
+    # self must be a 5-D (N, C_in, D, H, W) tensor; a 6-D input is rejected.
+    inp = tu.make_input(torch.float32, (1, 2, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_dilated3d(
@@ -402,11 +443,25 @@ def test_slow_conv_dilated3d_rejects_wrong_input_dims():
 
 
 @pytest.mark.slow_conv_dilated3d_negative
-def test_slow_conv_dilated3d_rejects_invalid_stride_dilation():
+def test_slow_conv_dilated3d_rejects_wrong_weight_rank():
+    # weight must be 5-D (C_out, C_in, kD, kH, kW); a 4-D weight is rejected.
+    inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.slow_conv_dilated3d(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
+        _resolve_gems_op()(
+            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
+        )
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_negative_stride():
     inp, weight, _ = _make_conv_inputs(
         (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
     )
-    # Negative stride.
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
@@ -415,7 +470,13 @@ def test_slow_conv_dilated3d_rejects_invalid_stride_dilation():
         _resolve_gems_op()(
             inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
-    # Negative dilation.
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_negative_dilation():
+    inp, weight, _ = _make_conv_inputs(
+        (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
+    )
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
@@ -424,7 +485,14 @@ def test_slow_conv_dilated3d_rejects_invalid_stride_dilation():
         _resolve_gems_op()(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
         )
-    # Dilation so large that the output size becomes negative.
+
+
+@pytest.mark.slow_conv_dilated3d_negative
+def test_slow_conv_dilated3d_rejects_output_size_too_small():
+    # Dilation so large that the computed output size becomes negative.
+    inp, weight, _ = _make_conv_inputs(
+        (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
+    )
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1)

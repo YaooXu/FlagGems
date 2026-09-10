@@ -17,23 +17,29 @@ import torch
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # aten::sparse_bsr_tensor.crow_col_value_size(Tensor crow_indices,
-#     Tensor col_indices, Tensor values, int[] size, *, ScalarType? dtype=None,
-#     ...) -> Tensor constructs a sparse BSR tensor from its raw components: the
-# (rows, cols) trailing dims of ``size`` are tiled by the block shape inferred
-# from ``values`` (nnz, br, bc), or (batch, nnz, br, bc) for batched tensors.
-# The measured work is the layout construction from the three component
-# tensors, so the benchmark feeds the components directly (not a pre-built
-# sparse tensor) and both the reference and the candidate receive the exact
-# same call.
+#     Tensor col_indices, Tensor values, int[] size, *,
+#     ScalarType? dtype=None, ...) -> Tensor constructs a sparse BSR tensor from
+# its raw components: the trailing (rows, cols) dims of ``size`` are tiled by
+# the block shape inferred from ``values`` (nnz, br, bc), or
+# (batch, nnz, br, bc) for batched tensors. The measured work is the layout
+# construction from the three component tensors, so the benchmark feeds the
+# components directly (not a pre-built sparse tensor) and both the reference and
+# the candidate receive the exact same call.
 #
-# Each benchmark case is (tensor_shape, block). The block grid is fixed at
-# ``_BLOCKS_PER_ROW`` stored blocks per row-block, so the nnz (and thus the
-# values allocation) grows only with the number of row-blocks while the logical
-# matrix spans the full (rows, cols) extent. Broadcast/backward do not apply:
-# this is a constructor with no tensor arithmetic between operands.
+# Shape levels: the workloads below mirror the performance-relevant shapes of
+# ``core_shapes.yaml`` for dense pointwise/layout ops, with a block size chosen
+# so the stored values dominate the construction cost.
+#
+# Broadcast/backward do not apply: this is a constructor with no tensor
+# arithmetic between operands and no autograd formula.
+#
+# Each benchmark case is (tensor_shape, block). The block grid stores a fixed
+# number of blocks per row-block (``_BLOCKS_PER_ROW``), so nnz -- and thus the
+# values allocation -- grows with the number of row-blocks while the logical
+# matrix spans the full (rows, cols) extent.
 _BENCH_SHAPES = [
     ((512, 512), (16, 16)),
     ((1024, 1024), (32, 32)),
@@ -43,16 +49,15 @@ _BENCH_SHAPES = [
     ((16, 1024, 1024), (64, 64)),
 ]
 
-# Stored blocks per row-block; must stay <= the smallest col-block count of
-# any case above (16), so every generated col index is in range.
+# Stored blocks per row-block; must stay <= the smallest col-block count of any
+# case above (16), so every generated col index is in range.
 _BLOCKS_PER_ROW = 4
 
 
 def _make_bsr_inputs(shape, block, dtype, device, seed=0):
-    # Deterministic CPU-side generation of a valid (crow_indices, col_indices,
-    # values) triple for the block grid, moved to the benchmark device. The
-    # values allocation is proportional to nnz, which is bounded by
-    # _BLOCKS_PER_ROW * n_row_blocks regardless of the logical size.
+    # Per-row-block grids are built on CPU for determinism, then moved to the
+    # benchmark device. The values allocation is proportional to nnz, which is
+    # bounded by _BLOCKS_PER_ROW * n_row_blocks regardless of the logical size.
     gen = torch.Generator("cpu").manual_seed(seed)
     rows, cols = shape[-2], shape[-1]
     br, bc = block
@@ -69,11 +74,14 @@ def _make_bsr_inputs(shape, block, dtype, device, seed=0):
     values_shape = shape[:-2] + (nnz, br, bc)
     crow_t = torch.tensor(crow, dtype=torch.long, device=device)
     col_t = torch.tensor(col, dtype=torch.long, device=device)
-    values_t = torch.randn(values_shape, dtype=dtype, generator=gen).to(device)
+    values_t = utils.generate_tensor_input(values_shape, dtype, device)
     return crow_t, col_t, values_t
 
 
 def _case_fn(shape, dtype):
+    # Two-phase GenericBenchmark: the descriptors are (tensor_shape, block)
+    # pairs; one BenchmarkCasePlan per descriptor keeps the block in the case id
+    # and defers all tensor construction to _build_inputs_fn.
     del dtype
     tensor_shape, block = shape
     yield base.BenchmarkCasePlan(
@@ -108,6 +116,10 @@ def test_sparse_bsr_tensor():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.sparse_bsr_tensor,
+        # flag_gems has no public ``sparse_bsr_tensor`` direct callable yet; the
+        # candidate is supplied by the KernelGen process-local override keyed on
+        # the public operator name (resolved via
+        # flag_gems.testing.resolve_gems_op inside the benchmark).
         gems_op=getattr(flag_gems, "sparse_bsr_tensor", None),
         dtypes=consts.FLOAT_DTYPES,
     )

@@ -25,14 +25,20 @@ from . import test_utils as tu
 # view equivalent to self.transpose(-2, -1).conj(): for real dtypes only the
 # last two dimensions are swapped, for complex dtypes the view is additionally
 # lazily conjugated (the is_conj bit toggles). The view shares the input
-# storage, so every storage dtype (float/complex/int/bool) is supported and the
-# observed values round-trip exactly through the transposed/conjugated
-# materialization. Degenerate inputs degrade differently: 0-D tensors fall back
-# to a lazy conj() (deprecated in aten, the identity for real/int/bool dtypes)
-# and 1-D tensors raise RuntimeError. The op is autograd-aware and an
-# involution (adjoint is its own inverse), so d(adjoint(x))/dx == adjoint(dy).
+# storage, so every storage dtype (float/complex/int/bool, including the
+# int8/uint8/float8 dtypes required by the spec) is supported and the observed
+# values round-trip exactly through the transposed/conjugated materialization.
+# Degenerate inputs degrade differently: 0-D tensors fall back to a lazy conj()
+# (deprecated in aten, the identity for real/int/bool dtypes) and 1-D tensors
+# raise RuntimeError. The op is autograd-aware and an involution (adjoint is
+# its own inverse), so d(adjoint(x))/dx == adjoint(dy).
 #
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
+#   * dtypes: the 9 required spec dtypes (int8/uint8/fp8/fp32/bf16/fp16/int32/
+#     int64) probed on the active device, plus the operator's float64 / int16 /
+#     complex32 / complex64 / bool storage dtypes, each over the dtype's valid
+#     subset of the five value ranges (unsigned dtypes only accept ranges whose
+#     lower bound is non-negative);
 #   * shape levels: rank >= 2 shapes selected by --quick plus representative
 #     matrix / batch-of-matrices shapes (0-D/1-D get dedicated edge-case tests);
 #   * value ranges: tu.selected_ranges() over representative ranks so every
@@ -44,12 +50,48 @@ from . import test_utils as tu
 #     gradient adjoint(dy) (broadcast does not apply to a unary view op);
 #   * negative: 1-D inputs and non-tensor inputs raise on both the aten
 #     reference and the candidate.
-_ADJOINT_DTYPES = (
-    utils.ALL_FLOAT_DTYPES
-    + utils.COMPLEX_DTYPES
-    + utils.ALL_INT_DTYPES
-    + utils.BOOL_TYPES
-)
+_FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
+# Unsigned dtypes cannot materialize negative values; tu.make_input only
+# accepts ranges whose lower bound resolves to >= 0 for them.
+_UNSIGNED_DTYPES = [torch.uint8]
+
+
+def _is_fp8(dtype):
+    return dtype in _FP8_DTYPES
+
+
+def _candidate_dtypes():
+    # Required spec dtypes first, then the operator's remaining storage dtypes,
+    # de-duplicated while preserving order.
+    return list(
+        dict.fromkeys(
+            tu.REQUIRED_DTYPES
+            + utils.ALL_FLOAT_DTYPES
+            + utils.ALL_INT_DTYPES
+            + utils.COMPLEX_DTYPES
+            + utils.BOOL_TYPES
+        )
+    )
+
+
+def _supported_dtypes():
+    # Probe the real aten op on the active device (adjoint needs rank >= 2, so
+    # the shared tu.supported_dtypes 1-D probe cannot be used) and keep only the
+    # dtypes whose transpose/conj view is implemented on this backend.
+    supported = []
+    for dtype in _candidate_dtypes():
+        try:
+            probe = tu.make_input(dtype, (2, 2), ["0", "1"])
+            torch.ops.aten.adjoint(probe)
+        except Exception:
+            continue
+        supported.append(dtype)
+    if not supported:
+        supported = [torch.float32]
+    return supported
+
+
+_ADJOINT_DTYPES = _supported_dtypes()
 
 # Representative matrix / batch-of-matrices shapes (2-D up to 5-D, small and
 # mid-size) exercising contiguous storage.
@@ -84,6 +126,26 @@ def _adjoint_test_shapes():
     )
 
 
+def _ranges_for(dtype):
+    # The five spec ranges, minus the ones an unsigned dtype cannot represent.
+    ranges = tu.selected_ranges()
+    if dtype in _UNSIGNED_DTYPES:
+        return [rng for rng in ranges if rng[0] == "0"]
+    return ranges
+
+
+_RANGE_CASES = [
+    (dtype, value_range)
+    for dtype in _ADJOINT_DTYPES
+    for value_range in _ranges_for(dtype)
+]
+
+
+def _basic_range(dtype):
+    # Non-degenerate representative range for the shape/dtype sweep.
+    return ["0", "max"] if dtype in _UNSIGNED_DTYPES else ["-1", "1"]
+
+
 def _resolve_gems_op():
     # Resolved inside each test (never at import time) so that the process-local
     # override installed by KernelGen for this run wins. Resolution order:
@@ -100,11 +162,14 @@ def _transposed_shape(shape):
     return shape
 
 
-def _assert_close(res_out, ref_out, dtype):
-    if dtype.is_floating_point or dtype.is_complex:
-        utils.gems_assert_close(res_out, ref_out, dtype)
-    else:
+def _assert_values_close(res_out, ref_out, dtype):
+    # fp8 has no direct torch.testing.assert_close support on this stack and
+    # the op is an exact view, so fp8/int/bool are compared bit-exactly while
+    # float/complex use the tolerance-aware helper.
+    if _is_fp8(dtype) or not (dtype.is_floating_point or dtype.is_complex):
         utils.gems_assert_equal(res_out, ref_out)
+    else:
+        utils.gems_assert_close(res_out, ref_out, dtype)
 
 
 def _assert_view_semantics(res_out, ref_out, inp):
@@ -123,22 +188,21 @@ def _assert_view_semantics(res_out, ref_out, inp):
 @pytest.mark.parametrize("shape", _adjoint_test_shapes())
 @pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
 def test_adjoint(shape, dtype):
-    # Shape levels x every supported dtype, with values drawn from the default
-    # [-1, 1] range (negative and positive for each dtype).
-    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    # Shape levels x every supported dtype (including the required int8/uint8/
+    # fp8 dtypes) over a non-degenerate representative value range.
+    inp = tu.make_input(dtype, shape, _basic_range(dtype))
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
 @pytest.mark.adjoint
 @pytest.mark.parametrize("shape", _ADJOINT_RANGE_SHAPES)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
+@pytest.mark.parametrize(("dtype", "value_range"), _RANGE_CASES)
 def test_adjoint_value_ranges(shape, value_range, dtype):
     # The op never transforms the stored values (beyond the lazy conjugate bit
     # toggle for complex dtypes), so the full spec range sweep must round-trip
@@ -150,7 +214,7 @@ def test_adjoint_value_ranges(shape, value_range, dtype):
     res_out = _resolve_gems_op()(inp)
 
     _assert_view_semantics(res_out, ref_out, inp)
-    tu.assert_result_close(res_out, ref_out)
+    _assert_values_close(res_out, ref_out, dtype)
 
 
 @pytest.mark.adjoint
@@ -160,7 +224,7 @@ def test_adjoint_non_contiguous(shape, dtype):
     # The transpose part of adjoint must preserve the strides of a
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
-    base = tu.make_input(dtype, shape, ["-1", "1"])
+    base = tu.make_input(dtype, shape, _basic_range(dtype))
     ref_base = utils.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
@@ -169,7 +233,7 @@ def test_adjoint_non_contiguous(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -190,7 +254,7 @@ def test_adjoint_toggle(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, base)
     assert not res_out.is_conj()
     assert not ref_out.is_conj()
@@ -245,7 +309,7 @@ def test_adjoint_mutation(shape, dtype):
     res_out.fill_(2.5)
     ref_out.fill_(2.5)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_close(inp, ref_inp)
 
@@ -271,11 +335,12 @@ def test_adjoint_backward(shape, dtype):
 
     # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, inp)
 
     # ...and, if the candidate advertises autograd support, its gradient must
-    # match the analytic value too.
+    # match the analytic value too (the input grad values are the same ones the
+    # reference gradient was computed from).
     if res_out.requires_grad:
         res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
         tu.assert_result_close(res_in_grad, expected_in_grad)
@@ -288,13 +353,13 @@ def test_adjoint_0d(dtype):
     # deprecation warning): the identity for real/int/bool dtypes and a lazy
     # conj view for complex dtypes. The candidate must match both the value and
     # the conjugation state.
-    inp = tu.make_input(dtype, (), ["-1", "1"])
+    inp = tu.make_input(dtype, (), _basic_range(dtype))
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_values_close(res_out, ref_out, dtype)
     assert res_out.shape == ref_out.shape
     assert res_out.is_conj() == ref_out.is_conj()
 

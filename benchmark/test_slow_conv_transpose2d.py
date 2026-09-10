@@ -21,13 +21,13 @@ from . import base, consts, utils
 
 # aten::slow_conv_transpose2d(self, weight, kernel_size, bias, stride, padding,
 # output_padding, dilation) performs an im2col-based 2-D transposed convolution
-# (groups=1) with output_padding/dilation support. The default shape set has no
-# transposed-conv input/weight pairs, so define local performance shapes whose
+# (groups=1) with output_padding/dilation support. The shared shape files have
+# no transposed-conv input/weight pairs, so define local performance shapes whose
 # output sizes stay in the tens-of-MB range. Each tuple is (inp_shape,
-# weight_shape, kernel_size, stride, padding, output_padding, dilation); note
-# the transposed weight layout (C_in, C_out, kH, kW). 1x1 (pure GEMM), 3x3/5x5
-# (im2col-heavy), stride-2, output_padding, and dilation-2 cases are all
-# represented.
+# weight_shape, kernel_size, stride, padding, output_padding, dilation); note the
+# transposed weight layout (C_in, C_out, kH, kW). 1x1 (pure GEMM), 3x3/5x5
+# (im2col-heavy), stride-2, output_padding and dilation-2 cases are represented,
+# with C_in/C_out both kept >= 32 so the GEMM dimensions are substantial.
 SLOW_CONV_TRANSPOSE2D_SHAPES = [
     ((32, 64, 128, 128), (64, 64, 3, 3), (3, 3), (1, 1), (0, 0), (0, 0), (1, 1)),
     ((32, 64, 56, 56), (64, 64, 3, 3), (3, 3), (2, 2), (1, 1), (1, 1), (1, 1)),
@@ -75,6 +75,7 @@ def _build_inputs_fn(plan, dtype, device):
     inp = utils.generate_tensor_input(inp_shape, dtype, device)
     weight = utils.generate_tensor_input(weight_shape, dtype, device)
     bias = utils.generate_tensor_input((weight_shape[1],), dtype, device)
+    # Trailing dict is unpacked as call kwargs by Benchmark.unpack_to_args_kwargs.
     return (
         inp,
         weight,
@@ -92,7 +93,13 @@ class SlowConvTranspose2dBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding, output_padding, dilation)."""
 
     def set_shapes(self, shape_file_path=None):
+        # The op has no entry in core_shapes.yaml; use the local shape list.
         self.shapes = SLOW_CONV_TRANSPOSE2D_SHAPES
+
+    def set_more_shapes(self):
+        # The generic 1D/2D/3D extra shapes cannot describe a conv workload;
+        # this op only benchmarks its explicit (input, weight) shape pairs.
+        return []
 
 
 @pytest.mark.slow_conv_transpose2d

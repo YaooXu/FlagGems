@@ -24,12 +24,16 @@ from . import base, consts, utils
 # support. ``self`` is (N, C_in, D, H, W) and ``weight`` is
 # (C_out, C_in, kD, kH, kW); the output is (N, C_out, D_out, H_out, W_out) with
 #   D_out = (D + 2*pD - dil_d*(kD - 1) - 1) // sD + 1
-# and likewise for H and W. The default shape set has no convolved input/weight
-# pairs, so define local performance shapes whose output sizes stay in the
-# tens-of-MB range. Each tuple is (inp_shape, weight_shape, kernel_size, stride,
-# padding, dilation); the im2col cost grows with kernel volume, so 1x1x1 (pure
-# GEMM), 3x3x3 (im2col-heavy), stride-2, and dilation-2 cases are all
-# represented.
+# and likewise for H and W.
+#
+# Only the 5-D batched route is benchmarked: the native CUDA reference is
+# non-deterministic for the 4-D unbatched route, so it is not a meaningful
+# candidate target. The default shape set has no convolved input/weight pairs,
+# so define local performance shapes whose output sizes stay in the
+# tens-of-MB range. Each tuple is (inp_shape, weight_shape, kernel_size,
+# stride, padding, dilation); the im2col cost grows with kernel volume, so
+# 1x1x1 (pure GEMM), 3x3x3 (im2col-heavy), stride-2, dilation-2, channel
+# expansion and asymmetric stride/padding cases are all represented.
 SLOW_CONV_DILATED3D_SHAPES = [
     (
         (2, 16, 32, 32, 32),
@@ -85,6 +89,14 @@ SLOW_CONV_DILATED3D_SHAPES = [
         (3, 3, 3),
         (1, 1, 1),
         (1, 1, 1),
+        (1, 1, 1),
+    ),
+    (
+        (2, 16, 24, 20, 28),
+        (24, 16, 3, 3, 3),
+        (3, 3, 3),
+        (2, 1, 1),
+        (1, 2, 0),
         (1, 1, 1),
     ),
 ]

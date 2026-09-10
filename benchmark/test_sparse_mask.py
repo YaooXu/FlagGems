@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -22,27 +24,40 @@ from . import base, consts
 # sparse_mask gathers values from a dense ``self`` at a sparse mask's index
 # positions and returns a sparse COO tensor. There is no public Benchmark family
 # for sparse gather ops, so the benchmark uses the two-phase GenericBenchmark
-# (case_fn + build_inputs_fn). The candidate is resolved at run time from the
-# process-local override (flag_gems.testing.resolve_gems_op) via GenericBenchmark's
-# _resolve_direct_gems_op; flag_gems.sparse_mask does not exist yet as an
-# attribute, so the direct-callable default is fetched with getattr and may be
-# None. The perf reference is the aten op itself (torch.ops.aten.sparse_mask)
-# and both are called with the same (self, mask) signature.
+# (case_fn + build_inputs_fn): case_fn yields one BenchmarkCasePlan per
+# (shape, nnz_ratio) workload and build_inputs_fn materializes the dense self
+# and the coalesced sparse mask lazily. The candidate is resolved at run time
+# from the process-local override (flag_gems.testing.resolve_gems_op) via
+# GenericBenchmark's _resolve_direct_gems_op; flag_gems.sparse_mask does not exist
+# yet as an attribute, so the direct-callable default is fetched with getattr and
+# may be None. The perf reference is the aten op itself
+# (torch.ops.aten.sparse_mask) and both are called with the same (self, mask)
+# signature.
+#
+# The benchmark work scales with the number of mask nonzeros and the size of the
+# dense self, so the shapes pair moderate square layouts with a fixed nnz ratio;
+# the ratio drops for the largest shapes to keep the mask/build cost bounded.
 _SPARSE_MASK_SHAPES = [
+    (512, 512),
     (1024, 1024),
     (2048, 2048),
     (4096, 4096),
-    (8192, 8192),
 ]
 
 
+def _nnz_ratio(shape):
+    # 10% nonzeros on the small layouts, 2% on the large ones.
+    return 0.1 if math.prod(shape) <= 1024 * 1024 else 0.02
+
+
 def _case_fn(shape, dtype):
-    del dtype
     # yield generates one BenchmarkCasePlan per (shape, dtype) parametrization.
+    del dtype
+    ratio = _nnz_ratio(shape)
     yield base.BenchmarkCasePlan(
         shape={"self": shape, "mask": shape},
-        params={"nnz_ratio": 0.1},
-        builder_args=(shape, 0.1),
+        params={"nnz_ratio": ratio},
+        builder_args=(shape, ratio),
     )
 
 
@@ -55,6 +70,8 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 class SparseMaskBenchmark(base.GenericBenchmark):
+    # sparse_mask has no meaningful dense shapes in core_shapes.yaml, so
+    # benchmark the dedicated square layouts above.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _SPARSE_MASK_SHAPES
 

@@ -20,7 +20,7 @@ import flag_gems
 from . import base, consts, utils
 
 # aten::data(Tensor self) -> Tensor returns a storage-sharing shallow copy of
-# the input; it performs no arithmetic, so the benchmark measures dispatch +
+# the input; it performs no arithmetic, so the benchmark measures dispatch plus
 # view-materialization overhead across sizes. Moderate shapes are used instead
 # of the generic 1G-element default since the op is zero-copy.
 DATA_SHAPES = [
@@ -33,6 +33,8 @@ DATA_SHAPES = [
 
 
 def _case_fn(shape, dtype):
+    # One BenchmarkCasePlan per tensor shape; the plan carries the builder args
+    # so build_inputs_fn materializes the input lazily for the selected dtype.
     del dtype
     yield base.BenchmarkCasePlan(
         shape={"input": shape},
@@ -52,6 +54,12 @@ class DataBenchmark(base.GenericBenchmark):
 
     def set_shapes(self, shape_file_path=None):
         self.shapes = DATA_SHAPES
+
+    def set_more_shapes(self):
+        # The inherited 2**28 / 10000x65536 generic shapes would allocate
+        # hundreds of MB extra for a zero-copy op; the dedicated shape list
+        # above already covers small, medium and large tensors.
+        return []
 
 
 @pytest.mark.data

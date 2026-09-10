@@ -33,11 +33,11 @@ setattr(
 )
 
 # aten::_nested_tensor_strides(Tensor self) -> Tensor reads the (num_tensors,
-# num_dims) int64 strides metadata of a strided-layout nested tensor. Its cost
-# is proportional to num_tensors * num_dims and independent of the stored
-# values, so the benchmark uses (num_tensors, num_dims) layouts instead of the
-# dense core_shapes set, which is dominated by huge 1-D tensors that are
-# meaningless for a nested-tensor batch.
+# num_dims) int64 strides metadata of a strided-layout nested tensor. Its cost is
+# proportional to num_tensors * num_dims and independent of the stored values, so
+# the benchmark uses (num_tensors, num_dims) layouts instead of the dense
+# core_shapes set, which is dominated by huge 1-D tensors that are meaningless
+# for a nested-tensor batch.
 _NESTED_STRIDES_SHAPES = [
     (16, 2),
     (64, 3),
@@ -50,6 +50,8 @@ _NESTED_STRIDES_SHAPES = [
 
 
 def _case_fn(shape, dtype):
+    # One (num_tensors, num_dims) layout per Workload; the builder args carry the
+    # layout so build_inputs_fn stays dtype-agnostic.
     del dtype
     num_tensors, num_dims = shape
     yield base.BenchmarkCasePlan(
@@ -60,11 +62,17 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
+    # build_inputs_fn is the second phase of the two-phase GenericBenchmark: it is
+    # called per (case, dtype) with the parsed plan and the test device. Components
+    # are ordinary contiguous tensors whose dim 0 is ragged (length in [1, 8]) and
+    # whose remaining dims are fixed at 4; their values are irrelevant to the
+    # operator, so plain randn input is used here (the correctness file is the one
+    # that sweeps the spec value ranges).
     num_tensors, num_dims = plan.builder_args[0]
     gen = torch.Generator("cpu").manual_seed(0)
     lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
     components = [
-        torch.randn((length,) + (4,) * (num_dims - 1), dtype=dtype)
+        torch.randn((length,) + (4,) * (num_dims - 1), dtype=dtype, device=device)
         for length in lengths
     ]
     return torch.nested.nested_tensor(components, device=device), {}
@@ -73,10 +81,12 @@ def _build_inputs_fn(plan, dtype, device):
 class NestedTensorStridesBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to (num_tensors, num_dims) shapes.
 
-    ``record_shapes`` is overridden because a strided-layout NestedTensor does
-    not support ``Tensor.size()`` (it raises "NestedTensorImpl doesn't support
-    sizes"); the strides metadata tensor returned by the operator itself is
-    used as the shape descriptor instead.
+    ``set_shapes``/``set_more_shapes`` are overridden because the default
+    implementations read the dense core_shapes.yaml set, which has no meaning for
+    a nested-tensor batch. ``record_shapes`` is overridden because a
+    strided-layout NestedTensor does not support ``Tensor.size()`` (it raises
+    "NestedTensorImpl doesn't support sizes"); the strides metadata tensor
+    returned by the operator itself is used as the shape descriptor instead.
     """
 
     def set_shapes(self, shape_file_path=None):
@@ -110,6 +120,11 @@ class NestedTensorStridesBenchmark(base.GenericBenchmark):
 
 @pytest.mark._nested_tensor_strides
 def test__nested_tensor_strides():
+    # torch_op is the perf comparison reference; gems_op is the candidate under
+    # test. They share the same single-argument call semantics
+    # (Tensor) -> Tensor. The candidate name starts with an underscore, so the
+    # default is fetched with getattr to stay importable before the kernel is
+    # registered; KernelGen's injected candidate is visible here at call time.
     bench = NestedTensorStridesBenchmark(
         op_name="_nested_tensor_strides",
         case_fn=_case_fn,

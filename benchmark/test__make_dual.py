@@ -40,7 +40,18 @@ setattr(
 # assigns is threaded through the input builder to both the reference
 # (torch_op) and the candidate (gems_op). The candidate kernel only consumes
 # primal's data (the tangent is dual metadata), so each case materializes
-# primal + tangent and reads primal once.
+# primal + tangent and reads primal once. No public Benchmark family models a
+# metadata/view op, so this uses a two-phase GenericBenchmark with case_fn +
+# build_inputs_fn.
+#
+# gems_op is resolved through getattr because flag_gems._make_dual is not yet
+# registered as a direct callable; KernelGen's override_gems_op("_make_dual",
+# ...) still wins at run time via flag_gems.testing.resolve_gems_op.
+
+# A view op's latency is dominated by the call overhead, not by the tensor
+# size. Capping the input numel avoids allocating multi-GB primal+tangent pairs
+# (the generic DEFAULT_SHAPES include 1G-element tensors) for no signal.
+MAX_NUMEL = 2**24  # 16M elements
 
 
 def _case_fn(shape, dtype):
@@ -53,24 +64,11 @@ def _case_fn(shape, dtype):
 
 
 class MakeDualBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark that supplies primal, tangent and level.
-
-    aten::_make_dual(Tensor(a) primal, Tensor tangent, int level) -> Tensor(a)
-    needs a level alongside the two tensors, which the binary pointwise
-    families do not supply, so the case builder and input builder forward it
-    explicitly. The default shape set contains a 1G-element core shape whose
-    fp32 primal + tangent would need ~8 GiB and OOM on busy GPUs; cap the
-    shapes while keeping performance-relevant sizes (2**26 elements = 256 MiB
-    fp32 per tensor).
-    """
-
-    MAX_ELEMENTS = 2**26
+    """Two-phase GenericBenchmark over performance-relevant, capped shapes."""
 
     def set_shapes(self, shape_file_path=None):
         super().set_shapes(shape_file_path)
-        self.shapes = [
-            shape for shape in self.shapes if math.prod(shape) <= self.MAX_ELEMENTS
-        ]
+        self.shapes = [shape for shape in self.shapes if math.prod(shape) <= MAX_NUMEL]
 
 
 @pytest.mark._make_dual

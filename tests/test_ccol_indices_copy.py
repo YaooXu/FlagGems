@@ -25,31 +25,34 @@ from . import test_utils as tu
 # aten::ccol_indices_copy(Tensor self) -> Tensor materializes the
 # batch_dims + (n_cols + 1,) (CSC) / batch_dims + (n_col_blocks + 1,) (BSC)
 # int64 compressed-column index tensor of a sparse column-compressed tensor as
-# a fresh, contiguous, independent copy (the view_copy counterpart of
-# aten::ccol_indices, whose native body is `ccol_indices(self).clone(
-# contiguous)`). Every workload feeds a sparse CSC or BSC tensor and checks
-# copy semantics: the result must equal the raw ccol array, must NOT alias the
-# input's internal ccol storage, and must not mutate the input. The returned
-# tensor never depends on the stored values, so every supported storage dtype
-# (all float/int families plus bool) is exercised through the same layouts.
+# a fresh, contiguous, independent copy. It is the view_copy counterpart of
+# aten::ccol_indices, whose native body is
+# ``ccol_indices(self).clone(contiguous)``.
 #
-# Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (layout, size, nnz, blocks) cases from the quick/all
-#     --quicks — 2-D CSC (incl. single-row, single-column, square, full
-#     and nnz == 0), batched CSC, 2-D BSC with varied block shapes, and
-#     batched BSC, ranks 2-5;
-#   * value ranges: tu.selected_ranges() over representative layouts, so every
-#     supported storage dtype is exercised with negative, positive, extreme
-#     and degenerate value ranges (the returned ccol copy is identical for all
-#     of them);
-#   * edge cases: empty (nnz == 0, CSC and BSC), uncoalesced (duplicate row
-#     entries inside a column), and nan/inf/-0.0 values (all ignored by the
-#     accessor);
-#   * negative: dense tensors, CSR tensors, COO tensors and a wrong-dtype
-#     ``out`` tensor are rejected.
+# The operator is a sparse-metadata accessor, so the regular-operator
+# dimensions are adapted as follows:
+#   * shapes (tu.selected_shapes): every required rank is mapped onto a CSC
+#     layout the operator accepts -- rank 0/1 -> 2-D, rank >= 2 -> batched CSC
+#     with the leading dims as batch dims -- plus dedicated CSC/BSC layout
+#     cases (single row/column, square, full, empty nnz == 0, ranks 2-5 and
+#     block shapes that do not divide the matrix).
+#   * value ranges (tu.selected_ranges): the returned ccol copy never depends
+#     on the stored values, so every per-dtype range -- including the extreme
+#     [min, 0] / [0, max] magnitudes -- must be accepted and must not perturb
+#     the returned array.
+#   * dtypes: every storage dtype the sparse CSC/BSC runtime accepts, probed
+#     with tu.supported_dtypes (int8 / uint8 / both fp8 formats included when
+#     the device supports them), not guessed.
+#   * edge cases: empty (nnz == 0), uncoalesced duplicate row entries, and
+#     nan / +-inf stored values (all ignored by the accessor).
+#   * negative: dense, CSR, COO tensors and a wrong-dtype ``out`` are rejected.
+#   * broadcast / backward: not applicable -- the operator is unary and returns
+#     a fresh int64 metadata tensor, so there is nothing to broadcast against
+#     or to differentiate.
 #
-# No broadcast/backward dimensions apply: the operator is unary, returns a
-# fresh int64 metadata tensor (nothing to broadcast against or differentiate).
+# Copy semantics are checked on every case: the result must equal the raw ccol
+# array, must be a fresh contiguous int64 tensor that does NOT alias the
+# input's internal ccol storage, and the input must not be mutated.
 
 # (layout, size, nnz, blocks) core cases: 2-D CSC (incl. single-row/single-
 # column/square/nnz==0), batched CSC, 2-D BSC with varied block shapes, batched
@@ -71,9 +74,9 @@ _CCOLS_CORE = [
     ("bsc_batch", (2, 4, 6), 6, (2, 2)),
 ]
 
-# Higher-rank / wider layouts for the "all" level (default, no --quick): multi-batch-
-# dim CSC, a BSC whose column blocks do not divide the column count, and a
-# batched BSC with a bigger block.
+# Higher-rank / wider layouts for the "all" level (default, no --quick):
+# multi-batch-dim CSC, a BSC whose column blocks do not divide the column
+# count, and a batched BSC with a bigger block.
 _CCOLS_ALL = [
     ("csc_batch", (7, 3, 12, 4, 5), 48, None),
     ("bsc", (10, 10), 12, (3, 4)),
@@ -82,37 +85,113 @@ _CCOLS_ALL = [
 
 
 def _ccol_cases():
-    """(layout, size, nnz, blocks) layouts selected by pytest --quick (quick) vs default (full)."""
+    """(layout, size, nnz, blocks) cases for the quick vs full (default) level."""
     if tu.LEVEL == "quick":
         return [("csc_batch", (2, 19, 7), 20, None)]
-    if tu.LEVEL == "all":
-        return _CCOLS_CORE + _CCOLS_ALL
+    return _CCOLS_CORE + _CCOLS_ALL
 
 
 def _ccol_value_range_cases():
-    """Representative all-sparse + batched layouts for the value-range sweep."""
+    """Representative sparse + batched layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [("csc", (5, 4), 6, None)]
-    if tu.LEVEL == "all":
-        return [
-            ("csc", (5, 4), 6, None),
-            ("csc_batch", (2, 6, 8), 12, None),
-            ("bsc", (4, 6), 4, (2, 2)),
-        ]
-    return [("csc", (5, 4), 6, None), ("bsc", (4, 6), 4, (2, 2))]
+    return [
+        ("csc", (5, 4), 6, None),
+        ("csc_batch", (2, 6, 8), 12, None),
+        ("bsc", (4, 6), 4, (2, 2)),
+    ]
 
 
-# The result ignores the stored values, but the candidate must accept any
-# storage dtype the sparse CSC/BSC runtime supports: every float, int, and
-# bool family.
-_CCOLS_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+def _shape_to_csc_case(shape):
+    """Map one tu.selected_shapes() rank onto a CSC/BSC layout the op accepts.
 
-# Value-range coverage uses float + int storage dtypes (bool ignores the range
-# in tu.make_input and adds nothing beyond the copy-semantics tests above).
-_VALUE_RANGE_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES
+    Ranks 0/1 become a 2-D CSC matrix (a sparse column-compressed tensor needs
+    at least two dims); ranks >= 2 keep the trailing two dims as (rows, cols)
+    and use the leading dims as batch dims. The stored nnz is kept tiny so the
+    case stays cheap even for logically large shapes.
+    """
+    if len(shape) == 0:
+        size = (1, 1)
+    elif len(shape) == 1:
+        size = (shape[0], 1)
+    else:
+        size = tuple(shape)
+    rows, cols = size[-2], size[-1]
+    nnz = min(rows * cols, 16)
+    if len(size) == 2:
+        return ("csc", size, nnz, None)
+    return ("csc_batch", size, nnz, None)
 
-# nan / +-inf stored values for the metadata-accessor test.
-_NAN_INF_DTYPES = utils.ALL_FLOAT_DTYPES
+
+def _spec_shape_cases():
+    """The regular-operator spec's seven shapes, mapped onto CSC workloads."""
+    return [_shape_to_csc_case(shape) for shape in tu.selected_shapes()]
+
+
+def _dedup(dtypes):
+    result = []
+    for dtype in dtypes:
+        if dtype is not None and dtype not in result:
+            result.append(dtype)
+    return result
+
+
+def _probe_sparse_storage_dtype(operator, dtype):
+    """Probe callable for tu.supported_dtypes.
+
+    A storage dtype is supported when a sparse CSC tensor of that dtype can be
+    built on the active device and the ATen metadata accessor materializes its
+    compressed-column array. Any exception means "unsupported".
+    """
+    try:
+        ccol = torch.tensor([0, 2, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
+        row = torch.tensor([0, 1, 2, 0, 2], dtype=torch.long, device=flag_gems.device)
+        values = torch.ones(5, dtype=dtype, device=flag_gems.device)
+        inp = torch.sparse_csc_tensor(
+            ccol, row, values, (3, 4), device=flag_gems.device
+        )
+        packet = getattr(torch.ops.aten, operator, None)
+        if packet is None:
+            return False
+        out = packet.default(inp)
+        return out.dtype == torch.int64 and out.numel() == 5
+    except Exception:
+        return False
+
+
+# Candidate storage dtypes: the spec-required nine (int8 / uint8 / fp8 e4m3fn /
+# fp8 e5m2 / fp32 / bf16 / fp16 / int32 / int64) plus the remaining families
+# the sparse runtime commonly supports (int16 / fp64 / bool). fp8 names are
+# looked up defensively for older PyTorch builds.
+_CANDIDATE_DTYPES = _dedup(
+    tu.REQUIRED_DTYPES
+    + [
+        torch.int16,
+        torch.float64,
+        torch.bool,
+        getattr(torch, "float8_e4m3fn", None),
+        getattr(torch, "float8_e5m2", None),
+    ]
+)
+
+# Only the dtypes the active device's sparse CSC/BSC runtime + accessor accept;
+# probed rather than guessed so unsupported vendor dtypes are skipped.
+_CCOLS_DTYPES = tu.supported_dtypes(
+    "ccol_indices_copy",
+    candidates=_CANDIDATE_DTYPES,
+    probe=_probe_sparse_storage_dtype,
+) or [torch.float32]
+
+# Value-range coverage uses non-bool storage dtypes (bool ignores the range and
+# adds nothing beyond the copy-semantics cases above).
+_VALUE_RANGE_DTYPES = [dtype for dtype in _CCOLS_DTYPES if dtype != torch.bool]
+
+# nan / +-inf stored values: only the float dtypes that can represent them.
+_NAN_INF_DTYPES = [
+    dtype
+    for dtype in _CCOLS_DTYPES
+    if dtype in (torch.float16, torch.bfloat16, torch.float32, torch.float64)
+]
 
 
 def _random_ccol(n_compressed, nnz, gen):
@@ -129,19 +208,43 @@ def _random_ccol(n_compressed, nnz, gen):
     )
 
 
+def _random_ccol_batch(n_batch, n_compressed, nnz, gen):
+    # Vectorized batched version of _random_ccol: (n_batch, n_compressed + 1),
+    # each row non-decreasing with ccol[:, 0] == 0 and ccol[:, -1] == nnz.
+    col0 = torch.zeros(n_batch, 1, dtype=torch.long)
+    coln = torch.full((n_batch, 1), nnz, dtype=torch.long)
+    if n_compressed == 1:
+        return torch.cat([col0, coln], dim=1)
+    inner = torch.randint(
+        0, nnz + 1, (n_batch, n_compressed - 1), dtype=torch.long, generator=gen
+    )
+    inner, _ = torch.sort(inner, dim=1)
+    return torch.cat([col0, inner, coln], dim=1)
+
+
 def _make_values(dtype, values_shape, value_range, gen):
-    # Stored values come from the value-range framework (tu.make_input) because
-    # the returned ccol copy never depends on them; every per-dtype range can
-    # therefore be exercised through this one constructor. bool ignores the
-    # range (deterministic random 0/1 keeps the seed-based construction
-    # reproducible).
+    # Stored values come from the shared value-range framework
+    # (tu.make_input), which already creates the tensor on flag_gems.device;
+    # the returned ccol copy never depends on them, so every per-dtype range
+    # can be exercised through this one constructor. bool ignores the range
+    # (deterministic random 0/1 keeps construction reproducible).
     if dtype == torch.bool:
         return torch.randint(0, 2, values_shape, dtype=dtype, generator=gen).to(
             flag_gems.device
         )
-    # tu.make_input already creates the tensor on flag_gems.device; the .to()
-    # it to flag_gems.device so it always matches the index tensors.
-    return tu.make_input(dtype, values_shape, list(value_range)).to(flag_gems.device)
+    # Values are irrelevant to the returned metadata, so a range that clamps to
+    # a single representable value for this dtype (e.g. uint8 with [-1, 0]) is
+    # materialized as a constant instead of handing make_tensor a degenerate
+    # interval (torch.randint rejects from == to).
+    if not (dtype.is_floating_point or dtype.is_complex):
+        lo_bound, hi_bound = tu.dtype_bounds(dtype)
+        low = int(min(max(tu.resolve_bound(value_range[0], dtype), lo_bound), hi_bound))
+        high = int(
+            min(max(tu.resolve_bound(value_range[1], dtype), lo_bound), hi_bound)
+        )
+        if low == high:
+            return torch.full(values_shape, low, device=flag_gems.device, dtype=dtype)
+    return tu.make_input(dtype, values_shape, list(value_range))
 
 
 def _make_csc(size, nnz, dtype, gen, device, value_range):
@@ -154,10 +257,8 @@ def _make_csc(size, nnz, dtype, gen, device, value_range):
 
 def _make_csc_batch(size, nnz, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
-    n_batch = 1
-    for dim in batch_dims:
-        n_batch *= dim
-    ccol = torch.stack([_random_ccol(n_cols, nnz, gen) for _ in range(n_batch)])
+    n_batch = math.prod(batch_dims)
+    ccol = _random_ccol_batch(n_batch, n_cols, nnz, gen)
     rows = torch.randint(0, n_rows, (n_batch, nnz), dtype=torch.long, generator=gen)
     values = _make_values(dtype, (n_batch, nnz), value_range, gen)
     return torch.sparse_csc_tensor(
@@ -178,20 +279,17 @@ def _make_bsc(size, nnz, blocks, dtype, gen, device, value_range):
     row = torch.randint(0, n_row_blocks, (nnz,), dtype=torch.long, generator=gen)
     values = _make_values(dtype, (nnz, block_rows, block_cols), value_range, gen)
     # torch.sparse_bsc_tensor infers the block size from the trailing dims of
-    # the values tensor (values_shape == (nnz, block_rows, block_cols)), so
-    # blocks is only used to size the index arrays here.
+    # the values tensor (values_shape == (nnz, block_rows, block_cols)).
     return torch.sparse_bsc_tensor(ccol, row, values, size=size, device=device)
 
 
 def _make_bsc_batch(size, nnz, blocks, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
     block_rows, block_cols = blocks
-    n_batch = 1
-    for dim in batch_dims:
-        n_batch *= dim
+    n_batch = math.prod(batch_dims)
     n_col_blocks = int(math.ceil(n_cols / block_cols))
     n_row_blocks = int(math.ceil(n_rows / block_rows))
-    ccol = torch.stack([_random_ccol(n_col_blocks, nnz, gen) for _ in range(n_batch)])
+    ccol = _random_ccol_batch(n_batch, n_col_blocks, nnz, gen)
     row = torch.randint(
         0, n_row_blocks, (n_batch, nnz), dtype=torch.long, generator=gen
     )
@@ -235,41 +333,23 @@ def _expected_ccol_shape(case):
 
 
 def _reference_ccol_indices_copy(inp):
-    # Prefer the literal ATen op as the reference. The installed PyTorch build
-    # registers ccol_indices_copy as CompositeExplicitAutogradNonFunctional,
-    # whose dispatch-key set may exclude the SparseCsr functionality key, so
-    # calling torch.ops.aten.ccol_indices_copy directly on a sparse tensor can
-    # raise NotImplementedError. In that case fall back to the operator's exact
-    # native body -- ccol_indices(self).clone(contiguous) -- composed from ATen
-    # ops, which IS reachable on sparse tensors.
-    #
-    # The KernelGen ref-vs-ref verification overrides the candidate
-    # (resolve_gems_op) with this same function so both sides run the same
-    # native body.
+    # The literal ATen operator is the reference (and the expected values all
+    # come from it). Probed on CUDA and CPU: it is invocable on sparse
+    # CSC/BSC tensors for every storage dtype used here, so no composed
+    # simulation is needed.
     return torch.ops.aten.ccol_indices_copy(inp)
 
 
 def _reference_ccol_indices_copy_out(inp, out):
-    # Same strategy as _reference_ccol_indices_copy for the .out overload. The
-    # .out contract materializes int64 entries into out and returns out itself;
-    # ATen enforces the int64 out dtype, so the manual native-body fallback
-    # (compute the materialized copy and copy it into out) enforces the same
-    # contract up front to stay consistent across builds where the .out op is
-    # unreachable on sparse tensors.
-    if out.dtype != torch.int64:
-        raise RuntimeError(
-            "Expected out tensor to have dtype long int, "
-            f"but got {out.dtype} instead"
-        )
+    # The .out contract materializes int64 entries into out and returns out
+    # itself; ATen enforces the int64 out dtype, so the reference calls the
+    # real .out overload directly.
     return torch.ops.aten.ccol_indices_copy.out(inp, out=out)
 
 
 def _resolve_gems_op():
     # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.ccol_indices_copy is registered;
-    # resolution order is: (1) override, (2) the direct
-    # flag_gems.ccol_indices_copy callable, (3) LookupError.
+    # process-local override injected by KernelGen for this run wins.
     return flag_gems.testing.resolve_gems_op(
         "ccol_indices_copy", getattr(flag_gems, "ccol_indices_copy", None)
     )
@@ -293,11 +373,9 @@ def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
     utils.gems_assert_equal(res, ref)
     # Copy semantics: fresh storage, never a view of the input's ccol array.
     assert res.data_ptr() != inp.ccol_indices().data_ptr()
-    # The accessor must not mutate the input: ref_inp is a pre-call snapshot
-    # (a clone, moved to CPU when TO_CPU is set). equal_nan=True keeps the
-    # non-mutation check valid for inputs whose stored values contain nan /
-    # +-inf (test_ccol_indices_copy_nan_inf_values): a mutated tensor still
-    # differs from the snapshot on the finite entries.
+    # The accessor must not mutate the input: ref_inp is a pre-call snapshot.
+    # equal_nan=True keeps the non-mutation check valid for inputs whose stored
+    # values contain nan / +-inf.
     utils.gems_assert_equal(inp, ref_inp, equal_nan=True)
 
 
@@ -337,14 +415,52 @@ def test_ccol_indices_copy_out(case, dtype):
 
 
 @pytest.mark.ccol_indices_copy
+@pytest.mark.parametrize("case", _spec_shape_cases())
+@pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
+def test_ccol_indices_copy_spec_shapes(case, dtype):
+    # Shape-level coverage: every tu.selected_shapes() rank (0~5 dims) mapped
+    # onto a CSC workload the operator accepts. The logically large shapes keep
+    # a tiny nnz, so only the compressed extent (n_cols + 1, times the batch
+    # size) matters.
+    layout, size, nnz, blocks = case
+    inp = _make_input(layout, size, nnz, blocks, dtype)
+    ref_inp = utils.to_reference(inp.clone())
+
+    ref_out = _reference_ccol_indices_copy(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+
+
+@pytest.mark.ccol_indices_copy_out
+@pytest.mark.parametrize("case", _spec_shape_cases())
+@pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
+def test_ccol_indices_copy_out_spec_shapes(case, dtype):
+    layout, size, nnz, blocks = case
+    inp = _make_input(layout, size, nnz, blocks, dtype)
+    ref_inp = utils.to_reference(inp.clone())
+    out = torch.empty(_expected_ccol_shape(case), dtype=torch.long, device=inp.device)
+    ref_out = torch.empty(
+        _expected_ccol_shape(case), dtype=torch.long, device=ref_inp.device
+    )
+
+    ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
+    res_ret = _resolve_gems_op_out()(inp, out=out)
+
+    assert res_ret is out
+    assert ref_ret is ref_out
+    _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+
+
+@pytest.mark.ccol_indices_copy
 @pytest.mark.parametrize("case", _ccol_value_range_cases())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _VALUE_RANGE_DTYPES)
 def test_ccol_indices_copy_value_ranges(case, value_range, dtype):
-    # Value-range coverage from the regular-operator spec: the metadata output
-    # (the fresh ccol int64 copy) is independent of the stored values, so every
-    # per-dtype range -- including the extreme [min, 0] and [0, max] magnitudes
-    # -- must be accepted and must not perturb the returned ccol array.
+    # Value-range coverage: the metadata output (the fresh ccol int64 copy) is
+    # independent of the stored values, so every per-dtype range -- including
+    # the extreme [min, 0] and [0, max] magnitudes -- must be accepted and must
+    # not perturb the returned ccol array.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
     ref_inp = utils.to_reference(inp.clone())
@@ -382,8 +498,7 @@ def test_ccol_indices_copy_out_value_ranges(case, value_range, dtype):
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
 def test_ccol_indices_copy_empty_bsc(dtype):
     # nnz == 0 for BSC: rows and values are empty, but ccol_indices_copy must
-    # still return a (n_col_blocks + 1,) contiguous int64 tensor (not a dense
-    # or wrongly-shaped tensor).
+    # still return a (n_col_blocks + 1,) contiguous int64 tensor.
     inp = _make_input("bsc", (4, 6), 0, (2, 2), dtype)
     ref_inp = utils.to_reference(inp.clone())
 
@@ -409,20 +524,23 @@ def test_ccol_indices_copy_out_empty_bsc(dtype):
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
 
 
-@pytest.mark.ccol_indices_copy
-@pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
-def test_ccol_indices_copy_uncoalesced(dtype):
+def _uncoalesced_csc(dtype):
     # The (0, 0) entry is duplicated (rows[0] == rows[1] in column 0), which
-    # leaves the CSC tensor with repeated entries; ccol_indices_copy must still
-    # return exactly the stored ccol array, in storage order, as an independent
-    # copy (never a coalesced/sorted array and never an alias). Column 0 holds
-    # 3 entries for rows [0, 0, 2], so a coalescing implementation would
-    # visibly change the stored structure.
+    # leaves the CSC tensor with repeated entries; column 0 holds 3 entries for
+    # rows [0, 0, 2]. ccol_indices_copy must return exactly the stored ccol
+    # array, in storage order, as an independent copy (never coalesced/sorted
+    # and never an alias).
     shape = (3, 4)
     ccol = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor([0, 0, 2, 1, 3], dtype=torch.long, device=flag_gems.device)
     values = _make_values(dtype, (5,), ["-1", "1"], torch.Generator("cpu"))
-    inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
+    return torch.sparse_csc_tensor(ccol, rows, values, shape)
+
+
+@pytest.mark.ccol_indices_copy
+@pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
+def test_ccol_indices_copy_uncoalesced(dtype):
+    inp = _uncoalesced_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
@@ -434,11 +552,7 @@ def test_ccol_indices_copy_uncoalesced(dtype):
 @pytest.mark.ccol_indices_copy_out
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
 def test_ccol_indices_copy_out_uncoalesced(dtype):
-    shape = (3, 4)
-    ccol = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
-    rows = torch.tensor([0, 0, 2, 1, 3], dtype=torch.long, device=flag_gems.device)
-    values = _make_values(dtype, (5,), ["-1", "1"], torch.Generator("cpu"))
-    inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
+    inp = _uncoalesced_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     ref_out = torch.empty(5, dtype=torch.long, device=ref_inp.device)
@@ -451,12 +565,7 @@ def test_ccol_indices_copy_out_uncoalesced(dtype):
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
 
 
-@pytest.mark.ccol_indices_copy
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_ccol_indices_copy_nan_inf_values(dtype):
-    # nan / +-inf stored values must not perturb the returned ccol copy:
-    # ccol_indices_copy reads only the compressed-index storage, so the copy
-    # must still be bit-exact even when the values contain non-finite entries.
+def _nan_inf_csc(dtype):
     shape = (3, 4)
     ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor(
@@ -467,7 +576,16 @@ def test_ccol_indices_copy_nan_inf_values(dtype):
         dtype=dtype,
         device=flag_gems.device,
     )
-    inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
+    return torch.sparse_csc_tensor(ccol, rows, values, shape)
+
+
+@pytest.mark.ccol_indices_copy
+@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+def test_ccol_indices_copy_nan_inf_values(dtype):
+    # nan / +-inf stored values must not perturb the returned ccol copy:
+    # ccol_indices_copy reads only the compressed-index storage, so the copy
+    # must still be bit-exact even when the values contain non-finite entries.
+    inp = _nan_inf_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
@@ -479,17 +597,7 @@ def test_ccol_indices_copy_nan_inf_values(dtype):
 @pytest.mark.ccol_indices_copy_out
 @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
 def test_ccol_indices_copy_out_nan_inf_values(dtype):
-    shape = (3, 4)
-    ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
-    rows = torch.tensor(
-        [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
-    )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
+    inp = _nan_inf_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     ref_out = torch.empty(5, dtype=torch.long, device=ref_inp.device)
@@ -500,6 +608,11 @@ def test_ccol_indices_copy_out_nan_inf_values(dtype):
     assert res_ret is out
     assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
+
+
+# ---------------------------------------------------------------------------
+# Negative cases
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.ccol_indices_copy
@@ -532,9 +645,7 @@ def test_ccol_indices_copy_negative_csr():
 @pytest.mark.ccol_indices_copy
 def test_ccol_indices_copy_negative_coo():
     # Sparse (COO) is a distinct backend key from SparseCsr (CSC); ccol_indices
-    # has no Sparse implementation and must reject COO tensors. The reference
-    # primary raises NotImplementedError, and the native-body fallback
-    # (ccol_indices) raises RuntimeError, so both are covered here.
+    # has no Sparse implementation and must reject COO tensors.
     indices = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
     values = torch.randn(2, dtype=torch.float32)
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
@@ -546,8 +657,7 @@ def test_ccol_indices_copy_negative_coo():
 
 @pytest.mark.ccol_indices_copy_out
 def test_ccol_indices_copy_out_negative_dense():
-    # The .out variant is equally column-compressed-sparse-only: a dense tensor
-    # has no compressed column index storage and must be rejected.
+    # The .out variant is equally column-compressed-sparse-only.
     inp = torch.randn(3, 4, dtype=torch.float32, device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     with pytest.raises((RuntimeError, TypeError)):
@@ -558,8 +668,6 @@ def test_ccol_indices_copy_out_negative_dense():
 
 @pytest.mark.ccol_indices_copy_out
 def test_ccol_indices_copy_out_negative_csr():
-    # The .out variant is equally column-compressed-sparse-only: a CSR tensor
-    # is rejected.
     crow = torch.tensor([0, 2, 3], dtype=torch.long)
     cols = torch.tensor([0, 1, 2], dtype=torch.long)
     values = torch.randn(3, dtype=torch.float32)
@@ -573,9 +681,6 @@ def test_ccol_indices_copy_out_negative_csr():
 
 @pytest.mark.ccol_indices_copy_out
 def test_ccol_indices_copy_out_negative_coo():
-    # The .out variant is equally column-compressed-sparse-only: a COO tensor
-    # is rejected (the reference primary raises NotImplementedError, and the
-    # native-body fallback raises RuntimeError).
     indices = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
     values = torch.randn(2, dtype=torch.float32)
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
@@ -589,8 +694,7 @@ def test_ccol_indices_copy_out_negative_coo():
 @pytest.mark.ccol_indices_copy_out
 def test_ccol_indices_copy_out_negative_wrong_dtype():
     # The .out contract materializes int64 entries into out; an out tensor of a
-    # different dtype must be rejected (ATen raises RuntimeError, and the
-    # manual fallback enforces the same contract up front).
+    # different dtype must be rejected.
     inp = _make_input("csc", (5, 4), 6, None, torch.float32)
     ref_inp = utils.to_reference(inp.clone())
     out = torch.empty(5, dtype=torch.float32, device=inp.device)

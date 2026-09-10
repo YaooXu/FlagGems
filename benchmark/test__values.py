@@ -18,7 +18,7 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # ``_values`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register it directly
@@ -32,22 +32,27 @@ setattr(
 
 # (sparse_shape, dense_shape, nnz). _values returns the (nnz,) + dense_shape
 # values tensor of a sparse COO tensor — a metadata accessor whose result is an
-# alias of the input's internal values storage. Its cost is proportional to the
-# size of the returned values tensor (nnz * prod(dense_shape)), so benchmark a
-# spread of sparse ranks, dense ranks and nnz values. The device-side
-# allocation stays small relative to the logical size because only nnz entries
-# are stored.
+# alias of the input's internal values storage, so its cost is proportional to
+# the size of the returned values tensor (nnz * prod(dense_shape)) and is
+# independent of the logical (sparse) extent. Benchmark a spread of sparse
+# ranks, dense ranks and nnz values. nnz * prod(dense_shape) is capped at ~8.4M
+# elements so the float32/float16/bfloat16 inputs stay small on device (the
+# sparse tensor only stores nnz entries, so the logical size can be much
+# larger).
 _VALUES_SHAPES = [
     ((1024, 1024), (), 65536),
     ((1024, 1024), (), 1048576),
     ((1024, 1024), (16,), 262144),
     ((256, 256, 256), (), 1048576),
     ((128, 128, 128, 128), (8,), 1048576),
-    ((4096, 4096), (64,), 1048576),
+    ((4096, 4096), (4,), 1048576),
 ]
 
 
 def _case_fn(shape, dtype):
+    # One BenchmarkCasePlan per (sparse_shape, dense_shape, nnz) triple; the
+    # plan carries the builder args so build_inputs_fn materializes the sparse
+    # input lazily for the selected dtype.
     del dtype
     sparse_shape, dense_shape, nnz = shape
     yield base.BenchmarkCasePlan(
@@ -65,8 +70,7 @@ def _build_inputs_fn(plan, dtype, device):
             for dim in sparse_shape
         ]
     )
-    values_shape = (nnz,) + tuple(dense_shape)
-    values = torch.randn(values_shape, dtype=dtype, device=device)
+    values = utils.generate_tensor_input((nnz,) + tuple(dense_shape), dtype, device)
     size = tuple(sparse_shape) + tuple(dense_shape)
     inp = torch.sparse_coo_tensor(indices, values, size, device=device)
     return inp, {}

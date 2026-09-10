@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# SPDX-License-Identifier: Apache-2.0
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -36,7 +37,8 @@ for _name in ("_empty_affine_quantized", "_empty_affine_quantized_out"):
 # dispatch + storage-construction overhead rather than memory bandwidth. The
 # default shape set contains a 1-B-element 1-D tensor whose cost would be
 # dominated by input allocation; use allocation-friendly shapes that still
-# exercise a realistic range of ranks.
+# exercise a realistic range of ranks (1-D through 4-D, including the canonical
+# (1024, 1024) and (20, 320, 15) shapes from the shared constants).
 EMPTY_AFFINE_QUANTIZED_SHAPES = [
     (1024,),
     (64, 64),
@@ -51,11 +53,14 @@ EMPTY_AFFINE_QUANTIZED_SHAPES = [
 # addition to the fill/construction work.
 QUANT_DTYPES = [torch.quint8, torch.qint8, torch.qint32]
 
+# Representative per-tensor affine qparams (a positive float scale and a small
+# integer zero_point), matching the values used by the correctness tests.
 SCALE = 0.1
 ZERO_POINT = 0
 
 
 def _case_fn(shape, dtype):
+    # The case list is orthogonal to dtype: one case per shape.
     del dtype
     yield base.BenchmarkCasePlan(
         shape={"size": shape},
@@ -65,6 +70,8 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
+    # size is the only positional argument; dtype/scale/zero_point/device are
+    # keyword-only on the aten factory, so they must travel through kwargs.
     shape = plan.builder_args[0]
     return shape, {
         "dtype": dtype,
@@ -75,6 +82,9 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 def _build_inputs_fn_out(plan, dtype, device):
+    # The .out variant writes into (and returns) the provided buffer without
+    # changing its dtype, so the buffer is created with the benchmarked
+    # quantized dtype.
     shape = plan.builder_args[0]
     out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=device, scale=1.0, zero_point=0
@@ -105,6 +115,9 @@ def test__empty_affine_quantized():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._empty_affine_quantized,
+        # The candidate defaults to the process-local KernelGen override and is
+        # resolved inside Benchmark.run() via resolve_gems_op; None is the
+        # fallback until flag_gems registers the operator.
         gems_op=getattr(flag_gems, "_empty_affine_quantized", None),
         dtypes=QUANT_DTYPES,
     )
@@ -114,7 +127,7 @@ def test__empty_affine_quantized():
 @pytest.mark._empty_affine_quantized_out
 def test__empty_affine_quantized_out():
     bench = EmptyAffineQuantizedBenchmark(
-        op_name="_empty_affine_quantized.out",
+        op_name="_empty_affine_quantized_out",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._empty_affine_quantized.out,

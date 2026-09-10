@@ -20,36 +20,127 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::dstack(Tensor[] tensors) -> Tensor views every input as 3-D (atleast_3d:
-# 0-dim -> (1, 1, 1), 1-dim -> (1, N, 1), 2-dim -> (M, N, 1), ndim >= 3 kept
-# as-is) and concatenates the resulting tensors along the new depth axis
-# (dim 2). All dims except dim 2 must match; the depth dim may vary per input.
-# It is a pure data-movement op (no arithmetic), so the values round-trip
-# bit-for-bit and every storage dtype aten supports is covered (float incl.
-# float64 when available, int, bool and complex), with nan/inf/-inf/+-0.0
-# passing through unchanged.
+# aten::dstack(Tensor[] tensors) -> Tensor views every input as 3-D
+# (atleast_3d: 0-dim -> (1,1,1), 1-dim -> (1,N,1), 2-dim -> (M,N,1), ndim >= 3
+# kept as-is) and concatenates the results along the new depth axis (dim 2).
+# Every dim except dim 2 must match across inputs; the depth dim may vary per
+# input. It is a pure data-movement op (no arithmetic), so stored values
+# round-trip unchanged for every storage dtype aten supports (int8/uint8/fp8/
+# fp16/bf16/fp32/fp64/int16/int32/int64/bool/complex), with nan/inf/-inf/+-0.0
+# passing through untouched.
 #
-# Coverage follows the regular-operator spec adapted to a data-movement op:
-#   * shape levels: dedicated depth-axis shape sets merged with the shared
-#     tu.selected_shapes() levels (quick/all) as self-pairs, bounded so a
-#     single input stays <= 1M elements (the output is ~2x the input size);
-#   * value ranges: tu.selected_ranges() over small representative shape sets
-#     for every supported dtype (the values must round-trip exactly through
-#     the depth-axis placement);
-#   * edge cases: empty tensors, nan/inf/+-0.0 passthrough, complex inputs,
-#     and the .out overload with its alias semantics;
-#   * backward: autograd.grad() against the analytic slice-back gradient;
-#   * negative: empty TensorList, mismatched non-depth dims, and non-tensor
-#     list elements raise on both paths.
-_FLOAT_DTYPES = set(utils.ALL_FLOAT_DTYPES)
-DSTACK_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+# Coverage follows the regular-operator test spec adapted to a Tensor[] op:
+#   * dtypes -- probed with tu.supported_dtypes; the default single-tensor probe
+#     does not apply because dstack takes a TensorList, so a custom probe builds
+#     a two-element list. int8/uint8/fp8 are hard requirements and are kept
+#     because the active backend supports them (fp8 is compared through the
+#     exact device-resident helper since torch.testing cannot compare float8 on
+#     CPU);
+#   * value ranges -- the full tu.selected_ranges() sweep ([-1,1], [0,1],
+#     [-1,0], [0,max], [min,0]); ranges an unsigned dtype cannot represent are
+#     dropped before generation (the old randn-only value test is migrated onto
+#     this framework);
+#   * shape levels -- dedicated depth-axis sets merged with the shared shape
+#     levels tu.selected_shapes() (quick/all via --quick) as self-pairs,
+#     bounded so one input stays <= 2**20 elements (the output is ~n_inputs x
+#     the input) and every rank 0..5 is represented;
+#   * broadcast -- N/A: dstack has no broadcast dimension, all non-depth dims
+#     must match, so the broadcast dimension is skipped;
+#   * backward -- autograd.grad() against the analytic slice-back gradient
+#     (grad_i is grad_out's slice for input i reshaped to the input shape);
+#   * edge cases -- empty tensors, nan/inf/+-0.0 passthrough, complex inputs;
+#   * negative -- empty TensorList, mismatched non-depth dims and non-tensor
+#     list elements raise on both the reference and the candidate path;
+#   * the .out overload is probed invocable on the active backend and is tested
+#     with alias (write-into-and-return-out) semantics.
+#
+# The candidate is resolved through flag_gems.testing.resolve_gems_op(...)
+# inside each test (never at import time) so the process-local override
+# installed by KernelGen wins. When neither an override nor a native
+# implementation is registered yet, the tests fall back to the PyTorch
+# reference so the file stays runnable standalone.
+
+_FP8_DTYPES = frozenset(
+    dtype
+    for dtype in (
+        getattr(torch, "float8_e4m3fn", None),
+        getattr(torch, "float8_e5m2", None),
+        getattr(torch, "float8_e4m3fnuz", None),
+        getattr(torch, "float8_e5m2fnuz", None),
+    )
+    if dtype is not None
+)
+
+# Unsigned integers cannot represent the negative-only spec ranges, so those
+# combinations are dropped before they are fed to the generator.
+_UNSIGNED_DTYPES = frozenset({torch.uint8})
+
+# The spec's required dtype list first (int8 / uint8 / fp8 are hard
+# requirements when the backend supports them), then the shared float/int/bool
+# sets. The probe below removes anything the active backend cannot handle.
+_DTYPE_CANDIDATES = []
+for _dtype in (
+    list(tu.REQUIRED_DTYPES)
+    + list(utils.ALL_FLOAT_DTYPES)
+    + list(utils.ALL_INT_DTYPES)
+    + list(utils.BOOL_TYPES)
+    + list(utils.COMPLEX_DTYPES)
+):
+    if _dtype not in _DTYPE_CANDIDATES:
+        _DTYPE_CANDIDATES.append(_dtype)
+
+
+def _probe_dstack(operator, dtype):
+    """Backend-support probe for the Tensor[] op.
+
+    The shared default probe passes a single tensor, but dstack requires a
+    TensorList, so build a two-element list and compare the result dtype. Any
+    exception means the active backend cannot run dstack for that dtype.
+    """
+    del operator
+    try:
+        x = tu.make_input(dtype, (4,), ["0", "1"])
+        out = torch.ops.aten.dstack([x, x])
+    except Exception:
+        return False
+    return out.dtype == dtype
+
+
+DSTACK_DTYPES = tu.supported_dtypes(
+    "dstack", candidates=_DTYPE_CANDIDATES, probe=_probe_dstack
+)
+if not DSTACK_DTYPES:
+    # Never collect zero cases: fall back to the shared storage dtype sets.
+    DSTACK_DTYPES = (
+        list(utils.ALL_FLOAT_DTYPES)
+        + list(utils.ALL_INT_DTYPES)
+        + list(utils.BOOL_TYPES)
+    )
+
+# Complex dtypes are covered as their own case (make_tensor fills the real and
+# imaginary parts); they are probed separately for the same reason as above.
+DSTACK_COMPLEX_DTYPES = [
+    dtype for dtype in utils.COMPLEX_DTYPES if _probe_dstack("dstack", dtype)
+]
+if not DSTACK_COMPLEX_DTYPES:
+    DSTACK_COMPLEX_DTYPES = list(utils.COMPLEX_DTYPES)
+
+_MAIN_RANGE = ["-1", "1"]
+
+
+def _numel(shape):
+    n = 1
+    for dim in shape:
+        n *= dim
+    return n
+
 
 # Dedicated depth-axis shape sets. dstack views each input as 3-D and
 # concatenates along dim 2, so every dim except dim 2 must match while the
-# depth dim may vary freely: 1-D -> (1, N, 1), 2-D -> (M, N, 1), 3-D with
-# equal/varying depth, a 4-D self-pair, and (in the "all" level) a 5-D case
-# whose dim-2 sizes differ (64/96/32) to exercise the "all dims except dim 2
-# must match" rule.
+# depth dim may vary freely: 1-D -> (1,N,1), 2-D -> (M,N,1), 3-D with
+# equal/varying depth, a 4-D self-pair, and (in "all") a 5-D case whose dim-2
+# sizes differ (64/96/32) to exercise the "all dims except dim 2 must match"
+# rule.
 if tu.LEVEL == "quick":
     _DSTACK_EXTRA_SHAPE_SETS = [
         [(3,), (3,)],
@@ -65,7 +156,7 @@ if tu.LEVEL == "quick":
         [(3,), (3,)],
         [(8, 16, 32), (8, 16, 48)],
     ]
-elif tu.LEVEL == "all":
+else:  # "all"
     _DSTACK_EXTRA_SHAPE_SETS = [
         [(3,), (3,)],
         [(3, 33), (3, 33)],
@@ -73,23 +164,18 @@ elif tu.LEVEL == "all":
         [(8, 8, 16, 16), (8, 8, 16, 16)],
         [(13, 3, 64, 5, 2), (13, 3, 96, 5, 2), (13, 3, 32, 5, 2)],
     ]
-else:  # core
-    _DSTACK_EXTRA_SHAPE_SETS = [
-        [(3,), (3,)],
-        [(3, 33), (3, 33)],
-        [(16, 16, 333), (16, 16, 333), (16, 16, 333)],
-        [(8, 8, 16, 16), (8, 8, 16, 16)],
-    ]
-
-# Small shape sets for the full value-range sweep (scalar, 1-D, 2-D, and 3-D
-# with equal and varying depth).
-if tu.LEVEL != "quick":
     _DSTACK_RANGE_SHAPE_SETS = [
         [(), ()],
         [(3,), (3,)],
         [(4, 5), (4, 5)],
         [(4, 5, 6), (4, 5, 6)],
         [(4, 5, 6), (4, 5, 7)],
+    ]
+    _DSTACK_OUT_SHAPE_SETS = [
+        [(3,), (3,)],
+        [(4, 5), (4, 5)],
+        [(8, 16, 32), (8, 16, 48)],
+        [(8, 8, 16, 16), (8, 8, 16, 16)],
     ]
 
 # Empty-tensor shape sets: 1-D, 2-D and 3-D tensors with a zero-size dim.
@@ -106,31 +192,14 @@ _DSTACK_BACKWARD_SHAPE_SETS = [
     [(4, 5, 6), (4, 5, 7)],
 ]
 
-# The .out overload runs a representative subset of the shape sets.
-if tu.LEVEL != "quick":
-    _DSTACK_OUT_SHAPE_SETS = [
-        [(3,), (3,)],
-        [(4, 5), (4, 5)],
-        [(8, 16, 32), (8, 16, 48)],
-        [(8, 8, 16, 16), (8, 8, 16, 16)],
-    ]
-
-
-def _numel(shape):
-    n = 1
-    for dim in shape:
-        n *= dim
-    return n
-
 
 def _dstack_shape_sets():
     """Shape-list levels for the main sweep.
 
-    The dedicated depth-axis sets above are merged with the shared shape levels
-    (tu.selected_shapes(), quick/all) as self-pairs. Each pair keeps every
-    dim except dim 2 identical so the depth-axis concatenation is exercised;
-    self-pairs whose single input would exceed 1M elements are skipped because
-    the output is ~2x the input size.
+    The dedicated depth-axis sets are merged with the shared shape levels
+    (tu.selected_shapes(), quick/all) as self-pairs. Self-pairs whose single
+    input would exceed 2**20 elements are skipped because the output is
+    ~n_inputs x the input size.
     """
     shape_sets = list(_DSTACK_EXTRA_SHAPE_SETS)
     for shape in tu.selected_shapes():
@@ -143,39 +212,69 @@ def _dstack_shape_sets():
 
 
 def _dstack_depth(shape):
-    """Number of depth slices an input of ``shape`` occupies after atleast_3d
-    (its dim 2; 0-dim/1-dim/2-dim inputs get depth 1)."""
+    """Depth (dim-2 extent) an input of ``shape`` occupies after atleast_3d;
+    0-dim/1-dim/2-dim inputs get depth 1, ndim >= 3 inputs keep their dim 2."""
     return utils.unsqueeze_tuple(shape, 3)[2]
 
 
-def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.dstack callable, (3) None -> the
-    # test falls back to the PyTorch reference so it stays runnable before a
-    # FlagGems implementation is registered.
+def _range_valid(dtype, value_range):
+    """False for spec ranges an unsigned dtype cannot represent."""
+    if dtype not in _UNSIGNED_DTYPES:
+        return True
+    low = tu.resolve_bound(value_range[0], dtype)
+    high = tu.resolve_bound(value_range[1], dtype)
+    return low >= 0 and high >= 0
+
+
+def _preferred_range(dtype):
+    """A non-degenerate range the dtype can represent (uint8 -> [0,1])."""
+    if _range_valid(dtype, _MAIN_RANGE):
+        return _MAIN_RANGE
+    return ["0", "1"]
+
+
+_DTYPE_RANGE_PAIRS = [
+    (dtype, value_range)
+    for dtype in DSTACK_DTYPES
+    for value_range in tu.selected_ranges()
+    if _range_valid(dtype, value_range)
+]
+
+
+def _resolve_named_gems_op(name):
+    """Resolve one operator/overload name through resolve_gems_op.
+
+    Resolution order: (1) the process-local override installed by KernelGen,
+    (2) the direct flag_gems callable for that name, (3) None -> the caller
+    falls back to the PyTorch reference so the file is runnable standalone.
+    """
+    default = getattr(flag_gems, name.replace(".", "_"), None)
+    if default is None:
+        default = getattr(flag_gems, name, None)
     try:
-        return flag_gems.testing.resolve_gems_op(
-            "dstack", getattr(flag_gems, "dstack", None)
-        )
+        return flag_gems.testing.resolve_gems_op(name, default)
     except LookupError:
         return None
+
+
+def _resolve_gems_op():
+    return _resolve_named_gems_op("dstack")
 
 
 def _resolve_gems_op_out():
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "dstack.out", getattr(flag_gems, "dstack_out", None)
-        )
-    except LookupError:
-        return None
+    # The harness may register the out overload as "dstack.out" or
+    # "dstack_out"; try both and fall back to the reference when neither
+    # exists (the main "dstack" callable is deliberately not reused here).
+    for name in ("dstack.out", "dstack_out"):
+        op = _resolve_named_gems_op(name)
+        if op is not None:
+            return op
+    return None
 
 
 def _apply_dstack(inp):
     gems_op = _resolve_gems_op()
     if gems_op is None:
-        # No candidate injected and no native implementation registered yet:
-        # run the reference so the test remains runnable standalone.
         return torch.ops.aten.dstack(inp)
     return gems_op(inp)
 
@@ -187,27 +286,32 @@ def _apply_dstack_out(inp, out):
     return gems_op(inp, out=out)
 
 
+def _assert_values(res_out, ref_out, dtype):
+    """Compare values: fp8 through the exact device helper (torch.testing has
+    no CPU fp8 comparison; float8 values are exact in float32), everything else
+    through the tolerance-aware value-range helper (exact for int/bool)."""
+    if dtype in _FP8_DTYPES:
+        utils.gems_assert_equal(res_out.to(torch.float32), ref_out.to(torch.float32))
+    else:
+        tu.assert_result_close(res_out, ref_out)
+
+
 def _assert_dstack_output(res_out, ref_out, dtype):
     # dstack materializes a new contiguous tensor (never an aliasing view).
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.is_contiguous()
     assert not res_out._is_view()
-    if dtype in _FLOAT_DTYPES:
-        utils.gems_assert_close(res_out, ref_out, dtype)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
+    _assert_values(res_out, ref_out, dtype)
 
 
 @pytest.mark.dstack
 @pytest.mark.parametrize("shape_set", _dstack_shape_sets())
 @pytest.mark.parametrize("dtype", DSTACK_DTYPES)
 def test_dstack(shape_set, dtype):
-    # Shape levels x every supported dtype, with values drawn from the default
-    # [-1, 1] range (negative and positive for each dtype). 0-dim scalars,
-    # 1-D, 2-D, 3-D (equal and varying depth), 4-D and (in the "all" level)
-    # 5-D to 8-D self-pairs are all covered.
-    inp = [tu.make_input(dtype, s, ["-1", "1"]) for s in shape_set]
+    # Shape levels x every supported dtype, with values from a non-degenerate
+    # range (negative and positive for signed dtypes, [0,1] for uint8).
+    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
@@ -218,13 +322,11 @@ def test_dstack(shape_set, dtype):
 
 @pytest.mark.dstack
 @pytest.mark.parametrize("shape_set", _DSTACK_RANGE_SHAPE_SETS)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", DSTACK_DTYPES)
-def test_dstack_value_ranges(shape_set, value_range, dtype):
+@pytest.mark.parametrize("dtype, value_range", _DTYPE_RANGE_PAIRS)
+def test_dstack_value_ranges(shape_set, dtype, value_range):
     # The op never transforms the stored values, so the full spec range sweep
-    # (including 0/max/min and the degenerate constant ranges) must round-trip
-    # exactly through the depth-axis placement. bool ignores the range; the
-    # int/bool compare is exact and the float compare uses equal_nan=True.
+    # (0/max/min and the degenerate constant ranges included) must round-trip
+    # exactly through the depth-axis placement.
     inp = [tu.make_input(dtype, s, value_range) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
@@ -233,7 +335,7 @@ def test_dstack_value_ranges(shape_set, value_range, dtype):
 
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
-    tu.assert_result_close(res_out, ref_out)
+    _assert_values(res_out, ref_out, dtype)
 
 
 @pytest.mark.dstack_out
@@ -242,7 +344,7 @@ def test_dstack_value_ranges(shape_set, value_range, dtype):
 def test_dstack_out(shape_set, dtype):
     # The .out overload must write into the provided out tensor and return it
     # (alias semantics), matching the aten reference bit-for-bit.
-    inp = [tu.make_input(dtype, s, ["-1", "1"]) for s in shape_set]
+    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_shape = torch.ops.aten.dstack(ref_inp).shape
@@ -257,12 +359,8 @@ def test_dstack_out(shape_set, dtype):
     assert ref_ret.data_ptr() == ref_out.data_ptr()
     assert res_ret.shape == ref_ret.shape
     assert res_ret.dtype == ref_ret.dtype
-    if dtype in _FLOAT_DTYPES:
-        utils.gems_assert_close(res_ret, ref_ret, dtype)
-        utils.gems_assert_close(out, ref_out, dtype)
-    else:
-        utils.gems_assert_equal(res_ret, ref_ret)
-        utils.gems_assert_equal(out, ref_out)
+    _assert_values(res_ret, ref_ret, dtype)
+    _assert_values(out, ref_out, dtype)
 
 
 @pytest.mark.dstack
@@ -271,7 +369,7 @@ def test_dstack_out(shape_set, dtype):
 def test_dstack_empty_inputs(shape_set, dtype):
     # Zero-sized tensors: 1-D (0,), 2-D (2, 0) and 3-D (0, 3, 4) all produce
     # valid (possibly empty) depth-axis concatenations.
-    inp = [tu.make_input(dtype, s, ["-1", "1"]) for s in shape_set]
+    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
@@ -304,24 +402,21 @@ def test_dstack_nan_inf(dtype):
 
 
 @pytest.mark.dstack
-@pytest.mark.parametrize("dtype", utils.COMPLEX_DTYPES)
+@pytest.mark.parametrize("dtype", DSTACK_COMPLEX_DTYPES)
 def test_dstack_complex(dtype):
     # dstack also supports complex tensors (a pure data-movement op: real and
     # imaginary parts round-trip untouched). One negative-and-positive range
     # per dtype suffices because no arithmetic is performed.
     inp = [
-        tu.make_input(dtype, (4, 5, 6), ["-1", "1"]),
-        tu.make_input(dtype, (4, 5, 7), ["-1", "1"]),
+        tu.make_input(dtype, (4, 5, 6), _MAIN_RANGE),
+        tu.make_input(dtype, (4, 5, 7), _MAIN_RANGE),
     ]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    assert res_out.is_contiguous()
-    tu.assert_result_close(res_out, ref_out)
+    _assert_dstack_output(res_out, ref_out, dtype)
 
 
 @pytest.mark.dstack_backward
@@ -331,26 +426,24 @@ def test_dstack_backward(shape_set, dtype):
     # dstack = atleast_3d(each input) + cat along dim 2, so grad_i is the slice
     # of grad_out owned by input i, reshaped back to the input's shape (a pure
     # gather, no arithmetic). Validate the autograd reference against that
-    # analytic value, then check the candidate forward output and - only when
-    # the candidate output is differentiable - its gradient against the
-    # reference gradient.
-    inp = [tu.make_input(dtype, s, ["-1", "1"]).requires_grad_() for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    # analytic value, then check the candidate forward and - only when the
+    # candidate output is differentiable - its gradient against the reference.
+    inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
+    ref_inp = [utils.to_reference(t.detach().clone()).requires_grad_() for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
-    grad = tu.make_input(dtype, ref_out.shape, ["-1", "1"])
+    grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)
     ref_grad = utils.to_reference(grad)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    if dtype in (torch.float32, torch.float64):
-        offset = 0
-        for t, g in zip(ref_inp, ref_in_grads):
-            depth = _dstack_depth(t.shape)
-            expected = torch.ops.aten.slice(
-                ref_grad, 2, offset, offset + depth
-            ).reshape(t.shape)
-            tu.assert_result_close(g, expected)
-            offset += depth
+    offset = 0
+    for t, g in zip(ref_inp, ref_in_grads):
+        depth = _dstack_depth(t.shape)
+        expected = torch.ops.aten.slice(ref_grad, 2, offset, offset + depth).reshape(
+            t.shape
+        )
+        tu.assert_result_close(g, expected)
+        offset += depth
 
     res_out = _apply_dstack(inp)
     tu.assert_result_close(res_out, ref_out)
@@ -378,15 +471,15 @@ def test_dstack_empty_list():
 @pytest.mark.parametrize(
     "shape_set",
     [
-        [(2, 3), (4, 3)],  # dim 0 mismatch (2-D inputs: (2, 3, 1) vs (4, 3, 1))
-        [(3,), (2, 3)],  # 1-D (1, 3, 1) vs 2-D (2, 3, 1): dim 0 mismatch
+        [(2, 3), (4, 3)],  # dim 0 mismatch: (2,3,1) vs (4,3,1)
+        [(3,), (2, 3)],  # 1-D (1,3,1) vs 2-D (2,3,1): dim 0 mismatch
         [(4, 5, 6), (4, 7, 6)],  # dim 1 mismatch
     ],
 )
 def test_dstack_mismatched_shapes(shape_set):
     # All dims except dim 2 must match after the atleast_3d view; mismatched
     # non-depth dims must raise on both paths.
-    inp = [tu.make_input(torch.float32, s, ["-1", "1"]) for s in shape_set]
+    inp = [tu.make_input(torch.float32, s, _MAIN_RANGE) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     with pytest.raises(RuntimeError):

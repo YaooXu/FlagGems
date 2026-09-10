@@ -100,9 +100,10 @@ class SparseResizeAndClearBenchmark(base.GenericBenchmark):
     # sparse_resize_and_clear_ reshapes and clears a sparse COO tensor; the
     # dense default shapes in core_shapes.yaml do not apply, so benchmark
     # dedicated (logical_src_shape, sparse_dim, dense_dim, nnz, dst_size,
-    # dst_sparse_dim, dst_dense_dim) tuples instead. Each timed iteration calls
-    # op(inp, size=..., sparse_dim=..., dense_dim=...) on the same mutated
-    # input; because every call clears nnz back to 0 the timing stays stable.
+    # dst_sparse_dim, dst_dense_dim) tuples instead. The op is in-place: every
+    # timed call rewrites the metadata and clears the (already empty) storage,
+    # so the two-phase case/input builder is used with an explicit
+    # build_inputs_fn.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _SPARSE_RESIZE_AND_CLEAR_CASES
 

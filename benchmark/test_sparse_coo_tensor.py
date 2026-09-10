@@ -19,8 +19,7 @@ import flag_gems
 
 from . import base, consts, utils
 
-# aten::sparse_coo_tensor (the overload group shared by the size-only, the
-# size-inferred ``indices`` and the explicit ``indices_size`` schemas) builds a
+# aten::sparse_coo_tensor (the explicit ``indices_size`` overload) builds a
 # sparse COO tensor from raw (indices, values, size) components. Construction
 # work scales with the stored nnz and the number of sparse dims, not with the
 # dense logical size, so each case pairs a large logical tensor shape with a
@@ -30,10 +29,9 @@ from . import base, consts, utils
 _BENCH_SHAPES = [
     ((4096, 4096), 10000),
     ((4096, 4096), 100000),
-    ((1024, 8192), 100000),
-    ((8192, 1024), 100000),
-    ((4096, 4096), 1000000),
-    ((2048, 2048, 64), 100000),
+    ((1024, 8192), 50000),
+    ((8192, 1024), 50000),
+    ((2048, 2048, 64), 20000),
 ]
 
 
@@ -81,6 +79,9 @@ class SparseCooTensorBenchmark(base.GenericBenchmark):
     def set_shapes(self, shape_file_path=None):
         self.shapes = _BENCH_SHAPES
 
+    def set_more_shapes(self):
+        return []
+
 
 @pytest.mark.sparse_coo_tensor
 def test_sparse_coo_tensor():
@@ -89,6 +90,9 @@ def test_sparse_coo_tensor():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.sparse_coo_tensor,
+        # KernelGen injects the candidate via testing.override_gems_op(); the
+        # direct module callable may not exist until the op is merged, in which
+        # case the benchmark falls back to the dispatcher reference.
         gems_op=getattr(flag_gems, "sparse_coo_tensor", None),
         dtypes=consts.FLOAT_DTYPES,
     )

@@ -24,8 +24,8 @@ from .conftest import QUICK_MODE
 
 # ``_slow_conv2d_forward`` starts with an underscore, and ``pytest.mark`` refuses
 # to generate a marker via attribute access for such names. Register the marker
-# directly on the MarkGenerator so ``@pytest.mark._slow_conv2d_forward`` and ``-m
-# _slow_conv2d_forward`` both work.
+# directly on the MarkGenerator so ``@pytest.mark._slow_conv2d_forward`` and
+# ``-m _slow_conv2d_forward`` both work.
 setattr(
     pytest.mark,
     "_slow_conv2d_forward",
@@ -44,7 +44,7 @@ setattr(
 # The .default overload is resolved through its public name "_slow_conv2d_forward"
 # (KernelGen's override_gems_op("_slow_conv2d_forward", ...) wins over the direct
 # callable); the .output overload is resolved through "_slow_conv2d_forward.output"
-# whose default implementation is the adapter below.
+# whose fallback implementation is the adapter below.
 #
 # Coverage follows the regular-operator spec adapted to a matrix/reduction-like
 # op:
@@ -53,6 +53,10 @@ setattr(
 #     shared tu.selected_shapes() set is pointwise-shaped and does not apply to
 #     a conv whose input must be 4-D); they cover 1x1/3x3/3x5/5x5 kernels,
 #     stride 1 and 2, padding 0/1/2, small outputs and channel counts up to 32;
+#   * dtype coverage: the op is probed (see UNSUPPORTED_DTYPES) and only the
+#     floating dtypes the CUDA/CPU kernel actually implements are exercised -
+#     fp16/fp32/bf16/fp64; int8/uint8/fp8/int32/int64/bool all raise
+#     "slow_conv2d_*" not implemented and are covered as negative cases;
 #   * value ranges: tu.make_input over the spec's ranges, adapted so the
 #     multiply-accumulate never overflows (the [0, max]/[min, 0] extremes are
 #     dropped; see _CONV_VALUE_RANGES);
@@ -61,8 +65,8 @@ setattr(
 #   * backward: the op is differentiable (aten routes to _slow_conv2d_backward),
 #     so gradients are compared against the fp64 upcast reference, including
 #     the candidate path when the kernel advertises autograd support;
-#   * negative: kernel_size mismatch, C_in mismatch, non-4-D input, int/bool
-#     dtype and non-tuple scalar params all raise;
+#   * negative: kernel_size mismatch, kernel larger than input, C_in mismatch,
+#     non-4-D input, unsupported dtype and non-tuple scalar params all raise;
 #   * nan/inf: deterministic propagation through the im2col GEMM.
 if QUICK_MODE:
     SLOW_CONV2D_CASES = [
@@ -83,6 +87,21 @@ else:
     ]
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
+
+# Dtypes probed against the real aten kernel: none of them are implemented
+# ("slow_conv2d_cuda"/"slow_conv2d_cpu" not implemented for ...), so they are
+# excluded from the positive grid and asserted as negative cases instead. This
+# is what the spec's "probe before you write" rule requires (the required
+# int8/uint8/fp8 coverage applies only when the kernel supports them).
+UNSUPPORTED_DTYPES = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.int32,
+    torch.int64,
+    torch.bool,
+]
 
 # The value-range sweep reuses tu.selected_ranges() (the spec ranges resolved
 # per-dtype by tu.make_input) but drops the extreme ranges: a conv contracts
@@ -121,10 +140,11 @@ def _resolve_gems_op():
 def _slow_conv2d_forward_out_adapter(
     self, weight, kernel_size, bias, stride, padding, *, output
 ):
-    # Default implementation of the ".output" overload: run the direct forward
-    # kernel and copy the result into the caller's out buffer. KernelGen's
-    # override of "_slow_conv2d_forward.output" replaces this adapter with a
-    # real out-kernel.
+    # Fallback implementation of the ".output" overload used when no candidate
+    # override is installed: run the direct forward kernel and write the result
+    # into the caller's out buffer. KernelGen's override of
+    # "_slow_conv2d_forward.output" replaces this adapter and is called directly
+    # with ``output=...`` by the test below.
     output.copy_(_resolve_gems_op()(self, weight, kernel_size, bias, stride, padding))
     return output
 
@@ -229,7 +249,7 @@ def test__slow_conv2d_forward(
 
 @pytest.mark._slow_conv2d_forward
 @pytest.mark.parametrize(
-    "inp_shape, weight_shape, kernel_size, stride, padding", SLOW_CONV2D_CASES[:2]
+    "inp_shape, weight_shape, kernel_size, stride, padding", SLOW_CONV2D_CASES
 )
 @pytest.mark.parametrize("value_range", _CONV_VALUE_RANGES)
 @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
@@ -237,8 +257,12 @@ def test__slow_conv2d_forward_value_ranges(
     inp_shape, weight_shape, kernel_size, stride, padding, value_range, dtype
 ):
     # The spec value-range sweep (tu.selected_ranges() minus the overflowing
-    # extremes) for every supported dtype. Bias is kept on so the value ranges
-    # also exercise the bias-add path.
+    # extremes) for every supported dtype and every local conv shape. Bias is
+    # kept on so the value ranges also exercise the bias-add path. The
+    # comparison reuses the dtype-aware _assert_close tolerance because a conv
+    # contracts over C_in*kH*kW terms (tu.assert_result_close's flat
+    # rtol=1e-2/atol=1e-3 is calibrated for pointwise ops and is too tight for
+    # fp16/bf16 on the larger reductions).
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -255,7 +279,7 @@ def test__slow_conv2d_forward_value_ranges(
 
     res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
 
-    tu.assert_result_close(res_out, ref_out)
+    _assert_close(res_out, ref_out, dtype)
 
 
 @pytest.mark._slow_conv2d_forward
@@ -367,16 +391,21 @@ def test__slow_conv2d_forward_nan_inf(dtype):
 
 
 @pytest.mark._slow_conv2d_forward
+@pytest.mark.parametrize(
+    "inp_shape, weight_shape, kernel_size, stride, padding", SLOW_CONV2D_CASES[:2]
+)
 @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
-def test__slow_conv2d_forward_out(dtype, bias):
+def test__slow_conv2d_forward_out(
+    inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
+):
     # The .output overload writes into the caller's buffer and returns the same
     # tensor object (alias semantics). The buffers are garbage-prefilled so the
-    # overload must overwrite them.
+    # overload must overwrite them. The real aten overload is callable on the
+    # active backend, so it is called directly on both paths.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
-    inp_shape, weight_shape, kernel_size, stride, padding = SLOW_CONV2D_CASES[0]
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -422,6 +451,25 @@ def test__slow_conv2d_forward_rejects_kernel_size_mismatch():
 
 
 @pytest.mark._slow_conv2d_forward
+def test__slow_conv2d_forward_rejects_kernel_larger_than_input():
+    # The padded input must be at least as large as the kernel in every spatial
+    # dimension; aten raises for a 3x3 kernel over a 2x2 input.
+    inp = tu.make_input(torch.float32, (1, 2, 2, 2), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._slow_conv2d_forward(
+            utils.to_reference(inp),
+            utils.to_reference(weight),
+            (3, 3),
+            None,
+            (1, 1),
+            (0, 0),
+        )
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(inp, weight, (3, 3), None, (1, 1), (0, 0))
+
+
+@pytest.mark._slow_conv2d_forward
 def test__slow_conv2d_forward_rejects_channel_mismatch():
     # Conv has no broadcast: C_in of the input must equal C_in of the weight.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
@@ -458,10 +506,12 @@ def test__slow_conv2d_forward_rejects_non_4d_input():
 
 
 @pytest.mark._slow_conv2d_forward
-def test__slow_conv2d_forward_rejects_non_float_dtype():
-    # slow_conv2d only supports floating point inputs (groups=1, im2col GEMM).
-    inp = tu.make_input(torch.int32, (1, 2, 5, 5), ["-1", "1"])
-    weight = tu.make_input(torch.int32, (1, 2, 3, 3), ["-1", "1"])
+@pytest.mark.parametrize("dtype", UNSUPPORTED_DTYPES)
+def test__slow_conv2d_forward_rejects_unsupported_dtype(dtype):
+    # int8/uint8/fp8/int32/int64/bool are not implemented by slow_conv2d; the
+    # aten kernel raises and any candidate must reject them as well.
+    inp = tu.make_input(dtype, (1, 2, 5, 5), ["0", "1"])
+    weight = tu.make_input(dtype, (1, 2, 3, 3), ["0", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
             utils.to_reference(inp),
@@ -483,17 +533,59 @@ def test__slow_conv2d_forward_rejects_scalar_params(scalar_param):
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     if scalar_param == "kernel_size":
-        kwargs = {"kernel_size": 3, "stride": (1, 1), "padding": (1, 1)}
         bad_kwargs = {"kernel_size": 3, "stride": (1, 1), "padding": (1, 1)}
     elif scalar_param == "stride":
-        kwargs = {"kernel_size": (3, 3), "stride": 1, "padding": (1, 1)}
         bad_kwargs = {"kernel_size": (3, 3), "stride": 1, "padding": (1, 1)}
     else:
-        kwargs = {"kernel_size": (3, 3), "stride": (1, 1), "padding": 1}
         bad_kwargs = {"kernel_size": (3, 3), "stride": (1, 1), "padding": 1}
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp), utils.to_reference(weight), **kwargs
+            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
+        )
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(inp, weight, **bad_kwargs)
+
+
+@pytest.mark._slow_conv2d_forward
+@pytest.mark.parametrize(
+    "bad_kwargs",
+    [
+        {"kernel_size": (3,), "stride": (1, 1), "padding": (1, 1)},
+        {"kernel_size": (3, 3), "stride": (1,), "padding": (1, 1)},
+        {"kernel_size": (3, 3), "stride": (1, 1), "padding": (1,)},
+    ],
+    ids=["kernel_size", "stride", "padding"],
+)
+def test__slow_conv2d_forward_rejects_wrong_length_params(bad_kwargs):
+    # The SymInt[2] params must have exactly two entries; a length-1 list is
+    # rejected by aten.
+    inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._slow_conv2d_forward(
+            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
+        )
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(inp, weight, **bad_kwargs)
+
+
+@pytest.mark._slow_conv2d_forward
+@pytest.mark.parametrize(
+    "bad_kwargs",
+    [
+        {"kernel_size": (3, 3), "stride": (0, 0), "padding": (1, 1)},
+        {"kernel_size": (3, 3), "stride": (1, 1), "padding": (-1, -1)},
+    ],
+    ids=["zero_stride", "negative_padding"],
+)
+def test__slow_conv2d_forward_rejects_invalid_params(bad_kwargs):
+    # stride must be positive and padding must be non-negative; aten raises for
+    # both. Input/weight are valid so only the parameter check can fire.
+    inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
+    weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._slow_conv2d_forward(
+            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, weight, **bad_kwargs)

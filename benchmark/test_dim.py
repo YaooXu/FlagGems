@@ -17,97 +17,105 @@ import torch
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # aten::dim(Tensor self) -> int reports the number of dimensions of a tensor:
 # ``len(self.size())`` for strided tensors and the full logical rank for sparse
 # COO/CSR layouts. It is a pure metadata query (the measured work is dispatch
 # and layout introspection, never data movement), but the candidate must accept
-# every layout the operator dispatches to, so the benchmark covers dense,
-# sparse COO and sparse CSR inputs below.
-#
-# Case descriptors:
-#   ("dense", shape)
-#   ("coo", sparse_shape, dense_shape, nnz)
-#   ("csr", shape, rows, cols, nnz)
-_BENCH_CASES = [
-    ("dense", (1024, 1024)),
-    ("dense", (4096, 4096)),
-    ("dense", (64, 512, 512)),
-    ("dense", (16, 1024, 1024, 16)),
-    ("coo", (1024, 1024), (), 65536),
-    ("coo", (1024, 1024), (32,), 262144),
-    ("coo", (256, 256, 256), (16,), 1048576),
-    ("csr", (1024, 1024), 1024, 1024, 4096),
-    ("csr", (64, 512, 512), 512, 512, 8192),
+# every layout the operator dispatches to, so every case below is materialized
+# as a dense, sparse COO or sparse CSR tensor.
+_DIM_SHAPES = [
+    (1024, 1024),
+    (4096, 4096),
+    (20, 320, 15),
+    (64, 512, 512),
+    (16, 128, 128, 16),
 ]
 
+# Number of stored entries for every sparse case. dim is O(1), so nnz only
+# affects input allocation, not the measured call.
+_DIM_NNZ = 4096
 
-def _case_fn(case, dtype):
+
+def _make_coo_input(shape, sparse_dim, dtype, device, nnz=_DIM_NNZ, seed=0):
+    gen = torch.Generator("cpu").manual_seed(seed)
+    sparse_shape = shape[:sparse_dim]
+    dense_shape = shape[sparse_dim:]
+    indices = torch.stack(
+        [
+            torch.randint(0, dim, (nnz,), dtype=torch.long, generator=gen)
+            for dim in sparse_shape
+        ]
+    )
+    values = utils.generate_tensor_input((nnz,) + tuple(dense_shape), dtype, device)
+    return torch.sparse_coo_tensor(indices, values, shape, device=device)
+
+
+def _make_csr_input(shape, dtype, device, nnz=_DIM_NNZ, seed=0):
+    # 2-D (rows, cols) or batched 3-D (batch, rows, cols); every batch stores
+    # the same nnz entries (shared crow/col pattern).
+    gen = torch.Generator("cpu").manual_seed(seed)
+    if len(shape) == 2:
+        rows, cols = shape
+    else:
+        _, rows, cols = shape
+    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, generator=gen)
+    cuts = torch.sort(
+        torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, generator=gen)
+    ).values
+    crow_indices = torch.cat(
+        [
+            torch.zeros(1, dtype=torch.long),
+            cuts,
+            torch.full((1,), nnz, dtype=torch.long),
+        ]
+    )
+    if len(shape) == 3:
+        crow_indices = crow_indices.expand(shape[0], -1).contiguous()
+        col_indices = col_indices.expand(shape[0], -1).contiguous()
+        values = utils.generate_tensor_input((shape[0], nnz), dtype, device)
+    else:
+        values = utils.generate_tensor_input((nnz,), dtype, device)
+    return torch.sparse_csr_tensor(
+        crow_indices, col_indices, values, shape, device=device
+    )
+
+
+def _case_fn(shape, dtype):
     del dtype
-    kind = case[0]
-    if kind == "dense":
-        shape = case[1]
+    # Dense (strided) layout: dim == len(shape).
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"layout": "dense"},
+        builder_args=(shape, "dense", None),
+    )
+    # Sparse COO layout: all-sparse for 2-D, hybrid sparse+dense for higher
+    # ranks. sparse_dim stays in [1, ndim] so shapes merged in by other bench
+    # levels remain valid.
+    sparse_dim = len(shape) if len(shape) <= 2 else len(shape) - 1
+    yield base.BenchmarkCasePlan(
+        shape={"input": shape},
+        params={"layout": "coo", "sparse_dim": sparse_dim, "nnz": _DIM_NNZ},
+        builder_args=(shape, "coo", sparse_dim),
+    )
+    # Sparse CSR layout where a 2-D / batched 3-D compressed layout exists.
+    if len(shape) in (2, 3):
         yield base.BenchmarkCasePlan(
             shape={"input": shape},
-            params={"layout": "dense"},
-            builder_args=case,
-        )
-    elif kind == "coo":
-        _, sparse_shape, dense_shape, nnz = case
-        yield base.BenchmarkCasePlan(
-            shape={"input": sparse_shape + dense_shape},
-            params={"layout": "coo", "nnz": nnz},
-            builder_args=case,
-        )
-    else:  # "csr"
-        _, shape, _, _, nnz = case
-        yield base.BenchmarkCasePlan(
-            shape={"input": shape},
-            params={"layout": "csr", "nnz": nnz},
-            builder_args=case,
+            params={"layout": "csr", "nnz": _DIM_NNZ},
+            builder_args=(shape, "csr", None),
         )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    case = plan.builder_args
-    kind = case[0]
-    if kind == "dense":
-        inp = torch.randn(case[1], dtype=dtype, device=device)
-        return inp, {}
-    if kind == "coo":
-        _, sparse_shape, dense_shape, nnz = case
-        indices = torch.stack(
-            [
-                torch.randint(0, dim, (nnz,), dtype=torch.long, device=device)
-                for dim in sparse_shape
-            ]
-        )
-        values = torch.randn((nnz,) + tuple(dense_shape), dtype=dtype, device=device)
-        inp = torch.sparse_coo_tensor(
-            indices, values, sparse_shape + dense_shape, device=device
-        )
-        return inp, {}
-    # "csr"
-    _, shape, rows, cols, nnz = case
-    crow_indices = torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long, device=device),
-            torch.sort(
-                torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, device=device)
-            ).values,
-            torch.full((1,), nnz, dtype=torch.long, device=device),
-        ]
-    )
-    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, device=device)
-    values = torch.randn(nnz, dtype=dtype, device=device)
-    if len(shape) == 3:
-        crow_indices = crow_indices.expand(shape[0], -1).contiguous()
-        col_indices = col_indices.expand(shape[0], -1).contiguous()
-        values = values.expand(shape[0], -1).contiguous()
-    inp = torch.sparse_csr_tensor(
-        crow_indices, col_indices, values, shape, device=device
-    )
+    shape, layout, sparse_dim = plan.builder_args
+    if layout == "dense":
+        inp = utils.generate_tensor_input(shape, dtype, device)
+    elif layout == "coo":
+        inp = _make_coo_input(shape, sparse_dim, dtype, device)
+    else:
+        inp = _make_csr_input(shape, dtype, device)
     return inp, {}
 
 
@@ -116,7 +124,9 @@ class DimBenchmark(base.GenericBenchmark):
     CSR tensors."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BENCH_CASES
+        # dim is layout introspection; core_shapes.yaml has no dedicated entry,
+        # so benchmark the dedicated dense ranks / sparse layouts above.
+        self.shapes = _DIM_SHAPES
 
 
 @pytest.mark.dim
@@ -126,6 +136,10 @@ def test_dim():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.dim,
+        # flag_gems has no public ``dim`` direct callable yet; the candidate is
+        # supplied by the process-local override keyed on the public operator
+        # name "dim" (resolved via flag_gems.testing.resolve_gems_op inside the
+        # benchmark runner).
         gems_op=getattr(flag_gems, "dim", None),
         dtypes=consts.FLOAT_DTYPES,
     )

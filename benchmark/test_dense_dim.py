@@ -23,23 +23,23 @@ from . import base, consts
 # a tensor: ``self.dim()`` for strided tensors, the trailing dense dims for
 # sparse COO tensors, and 0 for sparse CSR tensors. It is a pure metadata query
 # (the measured work is dispatch and layout introspection, never data
-# movement), but the candidate must accept every layout the operator
-# dispatches to, so the benchmark covers all three input classes below.
+# movement), but the candidate must accept every layout the operator dispatches
+# to, so the benchmark covers all three input classes below.
 #
 # Case descriptors:
 #   ("dense", shape)
 #   ("coo", sparse_shape, dense_shape, nnz)
 #   ("csr", shape, rows, cols, nnz)
 _BENCH_CASES = [
+    ("dense", ()),
     ("dense", (1024, 1024)),
     ("dense", (4096, 4096)),
     ("dense", (64, 512, 512)),
-    ("dense", (16, 1024, 1024, 16)),
+    ("dense", (16, 128, 64, 60)),
     ("coo", (1024, 1024), (), 65536),
     ("coo", (1024, 1024), (32,), 262144),
     ("coo", (256, 256, 256), (16,), 1048576),
-    ("coo", (1024, 1024), (16, 16), 1048576),
-    ("coo", (4096, 4096), (64,), 1048576),
+    ("coo", (4096, 4096), (8, 8), 131072),
     ("csr", (1024, 1024), 1024, 1024, 4096),
     ("csr", (64, 512, 512), 512, 512, 8192),
 ]

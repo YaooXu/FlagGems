@@ -23,7 +23,7 @@ from . import base, consts, utils
 # to a contiguous 1-D tensor and concatenates them into one 1-D result. It is a
 # bandwidth-bound data-movement op (copy + cat), so each case is a list of
 # tensor shapes whose total element count is performance-relevant
-# (1M - 12.5M elements).
+# (1M - 12.6M elements).
 FLATTEN_DENSE_TENSORS_SHAPES = [
     [(1024, 1024)],
     [(4096, 4096)],

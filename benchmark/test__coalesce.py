@@ -30,9 +30,10 @@ setattr(
     MarkDecorator(Mark("_coalesce", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# (sparse shape, nnz). Coalescing work scales with nnz, and drawing nnz
-# entries over the index space guarantees duplicate indices (real merging
-# work) while keeping the tensors small enough for repeated benchmarking.
+# (sparse shape, nnz) workload descriptions. Coalescing work scales with nnz,
+# so the tensors are sized for a meaningful measurement while staying small
+# enough to build repeatedly; nnz is always > numel(shape), which guarantees
+# duplicate coordinates and therefore real merging work.
 _COALESCE_SHAPES = [
     ((1024, 1024), 65536),
     ((1024, 1024), 262144),
@@ -44,31 +45,36 @@ _COALESCE_SHAPES = [
 
 
 def _case_fn(shape, dtype):
+    # Two-phase GenericBenchmark: the shape entries are the (shape, nnz)
+    # workload descriptors; emitting one BenchmarkCasePlan per descriptor keeps
+    # nnz in the case id/params and defers tensor construction.
     del dtype
-    shape, nnz = shape
+    sparse_shape, nnz = shape
     yield base.BenchmarkCasePlan(
-        shape={"input": shape},
+        shape={"input": sparse_shape},
         params={"nnz": nnz},
-        builder_args=(shape, nnz),
+        builder_args=(sparse_shape, nnz),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    shape, nnz = plan.builder_args
+    # Draw coordinates with replacement so the input is uncoalesced (the CUDA
+    # reference asserts on that) and coalescing has to sort/merge.
+    sparse_shape, nnz = plan.builder_args
     indices = torch.stack(
         [
             torch.randint(0, dim, (nnz,), dtype=torch.long, device=device)
-            for dim in shape
+            for dim in sparse_shape
         ]
     )
     values = torch.randn(nnz, dtype=dtype, device=device)
-    inp = torch.sparse_coo_tensor(indices, values, shape, device=device)
+    inp = torch.sparse_coo_tensor(indices, values, sparse_shape, device=device)
     return inp, {}
 
 
 class CoalesceBenchmark(base.GenericBenchmark):
-    # _coalesce is a sparse op; there are no meaningful dense shapes in
-    # core_shapes.yaml, so benchmark dedicated (shape, nnz) pairs instead.
+    # _coalesce is a sparse op, so there are no meaningful dense shapes in
+    # core_shapes.yaml; benchmark the dedicated (shape, nnz) descriptors above.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _COALESCE_SHAPES
 
@@ -79,6 +85,10 @@ def test__coalesce():
         op_name="_coalesce",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
+        # flag_gems has no public ``_coalesce`` direct callable; the candidate
+        # is supplied by the KernelGen process-local override keyed on the
+        # public operator name "_coalesce" (resolved via
+        # flag_gems.testing.resolve_gems_op inside the benchmark).
         torch_op=torch.ops.aten._coalesce,
         gems_op=getattr(flag_gems, "_coalesce", None),
         dtypes=consts.FLOAT_DTYPES,

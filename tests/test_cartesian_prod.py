@@ -12,6 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Correctness tests for ``aten::cartesian_prod(Tensor[] tensors) -> Tensor``.
+
+``cartesian_prod`` consumes a list of 1-D tensors and writes one row per
+combination of one element from each input (``prod(sizes)`` rows, in row-major
+order with the first input varying slowest, i.e. ``itertools.product`` order).
+With a single input PyTorch returns the 1-D tensor itself (shape ``(N,)``); with
+``k`` inputs the output is ``(prod(sizes), k)``.
+
+The op performs no arithmetic: values, dtype and layout are copied verbatim.
+Consequences for the regular-operator spec:
+
+* its shape-level dimension is the *number and lengths of the 1-D inputs*
+  rather than a single dense shape, so the spec's seven dense shapes are
+  represented here by the input-list configs in ``_CARTESIAN_PROD_SIZES``
+  (single / singleton / empty / equal-length / mixed-length / 3-4 inputs);
+* the value-range sweep uses ``tu.make_input`` over every supported dtype, so
+  every range round-trips exactly through the gather materialization;
+* the multi-input analogue of broadcasting is combining inputs of unequal
+  lengths (e.g. ``[1, 7]`` or ``[3, 1, 3]``), which the shape configs cover.
+
+Every case below is one Workload (one pytest parametrization combo).
+"""
+
 import math
 
 import pytest
@@ -22,35 +45,77 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::cartesian_prod(Tensor[] tensors) -> Tensor takes 1-D tensors and returns
-# one row per combination of one element from each input. With a single input
-# this PyTorch version returns the 1-D tensor itself (shape (N,)); with k
-# inputs the output is (prod(sizes), k) in row-major order (the first input
-# varies slowest, like itertools.product). The op performs no arithmetic:
-# values, dtype and layout are copied verbatim, so every supported dtype must
-# round-trip bit-exactly and the inputs must not be mutated. Its shape-level
-# dimension is therefore the *number and lengths of the 1-D inputs* rather than
-# a single dense shape; the list below covers single / singleton / empty /
-# equal-length / mixed-length / 3-4 input cases (the multi-input analogue of
-# broadcast is combining inputs of unequal lengths, e.g. [1, 7] and [3, 1, 3]).
-#
-# Coverage follows the regular-operator spec adapted to this gather op:
-#   * value ranges: tu.selected_ranges() over representative input lists so
-#     every supported dtype round-trips negative, positive, extreme and
-#     degenerate ranges exactly;
-#   * shape levels: input lists selected by utils.QUICK_MODE (quick/core), from
-#     a single element up to 4 inputs and empty tensors;
-#   * edge cases: non-contiguous 1-D inputs, nan/inf/-inf/+-0.0 passthrough and
-#     the no-mutation contract;
-#   * backward: autograd.grad() against the reshape/sum analytic gradient (the
-#     op is differentiable through the stack-based implementation for multiple
-#     inputs; a single input is returned as-is);
-#   * negative: empty list, multi-dim input, mixed input dtypes and a
-#     non-tensor element all raise on the aten reference and the candidate.
-# Each case below is the list of 1-D input sizes.
+# Value-range sweep + shape levels + backward + negative + nan/inf.
+_FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
+_INT8_DTYPES = [torch.int8, torch.uint8]
+
+# Candidate dtypes: the spec's required 9 dtypes plus the wider float/int/bool
+# sets; each one is probed for real support before it is parametrized.
+_CANDIDATE_DTYPES = list(
+    dict.fromkeys(
+        _FP8_DTYPES
+        + _INT8_DTYPES
+        + utils.ALL_FLOAT_DTYPES
+        + utils.ALL_INT_DTYPES
+        + utils.BOOL_TYPES
+    )
+)
+
+
+def _probe_dtype(operator, dtype):
+    """Return whether the real aten op accepts ``dtype`` on this device.
+
+    ``tu.supported_dtypes``'s default probe calls the op with a single tensor,
+    which does not match the list-of-1-D-tensors schema, so pass a custom probe
+    that builds two 1-D inputs. Any exception means "unsupported".
+    """
+    try:
+        first = tu.make_input(dtype, (4,), ["-1", "1"])
+        second = tu.make_input(dtype, (3,), ["-1", "1"])
+        getattr(torch.ops.aten, operator).default([first, second])
+    except Exception:
+        return False
+    return True
+
+
+_SUPPORTED_DTYPES = tu.supported_dtypes(
+    "cartesian_prod", candidates=_CANDIDATE_DTYPES, probe=_probe_dtype
+)
+
+_FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
+_UNSIGNED_DTYPES = {torch.uint8}
+
+# fp32/bf16/fp16 are the autograd-capable float dtypes; fp8 has no autograd and
+# fp64 support is device dependent, so only the shared float set is used there.
+_FLOAT_DTYPES = [d for d in _SUPPORTED_DTYPES if d in utils.ALL_FLOAT_DTYPES]
+_BACKWARD_DTYPES = [d for d in _FLOAT_DTYPES if d in utils.FLOAT_DTYPES]
+_NAN_INF_DTYPES = [d for d in _FLOAT_DTYPES if d not in _FP8_DTYPE_SET]
+
+# The value-range grid applies to every supported non-bool dtype; bool ignores
+# the range (it is still covered, range-independently, by the shape grid).
+_RANGE_DTYPES = [d for d in _SUPPORTED_DTYPES if d != torch.bool]
+
+
+def _dtype_ranges(dtype):
+    """Return the spec's five ranges, adapting "-1" bounds for unsigned types.
+
+    ``torch.testing.make_tensor`` rejects ``low=-1`` for uint8, so map the "-1"
+    symbol to "0" (still a valid, boundary-covering range for unsigned values).
+    """
+    ranges = [list(r) for r in tu.selected_ranges()]
+    if dtype in _UNSIGNED_DTYPES:
+        ranges = [[("0" if s == "-1" else s) for s in r] for r in ranges]
+    return ranges
+
+
+_RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in _dtype_ranges(d)]
+
+# Shape levels: each entry is the list of 1-D input sizes (the op's shape
+# dimension). Covers single / singleton / empty / equal-length / mixed-length /
+# 3-4 input configs and the resulting empty outputs.
 _CARTESIAN_PROD_SIZES = (
     [[8], [3, 5], [2, 4, 3]]
-    if utils.QUICK_MODE
+    if tu.LEVEL == "quick"
     else [
         [8],  # single input -> (8,)
         [1],  # single singleton input -> (1,)
@@ -69,25 +134,20 @@ _CARTESIAN_PROD_SIZES = (
     ]
 )
 
-# Representative input lists for the full value-range sweep (single / two /
-# three inputs; kept small so the range sweep stays cheap).
-_CARTESIAN_PROD_RANGE_SIZES = [[8], [3, 5], [2, 4, 3]]
-
-# Backward input lists stay small (the autograd graph is built on the CPU
-# reference and the analytic comparison below is per-input).
-_CARTESIAN_PROD_BACKWARD_SIZES = [[8], [3, 5], [2, 4, 3], [16, 16]]
-
-_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-_INT_DTYPES = utils.ALL_INT_DTYPES
-_CARTESIAN_PROD_DTYPES = _FLOAT_DTYPES + _INT_DTYPES + utils.BOOL_TYPES
+# Backward input lists stay small (the autograd graph is built per input).
+_BACKWARD_SIZES = (
+    [[8], [3, 5]] if tu.LEVEL == "quick" else [[8], [3, 5], [2, 4, 3], [16, 16]]
+)
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.cartesian_prod callable, (3) None
-    # when neither exists yet (the tests then fall back to the PyTorch
-    # reference, keeping them runnable before an implementation is merged).
+    """Resolve the candidate inside the test (never at import time).
+
+    Resolution order: (1) the process-local override installed by KernelGen,
+    (2) the direct ``flag_gems.cartesian_prod`` callable, (3) ``None`` when
+    neither exists yet (the tests then run against the PyTorch reference so the
+    file stays runnable before an implementation is merged).
+    """
     try:
         return flag_gems.testing.resolve_gems_op(
             "cartesian_prod", getattr(flag_gems, "cartesian_prod", None)
@@ -99,25 +159,30 @@ def _resolve_gems_op():
 def _apply_cartesian_prod(inp):
     gems_op = _resolve_gems_op()
     if gems_op is None:
-        # No candidate injected and no native implementation registered yet:
-        # run the reference so the test remains runnable standalone.
         return torch.ops.aten.cartesian_prod(inp)
     return gems_op(inp)
 
 
 def _assert_close(res_out, ref_out, dtype):
-    if dtype.is_floating_point or dtype.is_complex:
+    """Floats use ``gems_assert_close``; int/bool/fp8 must be bit-exact.
+
+    ``torch.testing.assert_close`` has no working tolerance path for fp8, and
+    the op is a pure gather, so fp8 is compared exactly like int/bool.
+    """
+    if (dtype.is_floating_point or dtype.is_complex) and dtype not in _FP8_DTYPE_SET:
         utils.gems_assert_close(res_out, ref_out, dtype)
     else:
         utils.gems_assert_equal(res_out, ref_out)
 
 
 def _expected_grads(grad_output, sizes):
-    # For input i (length n_i), the analytic gradient is grad_output[:, i] of
-    # shape (prod(sizes),) viewed as (n_0, ..., n_{k-1}) and summed over every
-    # dim except i: input element i appears in exactly one position along its
-    # own dim of the flattened combination index. A single input returns the
-    # tensor itself, so its gradient is the grad_output verbatim.
+    """Analytic gradient of a pure gather per input.
+
+    Input element ``i`` appears in exactly one position along its own dim of the
+    flattened combination index, so the gradient is ``grad_output[:, i]``
+    viewed as the full size tuple and summed over every other dim. A single
+    input is returned as-is, so its gradient is the grad output verbatim.
+    """
     if len(sizes) == 1:
         return [grad_output]
     grads = []
@@ -130,11 +195,10 @@ def _expected_grads(grad_output, sizes):
 
 @pytest.mark.cartesian_prod
 @pytest.mark.parametrize("sizes", _CARTESIAN_PROD_SIZES)
-@pytest.mark.parametrize("dtype", _CARTESIAN_PROD_DTYPES)
-def test_cartesian_prod(sizes, dtype):
-    # Shape levels x every supported dtype, with values from the default [-1, 1]
-    # range (negative and positive for each dtype).
-    inp = [tu.make_input(dtype, (size,), ["-1", "1"]) for size in sizes]
+@pytest.mark.parametrize("dtype,value_range", _RANGE_PAIRS)
+def test_cartesian_prod(sizes, dtype, value_range):
+    # Full grid: every supported dtype x every value range x every shape level.
+    inp = [tu.make_input(dtype, (size,), value_range) for size in sizes]
     inp_before = [t.clone() for t in inp]
     ref_inp = [utils.to_reference(t) for t in inp]
 
@@ -144,32 +208,37 @@ def test_cartesian_prod(sizes, dtype):
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == dtype
     _assert_close(res_out, ref_out, dtype)
+
     # cartesian_prod is a pure gather: the inputs must not be mutated.
     for t, before in zip(inp, inp_before):
         utils.gems_assert_equal(t, utils.to_reference(before))
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("sizes", _CARTESIAN_PROD_RANGE_SIZES)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES + _INT_DTYPES)
-def test_cartesian_prod_value_ranges(sizes, value_range, dtype):
-    # The op never transforms the stored values, so the full spec range sweep
-    # (including 0/max/min and degenerate constant ranges) must round-trip
-    # exactly through the gather materialization.
-    inp = [tu.make_input(dtype, (size,), value_range) for size in sizes]
-    ref_inp = [utils.to_reference(t) for t in inp]
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
+def test_cartesian_prod_row_order(dtype):
+    # Exact semantic check: rows follow itertools.product order (first input
+    # varies slowest) and each input element is copied verbatim.
+    a = torch.tensor([0, 1, 2], dtype=dtype, device=flag_gems.device)
+    b = torch.tensor([10, 20], dtype=dtype, device=flag_gems.device)
+    expected = torch.tensor(
+        [[0, 10], [0, 20], [1, 10], [1, 20], [2, 10], [2, 20]],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = [utils.to_reference(a), utils.to_reference(b)]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _apply_cartesian_prod(inp)
+    res_out = _apply_cartesian_prod([a, b])
 
-    assert res_out.shape == ref_out.shape
+    assert res_out.shape == ref_out.shape == (6, 2)
     assert res_out.dtype == ref_out.dtype
-    tu.assert_result_close(res_out, ref_out)
+    utils.gems_assert_equal(res_out, utils.to_reference(expected))
+    utils.gems_assert_equal(res_out, ref_out)
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("dtype", _CARTESIAN_PROD_DTYPES)
+@pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_cartesian_prod_non_contiguous(dtype):
     # A strided 1-D input must be read by value (indexed gather), not assumed
     # contiguous; aten and the candidate must produce identical rows.
@@ -189,11 +258,10 @@ def test_cartesian_prod_non_contiguous(dtype):
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
 def test_cartesian_prod_nan_inf(dtype):
-    # cartesian_prod is a pure gather: +inf/-inf/nan/+-0.0 pass through
-    # unchanged (equal_nan=True is active on the float path of
-    # assert_result_close).
+    # Pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
+    # (assert_result_close uses equal_nan=True on the float path).
     values = torch.tensor(
         [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
         dtype=dtype,
@@ -211,8 +279,8 @@ def test_cartesian_prod_nan_inf(dtype):
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("sizes", _CARTESIAN_PROD_BACKWARD_SIZES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+@pytest.mark.parametrize("sizes", _BACKWARD_SIZES)
+@pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
 def test_cartesian_prod_backward(sizes, dtype):
     out_shape = (sizes[0],) if len(sizes) == 1 else (math.prod(sizes), len(sizes))
     inp = [
@@ -222,18 +290,18 @@ def test_cartesian_prod_backward(sizes, dtype):
     ref_inp = [utils.to_reference(t) for t in inp]
     ref_grad = utils.to_reference(grad)
 
+    # The analytic gradient must match autograd on the aten reference...
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
     expected = _expected_grads(ref_grad, sizes)
     for got, exp in zip(ref_in_grads, expected):
         tu.assert_result_close(got, exp)
 
-    # The candidate forward output must match the reference...
+    # ...the candidate forward output must match the reference...
     res_out = _apply_cartesian_prod(inp)
     _assert_close(res_out, ref_out, dtype)
 
-    # ...and, if the candidate output is differentiable (a view of a
-    # requires_grad input or an autograd-aware kernel), its gradient must match
+    # ...and, if the candidate output is differentiable, its gradient must match
     # the analytic value too.
     if res_out.requires_grad:
         res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
@@ -252,10 +320,11 @@ def test_cartesian_prod_rejects_empty_list():
 
 
 @pytest.mark.cartesian_prod
+@pytest.mark.parametrize("shape", [(3, 4), ()])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int32])
-def test_cartesian_prod_rejects_multidim_input(dtype):
-    # The op only accepts 1-D tensors; a 2-D input must raise.
-    inp = tu.make_input(dtype, (3, 4), ["-1", "1"])
+def test_cartesian_prod_rejects_multidim_input(shape, dtype):
+    # The op only accepts 1-D tensors; a 2-D or 0-dim input must raise.
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([ref_inp])

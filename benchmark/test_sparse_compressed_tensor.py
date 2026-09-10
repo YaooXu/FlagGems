@@ -36,14 +36,17 @@ from . import base, consts
 # over the rows/columns with a deterministic structure, so the index arrays and
 # the values allocation all scale with nnz while the logical matrix spans the
 # full (rows, cols) extent. Block layouts (BSR/BSC) get (nnz, block, block)
-# value tensors.
+# value tensors; higher-rank shapes are batched compressed tensors. The
+# batched cases keep the per-batch index arrays modest so the component
+# allocation stays within device memory.
 _SPARSE_COMPRESSED_SHAPES = [
     (torch.sparse_csr, (1024, 1024), 65536),
     (torch.sparse_csr, (1024, 1024), 262144),
     (torch.sparse_csc, (1024, 1024), 262144),
     (torch.sparse_csr, (4096, 4096), 1048576),
     (torch.sparse_bsr, (2048, 2048), 262144),
-    (torch.sparse_csr, (256, 256, 256), 1048576),
+    (torch.sparse_bsc, (2048, 2048), 262144),
+    (torch.sparse_csr, (8, 256, 256), 262144),
 ]
 
 _BLOCK_LAYOUTS = (torch.sparse_bsr, torch.sparse_bsc)

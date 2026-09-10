@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import pytest
 import torch
 
@@ -22,16 +20,44 @@ import flag_gems
 from . import base, consts, utils
 
 # aten::atleast_3d is a pure view/identity op (0-dim -> (1, 1, 1), 1-dim ->
-# (1, N, 1), 2-dim -> (M, N, 1) views; ndim >= 3 returned as-is). No public
-# Benchmark family models a view identity op, so both overloads use a two-phase
-# GenericBenchmark (case_fn + build_inputs_fn). The 0-dim scalar, 1-dim and
-# 2-dim cases are the defining workloads and are prepended to the shape set.
-# gems_op is resolved through getattr because flag_gems.atleast_3d is not yet
-# registered as a direct callable; KernelGen's override_gems_op("atleast_3d",
-# ...) still wins at run time via flag_gems.testing.resolve_gems_op.
+# (1, N, 1), 2-dim -> (M, N, 1); ndim >= 3 returned unchanged) with two
+# overloads (Tensor and Tensor[]). No public Benchmark family models a view
+# op, so both overloads use the two-phase GenericBenchmark (case_fn +
+# build_inputs_fn), never a bare legacy input_fn.
+#
+# A view's latency is dominated by dispatch/call overhead rather than tensor
+# size, so the shape set is curated (one case per rank 0..4 plus a large 2-D
+# and 3-D case) and stays small: the generic DEFAULT_SHAPES include 1G-element
+# tensors that would only burn memory for no signal.
+#
+# gems_op is resolved inside each test function (never at import time) so the
+# process-local override installed by KernelGen for this run wins; when no
+# candidate is registered flag_gems.testing.resolve_gems_op raises LookupError
+# and the benchmark falls back to its normal torch_op reference route.
+
+_CURATED_SHAPES = [
+    (),  # 0-dim scalar -> (1, 1, 1)
+    (1,),  # single-element 1-dim -> (1, 1, 1)
+    (256,),  # regular 1-dim -> (1, 256, 1)
+    (1024, 1024),  # large 2-dim -> (1024, 1024, 1)
+    (20, 320, 15),  # 3-dim identity
+    (16, 128, 64),  # 3-dim identity
+    (8, 16, 32, 4),  # 4-dim identity
+]
+
+
+class Atleast3DBenchmark(base.GenericBenchmark):
+    # Curated, size-bounded shape set: a view op has no data-dependent work, so
+    # the larger generic shapes add allocation time without changing the
+    # measured dispatch cost.
+    def set_shapes(self, shape_file_path=None):
+        del shape_file_path
+        self.shapes = list(_CURATED_SHAPES)
+        self.shape_desc = "rank-complete view shapes"
 
 
 def _case_fn(shape, dtype):
+    # One Workload per shape for the Tensor overload.
     del dtype
     yield base.BenchmarkCasePlan(
         shape={"input": shape},
@@ -47,11 +73,11 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 def _sequence_case_fn(shape, dtype):
+    # One Workload per shape for the Tensor[] overload, mixing a 0-dim scalar,
+    # a 1-dim tensor, a 2-dim tensor and the current shape so the scalar ->
+    # (1,1,1), 1-dim -> (1,N,1), 2-dim -> (M,N,1) and >= 3-dim identity paths
+    # are all timed.
     del dtype
-    # Mix a 0-dim scalar, a 1-dim tensor, a 2-dim tensor and the current
-    # benchmark shape so the sequence overload exercises the scalar ->
-    # (1, 1, 1), 1-dim -> (1, N, 1), 2-dim -> (M, N, 1) and >= 3-dim identity
-    # paths.
     seq_shapes = [(), (3,), (4, 5), shape]
     yield base.BenchmarkCasePlan(
         shape={"input": seq_shapes},
@@ -66,48 +92,56 @@ def _sequence_build_inputs_fn(plan, dtype, device):
     return inp, {}
 
 
-class Atleast3DBenchmark(base.GenericBenchmark):
-    # A view op's latency is dominated by the call overhead, not the tensor
-    # size, so capping the input numel avoids allocating multi-GB inputs (the
-    # generic DEFAULT_SHAPES include 1G-element tensors) for no signal.
-    MAX_NUMEL = 2**24  # 16M elements
+def _resolve_named_gems_op(name):
+    # Resolution order: (1) the override installed by KernelGen, (2) the direct
+    # flag_gems callable, (3) None -> the benchmark keeps its torch_op
+    # reference. Never resolved at import time.
+    default = getattr(flag_gems, name.replace(".", "_"), None)
+    if default is None:
+        default = getattr(flag_gems, name, None)
+    try:
+        return flag_gems.testing.resolve_gems_op(name, default)
+    except LookupError:
+        return None
 
-    def set_shapes(self, shape_file_path=None):
-        super().set_shapes(shape_file_path)
-        self.shapes = [
-            shape for shape in self.shapes if math.prod(shape) <= self.MAX_NUMEL
-        ]
-        # atleast_3d's defining cases are the 0-dim scalar -> (1, 1, 1),
-        # 1-dim -> (1, N, 1) and 2-dim -> (M, N, 1) views.
-        if () not in self.shapes:
-            self.shapes = [()] + list(self.shapes)
-        if (3,) not in self.shapes:
-            self.shapes = [(3,)] + list(self.shapes)
-        if (4, 5) not in self.shapes:
-            self.shapes = [(4, 5)] + list(self.shapes)
+
+def _resolve_gems_op():
+    return _resolve_named_gems_op("atleast_3d")
+
+
+def _resolve_gems_op_sequence():
+    # Accept a dedicated Sequence override or a single callable handling both
+    # overloads.
+    for name in ("atleast_3d.Sequence", "atleast_3d_sequence", "atleast_3d"):
+        op = _resolve_named_gems_op(name)
+        if op is not None:
+            return op
+    return None
 
 
 @pytest.mark.atleast_3d
+@pytest.mark.atleast_3d_benchmark
 def test_atleast_3d():
     bench = Atleast3DBenchmark(
         op_name="atleast_3d",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.atleast_3d,
-        gems_op=getattr(flag_gems, "atleast_3d", None),
+        gems_op=_resolve_gems_op(),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
 @pytest.mark.atleast_3d_sequence
+@pytest.mark.atleast_3d_benchmark
 def test_atleast_3d_sequence():
     bench = Atleast3DBenchmark(
         op_name="atleast_3d",
         case_fn=_sequence_case_fn,
         build_inputs_fn=_sequence_build_inputs_fn,
         torch_op=torch.ops.aten.atleast_3d.Sequence,
-        gems_op=getattr(flag_gems, "atleast_3d", None),
+        gems_op=_resolve_gems_op_sequence(),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

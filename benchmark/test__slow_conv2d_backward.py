@@ -18,12 +18,12 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # ``_slow_conv2d_backward`` starts with an underscore, and ``pytest.mark``
-# refuses to generate a marker via attribute access for such names. Register it
-# directly on the MarkGenerator so ``@pytest.mark._slow_conv2d_backward`` and
-# ``-m _slow_conv2d_backward`` both work.
+# refuses to generate a marker via attribute access for such names. Register the
+# marker directly on the MarkGenerator so ``@pytest.mark._slow_conv2d_backward``
+# and ``-m _slow_conv2d_backward`` both work.
 setattr(
     pytest.mark,
     "_slow_conv2d_backward",
@@ -34,70 +34,73 @@ setattr(
 )
 
 # aten::_slow_conv2d_backward(grad_output, self, weight, kernel_size, stride,
-# padding, output_mask) -> (grad_input, grad_weight, grad_bias) is the im2col
-# based "slow" conv2d backward (no dilation, groups always 1). ``self`` is
+# padding, output_mask) -> (grad_input, grad_weight, grad_bias). ``self`` is
 # (N, C_in, H, W), ``weight`` is (C_out, C_in, kH, kW) and ``grad_output`` is
-# (N, C_out, H_out, W_out) with H_out = (H + 2*pH - kH) // sH + 1. Each tuple is
-# (N, in_c, H, W, out_c, kH, kW, stride, padding); the im2col cost grows with
-# kernel area, so both 1x1 (pure GEMM) and 2x2/3x3 (im2col-heavy) kernels are
-# represented, with output sizes in the tens-of-MB range.
+# (N, C_out, H_out, W_out) with
+#   H_out = (H + 2*pH - kH) // sH + 1, W_out = (W + 2*pW - kW) // sW + 1.
+# The benchmark drives the masked ``.output_mask`` overload with an all-true
+# mask, i.e. the full-workload shape of the op (all three gradients), and both
+# the torch reference and the candidate go through the exact same call.
+#
+# Shapes are (N, C_in, H, W, C_out, kH, kW, stride, padding) tuples. They span
+# 1x1/2x2/3x3/3x5 kernels, stride 1 and 2, padding 0/1/2 and channel counts up
+# to 64 (roughly 4K - 4M input elements) so the measurement is
+# performance-relevant.
 _SLOW_CONV2D_BACKWARD_SHAPES = [
     (16, 4, 8, 8, 4, 3, 3, 1, 0),
-    (8, 3, 16, 16, 8, 3, 3, 1, 0),
+    (8, 3, 16, 16, 8, 3, 3, 1, 1),
+    (32, 8, 8, 8, 32, 2, 2, 2, 0),
     (32, 8, 8, 8, 32, 2, 2, 1, 1),
+    (4, 16, 4, 4, 16, 1, 1, 1, 0),
     (4, 16, 4, 4, 16, 1, 1, 2, 0),
-    (16, 8, 32, 32, 16, 3, 3, 2, 1),
-    (8, 16, 64, 64, 8, 3, 3, 1, 1),
+    (2, 3, 9, 9, 4, 3, 5, 1, 2),
+    (2, 3, 4, 4, 5, 3, 3, 1, 0),
+    (64, 32, 8, 8, 64, 3, 3, 1, 1),
+    (8, 64, 16, 16, 64, 3, 3, 2, 1),
 ]
 
-
-class SlowConv2dBackwardBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark over (grad_output, input, weight, stride, padding)."""
-
-    def set_shapes(self, shape_file_path=None):
-        self.shapes = _SLOW_CONV2D_BACKWARD_SHAPES
+_FULL_MASK = (True, True, True)
 
 
 def _case_fn(shape, dtype):
     del dtype
-    batch, in_c, h, w, out_c, k_h, k_w, stride, padding = shape
-    in_shape = (batch, in_c, h, w)
-    weight_shape = (out_c, in_c, k_h, k_w)
-    h_out = (h + 2 * padding - k_h) // stride + 1
-    w_out = (w + 2 * padding - k_w) // stride + 1
     yield base.BenchmarkCasePlan(
-        shape={
-            "input": in_shape,
-            "weight": weight_shape,
-            "grad_output": (batch, out_c, h_out, w_out),
-        },
-        params={"stride": stride, "padding": padding},
+        shape={"input": shape},
+        params={"output_mask": _FULL_MASK},
         builder_args=(shape, 0),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    batch, in_c, h, w, out_c, k_h, k_w, stride, padding = plan.builder_args[0]
+    n, c_in, h, w, c_out, k_h, k_w, stride, padding = plan.builder_args[0]
     h_out = (h + 2 * padding - k_h) // stride + 1
     w_out = (w + 2 * padding - k_w) // stride + 1
-    grad_output = torch.randn((batch, out_c, h_out, w_out), dtype=dtype, device=device)
-    input = torch.randn((batch, in_c, h, w), dtype=dtype, device=device)
-    weight = torch.randn((out_c, in_c, k_h, k_w), dtype=dtype, device=device)
+
+    grad_output = utils.generate_tensor_input((n, c_out, h_out, w_out), dtype, device)
+    inp = utils.generate_tensor_input((n, c_in, h, w), dtype, device)
+    weight = utils.generate_tensor_input((c_out, c_in, k_h, k_w), dtype, device)
+    # Positional args shared by the torch reference and the candidate.
     return (
         grad_output,
-        input,
+        inp,
         weight,
         (k_h, k_w),
         (stride, stride),
         (padding, padding),
-        (True, True, True),
+        plan.params["output_mask"],
     )
+
+
+class SlowConv2dBackwardBenchmark(base.GenericBenchmark):
+    # _slow_conv2d_backward has no entry in benchmark/core_shapes.yaml (its
+    # inputs are conv-shaped, not the generic pointwise shapes), so benchmark
+    # dedicated (N, C_in, H, W, C_out, kH, kW, stride, padding) tuples instead.
+    def set_shapes(self, shape_file_path=None):
+        self.shapes = _SLOW_CONV2D_BACKWARD_SHAPES
 
 
 @pytest.mark._slow_conv2d_backward
 def test__slow_conv2d_backward():
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
     bench = SlowConv2dBackwardBenchmark(
         op_name="_slow_conv2d_backward",
         case_fn=_case_fn,

@@ -22,12 +22,19 @@ from . import base, consts
 # aten::sparse_csr_tensor.crow_col_value_size(Tensor crow_indices,
 #     Tensor col_indices, Tensor values, int[] size, *, ScalarType? dtype=None,
 #     ...) -> Tensor constructs a sparse CSR tensor from its raw components: the
-# (rows, cols) trailing dims of ``size`` are spanned by the row-pointer and
-# column arrays, with ``values`` holding nnz entries (or (batch, nnz) for
+# (rows, cols) trailing dims of `size` are spanned by the row-pointer and
+# column arrays, with `values` holding nnz entries (or (batch, nnz) for
 # batched tensors). The measured work is the layout construction from the three
 # component tensors, so the benchmark feeds the components directly (not a
 # pre-built sparse tensor) and both the reference and the candidate receive the
 # exact same call.
+#
+# The factory has no elementwise/unary/reduction analogue, so no public
+# Benchmark family applies; the two-phase GenericBenchmark (case_fn +
+# build_inputs_fn) is used instead. `gems_op` is resolved through
+# `getattr` because the candidate is injected by the KernelGen harness via
+# `override_gems_op` and is not necessarily present as a public
+# `flag_gems.sparse_csr_tensor` attribute at import time.
 #
 # Each benchmark case is (tensor_shape, nnz). The nnz is distributed across the
 # rows with a deterministic pattern, so the crow/col arrays and the values
@@ -92,6 +99,7 @@ class SparseCsrTensorBenchmark(base.GenericBenchmark):
     ``sparse_csr_tensor`` factory call."""
 
     def set_shapes(self, shape_file_path=None):
+        del shape_file_path
         self.shapes = _BENCH_SHAPES
 
 

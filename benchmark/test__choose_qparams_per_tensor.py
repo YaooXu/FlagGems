@@ -12,6 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Benchmark for ``aten::_choose_qparams_per_tensor``.
+
+The op is a whole-tensor min/max reduction, so there is no ``core_shapes.yaml``
+entry and the base class would fall back to ``consts.DEFAULT_SHAPES`` (which
+includes a 1-B-element tensor whose allocation cost dominates the
+measurement). A modest, allocation-friendly shape set is used instead; each
+shape is timed for both ``reduce_range`` values.
+
+``torch_op`` is the ATen reference (the perf comparison baseline) and
+``gems_op`` is the FlagGems candidate resolved through ``override_gems_op``;
+both share the exact same call semantics ``op(input, reduce_range=...)``.
+"""
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -20,10 +33,10 @@ import flag_gems
 
 from . import base, consts, utils
 
-# ``_choose_qparams_per_tensor`` starts with an underscore, and ``pytest.mark``
-# refuses to generate a marker via attribute access for such names. Register it
-# directly on the MarkGenerator so ``@pytest.mark._choose_qparams_per_tensor``
-# and ``-m _choose_qparams_per_tensor`` both work.
+# ``_choose_qparams_per_tensor`` starts with an underscore and ``pytest.mark``
+# refuses attribute access for such names, so register the marker directly on
+# the MarkGenerator: ``@pytest.mark._choose_qparams_per_tensor`` and
+# ``-m _choose_qparams_per_tensor`` then both work.
 setattr(
     pytest.mark,
     "_choose_qparams_per_tensor",
@@ -33,12 +46,6 @@ setattr(
     ),
 )
 
-# aten::_choose_qparams_per_tensor(Tensor self, bool reduce_range=False)
-# -> (float, int) computes a per-tensor min/max reduction and returns a Python
-# (float, int) pair. There is no core_shapes.yaml entry for it, so the base
-# class would fall back to consts.DEFAULT_SHAPES, which includes a 1-B-element
-# 1-D tensor whose allocation cost would dominate the measurement. Use a
-# modest, allocation-friendly shape set instead.
 CQPT_SHAPES = [
     (65536,),
     (1_048_576,),

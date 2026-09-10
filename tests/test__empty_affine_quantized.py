@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# SPDX-License-Identifier: Apache-2.0
 import math
 
 import pytest
@@ -51,8 +52,11 @@ def _resolve(name):
 # - Value ranges: there is no input tensor whose values could vary, so the value
 #   dimension is the parameter space itself -- the quantized dtype family and
 #   the qparams (scale is a double, zero_point an int64, both stored verbatim
-#   without validation). QUANT_SCALES / QUANT_ZERO_POINTS below are the
-#   parameter-value ranges; shape levels come from tu.selected_shapes().
+#   without validation). The scalar qparams are generated through the shared
+#   ``tu.make_input`` / ``tu.selected_ranges()`` framework (see
+#   test__empty_affine_quantized_value_ranges), and
+#   QUANT_SCALES / QUANT_ZERO_POINTS below add the representative boundary
+#   values for the main grid. Shape levels come from tu.selected_shapes().
 # - Broadcast: N/A -- the only input is a size list; nothing to broadcast.
 # - Backward: N/A -- a factory with no autograd support (no differentiable
 #   input, and the uninitialized storage is never a function of another tensor).
@@ -60,8 +64,9 @@ def _resolve(name):
 #   (covered by test__empty_affine_quantized_non_finite_scale below); the
 #   storage bytes are uninitialized so no values can leak into them.
 # - Negative cases: negative dims, non-quantized dtypes, unsupported
-#   memory_formats, sparse layout and a non-quantized .out buffer must raise on
-#   both the aten reference and the candidate (covered below).
+#   memory_formats, sparse layout, invalid scalar qparam types and a
+#   non-quantized .out buffer must raise on both the aten reference and the
+#   candidate (covered below).
 QUANT_DTYPES = [torch.quint8, torch.qint8, torch.qint32]
 
 # Representative qparam values spanning both signs and the zero point; these are
@@ -109,6 +114,12 @@ def _assert_quant_metadata(res_out, ref_out):
     assert res_out.device.type == torch.device(flag_gems.device).type
 
 
+# ---------------------------------------------------------------------------
+# Shape levels: the factory accepts every rank (0-dim through 5-dim), so the
+# shared seven-shape set (two levels via pytest --quick) applies directly.
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark._empty_affine_quantized
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", QUANT_DTYPES)
@@ -130,6 +141,33 @@ def test__empty_affine_quantized(shape, dtype, scale, zero_point):
     assert not res_out._is_view()
     # Default memory_format is the contiguous layout.
     assert res_out.is_contiguous()
+
+
+@pytest.mark._empty_affine_quantized
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", QUANT_DTYPES)
+def test__empty_affine_quantized_value_ranges(shape, value_range, dtype):
+    # The factory owns no value-carrying input tensor, so the spec's five value
+    # ranges are applied to its scalar qparams instead: the scale is drawn from
+    # ``value_range`` as a float64 element and the zero_point as an int64
+    # element, both through the shared ``tu.make_input`` helper (so the
+    # [-1,1] / [0,1] / [-1,0] / [0,dtype_max] / [dtype_min,0] ranges are the
+    # same ones every other operator uses). Every range must round-trip through
+    # q_scale()/q_zero_point() unchanged, whatever the sign or magnitude.
+    scale = tu.make_input(torch.float64, (1,), value_range).item()
+    zero_point = tu.make_input(torch.int64, (1,), value_range).item()
+
+    ref_out = torch.ops.aten._empty_affine_quantized(
+        shape, dtype=dtype, device=_ref_device(), scale=scale, zero_point=zero_point
+    )
+    res_out = _resolve("_empty_affine_quantized")(
+        shape, dtype=dtype, device=flag_gems.device, scale=scale, zero_point=zero_point
+    )
+
+    _assert_quant_metadata(res_out, ref_out)
+    assert res_out.q_scale() == ref_out.q_scale() == scale
+    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
 
 
 @pytest.mark._empty_affine_quantized
@@ -257,6 +295,37 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
 
 
 @pytest.mark._empty_affine_quantized_out
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test__empty_affine_quantized_out_value_ranges(value_range):
+    # Same value-range adaptation as the .default variant, applied to the .out
+    # overload: the qparams written through the out buffer must survive every
+    # range, and the buffer identity must be preserved.
+    shape = (16, 8) if tu.LEVEL == "all" else (2, 19, 7)
+    scale = tu.make_input(torch.float64, (1,), value_range).item()
+    zero_point = tu.make_input(torch.int64, (1,), value_range).item()
+
+    ref_buf = torch.ops.aten._empty_affine_quantized(
+        shape, dtype=torch.quint8, device=_ref_device(), scale=2.5, zero_point=-5
+    )
+    ref_out = torch.ops.aten._empty_affine_quantized.out(
+        shape, scale=scale, zero_point=zero_point, out=ref_buf
+    )
+    assert ref_out is ref_buf
+
+    act_buf = torch.ops.aten._empty_affine_quantized(
+        shape, dtype=torch.quint8, device=flag_gems.device, scale=2.5, zero_point=-5
+    )
+    res_out = _resolve("_empty_affine_quantized_out")(
+        shape, scale=scale, zero_point=zero_point, out=act_buf
+    )
+    assert res_out is act_buf
+
+    _assert_quant_metadata(res_out, ref_out)
+    assert res_out.q_scale() == ref_out.q_scale() == scale
+    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
+
+
+@pytest.mark._empty_affine_quantized_out
 def test__empty_affine_quantized_out_non_contiguous_view():
     # The .out overload must write qparams through a non-contiguous view of a
     # larger buffer, leaving the base tensor's own qparams untouched.
@@ -350,6 +419,26 @@ def test__empty_affine_quantized_rejects_invalid_memory_format(memory_format):
             _resolve("_empty_affine_quantized")(
                 (1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format
             )
+
+
+@pytest.mark._empty_affine_quantized
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"scale": "not-a-float"},
+        {"zero_point": 1.5},
+        {"zero_point": 1 << 70},
+    ],
+)
+def test__empty_affine_quantized_rejects_invalid_scalar_qparams(kwargs):
+    # scale is a float and zero_point an int64 in the schema: passing a string,
+    # a float where an int is required, or a value wider than int64 fails the
+    # overload schema match on the reference and must be rejected by the
+    # candidate as well.
+    with pytest.raises((RuntimeError, TypeError, ValueError, OverflowError)):
+        torch.ops.aten._empty_affine_quantized((2, 3), dtype=torch.quint8, **kwargs)
+    with pytest.raises((RuntimeError, TypeError, ValueError, OverflowError)):
+        _resolve("_empty_affine_quantized")((2, 3), dtype=torch.quint8, **kwargs)
 
 
 @pytest.mark._empty_affine_quantized_out

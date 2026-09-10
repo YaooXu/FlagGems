@@ -151,12 +151,13 @@ def _build_inputs_fn(plan, dtype, device):
         padding,
         output_padding,
         dilation,
-        {},
     )
 
 
 class SlowConvTranspose3dBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding, output_padding, dilation)."""
+    """Two-phase GenericBenchmark over the transposed conv3d parameter tuple."""
+
+    DEFAULT_SHAPE_DESC = "input/weight shape"
 
     def set_shapes(self, shape_file_path=None):
         self.shapes = SLOW_CONV_TRANSPOSE3D_SHAPES
@@ -169,6 +170,9 @@ def test_slow_conv_transpose3d():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.slow_conv_transpose3d,
+        # flag_gems.slow_conv_transpose3d may not exist until the candidate is
+        # generated; resolve_gems_op still finds the process-local KernelGen
+        # override for this op_name.
         gems_op=getattr(flag_gems, "slow_conv_transpose3d", None),
         dtypes=consts.FLOAT_DTYPES,
     )

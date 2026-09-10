@@ -38,13 +38,20 @@ from . import test_utils as tu
 # dtype= and device= passed explicitly.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (layout, shape, nnz, index_dtype) structures from the
-#     quick vs all levels via --quick: 2-D CSR/CSC, 2-D block BSR/BSC (2x2 blocks),
-#     and 3-D/4-D batched CSR/CSC/BSR with int64 and int32 index tensors;
-#   * value ranges: tu.selected_ranges() over representative layouts, so every
-#     storage dtype is exercised with negative, positive, extreme and degenerate
-#     value ranges (the factory copies the values verbatim, so the structural
-#     result is identical for all of them);
+#   * dtype coverage: the nine required storage dtypes are probed against the
+#     live aten factory and all of them are supported on CUDA (int8, uint8,
+#     float8_e4m3fn, float8_e5m2, float32, bfloat16, float16, int32, int64);
+#     the full float/int/bool sets from accuracy_utils are added where the
+#     runtime supports them;
+#   * shape levels: the spec ranks >= 2 (the smallest meaningful rank for a
+#     compressed layout) are mapped onto CSR structures, plus dedicated
+#     (layout, shape, nnz, index_dtype) structures for the quick/all levels
+#     selected by --quick: 2-D CSR/CSC, 2-D block BSR/BSC (2x2 blocks) and
+#     3-D/4-D batched CSR/CSC/BSR with int64 and int32 index tensors;
+#   * value ranges: tu.selected_ranges() (five ranges at the "all" level) over
+#     representative layouts, with unsigned dtypes clamped to their
+#     representable range (the factory copies the values verbatim, so the
+#     structural result is identical for every range);
 #   * edge cases: empty storage (nnz == 0) for every layout, size-inferred
 #     (no-size) construction, and nan/inf/-inf/±0.0 stored values;
 #   * backward: the factory records an autograd formula w.r.t. the values
@@ -112,10 +119,31 @@ _QUICK_VALUE_CASES = [
     (torch.sparse_csr, (2, 19, 7), 12, torch.int64),
 ]
 
+# Dtypes whose raw bit pattern must be compared (torch.testing.assert_close
+# cannot compare float8 tensors on CUDA in this torch build).
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+# Narrow integer storages that are not part of accuracy_utils.ALL_INT_DTYPES.
+_NARROW_INT_DTYPES = (torch.int8, torch.uint8)
+
+
+def _dedupe(dtypes):
+    out = []
+    for dtype in dtypes:
+        if dtype not in out:
+            out.append(dtype)
+    return out
+
+
 # The factory accepts every storage dtype the sparse compressed runtime
-# supports: all float, all int, and bool.
-_SPARSE_COMPRESSED_DTYPES = (
-    utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+# supports; the nine required dtypes are all accepted on CUDA, so they are
+# included explicitly, and the accuracy_utils sets add the remaining storages.
+_INT_STORAGE_DTYPES = _NARROW_INT_DTYPES + tuple(utils.ALL_INT_DTYPES)
+_SPARSE_COMPRESSED_DTYPES = _dedupe(
+    list(_NARROW_INT_DTYPES)
+    + list(_FP8_DTYPES)
+    + list(utils.ALL_FLOAT_DTYPES)
+    + list(utils.ALL_INT_DTYPES)
+    + list(utils.BOOL_TYPES)
 )
 
 _BLOCK_LAYOUTS = (torch.sparse_bsr, torch.sparse_bsc)
@@ -136,6 +164,31 @@ def _value_range_cases():
         return _QUICK_VALUE_CASES
     if tu.LEVEL == "all":
         return _ALL_VALUE_CASES
+
+
+def _shape_level_cases():
+    """The spec shape levels restricted to ranks a compressed layout accepts.
+
+    Sparse compressed layouts need at least two dimensions (rows, columns);
+    rank 3+ is interpreted as batched CSR. tu.selected_shapes() drives the
+    quick / full split through the --quick flag.
+    """
+    return [shape for shape in tu.selected_shapes() if len(shape) >= 2]
+
+
+def _range_for_dtype(dtype, value_range):
+    """Clamp a range to what the storage dtype can represent.
+
+    Unsigned integer storages cannot represent the negative low bound of the
+    spec ranges, so it is clamped to 0; a range that then collapses to a single
+    point is filled with that constant by tu.make_input (instead of feeding an
+    invalid ``low >= high`` interval to torch.testing.make_tensor).
+    """
+    low_symbol, high_symbol = value_range
+    if dtype != torch.bool and not dtype.is_floating_point:
+        if torch.iinfo(dtype).min == 0 and low_symbol.startswith("-"):
+            low_symbol = "0"
+    return [low_symbol, high_symbol]
 
 
 def _make_input(
@@ -177,7 +230,9 @@ def _make_input(
     compressed = torch.zeros(batch + (comp_dim + 1,), dtype=torch.long)
     compressed[..., 1:] = torch.cumsum(counts, -1)
     block_shape = (bs0, bs1) if bs0 > 1 else ()
-    values = tu.make_input(dtype, entries + block_shape, value_range)
+    values = tu.make_input(
+        dtype, entries + block_shape, _range_for_dtype(dtype, value_range)
+    )
     return (
         compressed.to(device=device, dtype=index_dtype),
         plain.to(device=device, dtype=index_dtype),
@@ -194,6 +249,22 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op(
         "sparse_compressed_tensor", getattr(flag_gems, "sparse_compressed_tensor", None)
     )
+
+
+def _assert_values(res_values, ref_values, dtype, equal_nan=False):
+    # Values follow the usual tolerance policy: floats are compared with
+    # assert_close, integers and bools exactly. The factory copies the payload
+    # verbatim, so float8 bit patterns are compared exactly too.
+    if dtype in _INT_STORAGE_DTYPES + tuple(utils.BOOL_TYPES):
+        utils.gems_assert_equal(res_values, ref_values, equal_nan=equal_nan)
+    elif dtype in _FP8_DTYPES:
+        utils.gems_assert_equal(
+            res_values.view(torch.uint8),
+            ref_values.view(torch.uint8),
+            equal_nan=equal_nan,
+        )
+    else:
+        utils.gems_assert_close(res_values, ref_values, dtype, equal_nan=equal_nan)
 
 
 def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
@@ -226,12 +297,46 @@ def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
     # Indices are exact integer data.
     utils.gems_assert_equal(res_c, ref_c)
     utils.gems_assert_equal(res_p, ref_p)
-    # Values follow the usual tolerance policy: floats are compared with
-    # assert_close, integers and bools exactly.
-    if dtype in utils.ALL_INT_DTYPES + utils.BOOL_TYPES:
-        utils.gems_assert_equal(res_out.values(), ref_out.values())
-    else:
-        utils.gems_assert_close(res_out.values(), ref_out.values(), dtype)
+    _assert_values(res_out.values(), ref_out.values(), dtype)
+
+
+@pytest.mark.sparse_compressed_tensor
+@pytest.mark.parametrize("shape", _shape_level_cases())
+@pytest.mark.parametrize("dtype", [torch.float32, torch.int32, torch.float8_e4m3fn])
+def test_sparse_compressed_tensor_shape_levels(shape, dtype):
+    # Spec shape levels mapped onto a compressed layout: rank 2 is a plain
+    # CSR matrix, rank 3+ is a batched CSR. Only float32 / int32 / fp8 are
+    # swept here to keep the shape-level workload bounded; the full dtype grid
+    # is covered by the structure tests below.
+    layout = torch.sparse_csr
+    nnz = 8
+    compressed, plain, values = _make_input(layout, shape, nnz, dtype)
+    ref_compressed = utils.to_reference(compressed)
+    ref_plain = utils.to_reference(plain)
+    ref_values = utils.to_reference(values)
+
+    ref_out = torch.ops.aten.sparse_compressed_tensor(
+        ref_compressed,
+        ref_plain,
+        ref_values,
+        list(shape),
+        dtype=dtype,
+        layout=layout,
+        device=ref_compressed.device,
+    )
+    gems_op = _resolve_gems_op()
+    res_out = gems_op(
+        compressed,
+        plain,
+        values,
+        list(shape),
+        dtype=dtype,
+        layout=layout,
+        device=compressed.device,
+    )
+
+    assert res_out.shape == ref_out.shape == tuple(shape)
+    _assert_result(res_out, ref_out, dtype, layout, torch.int64)
 
 
 @pytest.mark.sparse_compressed_tensor
@@ -350,8 +455,8 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
     # The stored values sweep the full spec range set (positive, negative,
     # extreme and degenerate); the factory copies the payload verbatim, so the
     # whole constructed tensor must round-trip every range bit-for-bit
-    # (tu.assert_result_close compares int/bool exactly and floats with
-    # equal_nan=True).
+    # (_assert_result compares int/bool/fp8 exactly and floats with the usual
+    # tolerance, equal_nan=True).
     layout, shape, nnz, index_dtype = case
     compressed, plain, values = _make_input(
         layout, shape, nnz, dtype, index_dtype, value_range
@@ -381,7 +486,6 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
     )
 
     _assert_result(res_out, ref_out, dtype, layout, index_dtype)
-    tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.sparse_compressed_tensor
@@ -431,7 +535,7 @@ def test_sparse_compressed_tensor_nan_inf_values(dtype):
     assert torch.ops.aten._nnz(res_out) == torch.ops.aten._nnz(ref_out) == 7
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=True)
+    _assert_values(res_out.values(), ref_out.values(), dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_compressed_tensor

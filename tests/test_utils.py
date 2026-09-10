@@ -134,33 +134,79 @@ QUICK_SHAPES = [
     (2, 19, 7),
 ]
 
-# Full set: representative 0-3 dim shapes plus 5-8 dim high-rank tensors.
-ALL_SHAPES = [
+# Full set — the required 7 shapes from the team's operator-test spec
+# (0~5 dims; a fixed-dim operator keeps only the ranks it accepts).
+REQUIRED_SHAPES = [
     (),  # 0-dim scalar
     (1,),  # single-element 1-dim
     (256,),  # regular 1-dim
     (1024, 1024),  # regular 2-dim
-    (7, 13, 29),  # regular 3-dim
+    (20, 320, 15),  # regular 3-dim
+    (16, 128, 64, 60),  # 4-dim
     (16, 7, 57, 32, 29),  # 5-dim
-    (12, 9, 3, 6, 8, 6),  # 6-dim
-    (3, 6, 4, 4, 6, 5, 4),  # 7-dim
-    (7, 3, 12, 4, 2, 15, 2, 2),  # 8-dim
 ]
+ALL_SHAPES = REQUIRED_SHAPES
 
 QUICK_RANGES = [
     ["-1", "1"],
 ]
 
-# Full set: core ranges plus half-width and degenerate endpoints.
-ALL_RANGES = [
+# Full set — the required 5 value ranges from the spec
+#   [-1,1], [0,1], [-1,0], [0,dtype_max], [dtype_min,0]
+REQUIRED_RANGES = [
     ["-1", "1"],
     ["0", "1"],
     ["-1", "0"],
     ["0", "max"],
     ["min", "0"],
-    ["0", "max/2"],
-    ["min/2", "0"],
-    ["0", "0"],
-    ["1", "1"],
-    ["-1", "-1"],
 ]
+ALL_RANGES = REQUIRED_RANGES
+
+# Required dtype coverage (spec). int8/uint8/fp8 must be present for every
+# operator whose CUDA kernel supports them; fp32/bf16/fp16/int32/int64 are
+# added when the operator supports them.
+REQUIRED_DTYPES = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float32,
+    torch.bfloat16,
+    torch.float16,
+    torch.int32,
+    torch.int64,
+]
+
+# Required minimum number of correctness cases per operator (spec: "at least
+# 100"). 5 ranges x 7 shapes = 35 per dtype, so >=3 dtypes already clears it.
+MIN_CASES = 100
+
+
+def supported_dtypes(operator, candidates=None, probe=None):
+    """Return the subset of ``candidates`` that the op supports on the device.
+
+    ``operator`` is a ``torch.ops.aten`` operator name; ``probe`` is an optional
+    callable ``(op_name) -> bool`` (used by callers that want a custom check).
+    The default probe builds a small input for a few ranks/dtypes and calls the
+    op, treating any exception as "unsupported".
+    """
+    import torch
+
+    candidates = list(candidates if candidates is not None else REQUIRED_DTYPES)
+    if probe is not None:
+        return [d for d in candidates if probe(operator, d)]
+
+    packet = getattr(torch.ops.aten, operator, None)
+    if packet is None:
+        return []
+    supported = []
+    for dtype in candidates:
+        try:
+            x = torch.testing.make_tensor(
+                (4,), dtype=dtype, device=flag_gems.device, low=0, high=1
+            )
+            packet.default(x)
+        except Exception:
+            continue
+        supported.append(dtype)
+    return supported

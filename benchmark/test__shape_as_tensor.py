@@ -65,6 +65,8 @@ class ShapeAsTensorBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with shapes tuned for _shape_as_tensor."""
 
     def set_shapes(self, shape_file_path=None):
+        # _shape_as_tensor is not listed in core_shapes.yaml; use the local
+        # allocation-dominated list instead of resolving a shape file.
         self.shapes = _SHAPE_AS_TENSOR_SHAPES
 
 
@@ -75,6 +77,10 @@ def test__shape_as_tensor():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._shape_as_tensor,
+        # flag_gems has no public ``_shape_as_tensor`` direct callable yet; the
+        # candidate is supplied by the KernelGen process-local override keyed on
+        # the public operator name (resolved via
+        # flag_gems.testing.resolve_gems_op inside the benchmark runner).
         gems_op=getattr(flag_gems, "_shape_as_tensor", None),
         dtypes=consts.FLOAT_DTYPES,
     )

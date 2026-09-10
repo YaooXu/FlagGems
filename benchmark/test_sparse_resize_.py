@@ -22,7 +22,7 @@ from . import base, consts
 # aten::sparse_resize_(Tensor(a!) self, int[] size, int sparse_dim, int dense_dim)
 # -> Tensor(a!) resizes a sparse COO tensor in place to ``size`` with
 # ``sparse_dim`` sparse and ``dense_dim`` dense dimensions. The cost scales
-# with nnz and the storage touched, so each case below is a
+# with nnz and the sparse/dense storage touched, so each case below is a
 # (logical_src_shape, sparse_dim, nnz, dst_size, dst_sparse_dim, dst_dense_dim)
 # tuple. Only non-shrinking resizes on non-empty tensors and free reshapes of
 # the empty tensor are benchmarked (the reference rejects the other directions
@@ -41,7 +41,7 @@ _SPARSE_RESIZE_CASES = [
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, device):
     # Sparse COO input built directly on the benchmark device. Indices are
     # drawn with replacement (a valid, possibly uncoalesced sparse structure);
-    # the resize cost depends only on nnz and the dense trailing dims.
+    # the resize cost depends only on nnz and the sparse/dense storage.
     dense_shape = tuple(shape[sparse_dim:])
     values_shape = (nnz,) + dense_shape
     indices = torch.stack(
@@ -50,7 +50,7 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, device):
             for dim in shape[:sparse_dim]
         ]
     )
-    values = torch.randn(values_shape, dtype=dtype, device=device)
+    values = torch.randn(values_shape, device=device).to(dtype)
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
@@ -64,7 +64,14 @@ def _case_fn(shape, dtype):
             "sparse_dim": new_sparse_dim,
             "dense_dim": new_dense_dim,
         },
-        builder_args=(src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim),
+        builder_args=(
+            src_shape,
+            sparse_dim,
+            nnz,
+            size,
+            new_sparse_dim,
+            new_dense_dim,
+        ),
     )
 
 

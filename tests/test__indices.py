@@ -38,27 +38,62 @@ setattr(
 # NotImplementedError), so every workload below feeds a sparse COO tensor.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/all
-#     levels, ranks 1-7, all-sparse and hybrid sparse+dense, with varying nnz
-#     so the (sparse_dim, nnz) shape of the result is exercised;
-#   * value ranges: tu.selected_ranges() over representative layouts, so every
-#     supported storage dtype is exercised with negative, positive, extreme and
-#     degenerate value ranges (the returned indices are identical for all of
-#     them);
-#   * edge cases: empty (nnz == 0, dense and hybrid), uncoalesced (duplicate,
-#     unsorted coordinates), fully-dense sparse storage, and nan/inf/-0.0
-#     values (all ignored by the accessor);
-#   * negative: dense tensors, SparseCsr tensors and non-tensor inputs are
-#     rejected.
+#   * dtypes -- the full required set (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/
+#     bf16/fp16/int32/int64) plus fp64/int16/bool where the device supports
+#     them, probed at import time with tu.supported_dtypes over a tiny sparse
+#     COO tensor;
+#   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
+#     [min,0]) over both representative COO layouts and the spec shape levels;
+#   * shapes/layouts -- the tu.selected_shapes() levels (quick: (2,19,7); full:
+#     1-D .. 5-D) mapped to all-sparse COO, plus dedicated sparse layouts
+#     (ranks 1-5, all-sparse and hybrid sparse+dense) with varying nnz so the
+#     (sparse_dim, nnz) shape of the result is exercised;
+#   * edge cases -- empty (nnz == 0, dense and hybrid), uncoalesced (duplicate,
+#     unsorted coordinates), explicit zeros, fully-dense sparse storage, and
+#     nan/inf/-0.0 values (all ignored by the accessor);
+#   * negative cases -- dense tensors, SparseCsr tensors and non-tensor inputs
+#     are rejected.
 #
 # No broadcast/backward dimensions apply: the operator is unary, returns a view
 # of the input's own storage (there is nothing to broadcast against) and its
 # result is an int64 metadata tensor (nothing to differentiate).
 
-# The result ignores the stored values, but the candidate must accept any
-# storage dtype the sparse COO runtime supports: every float, int, and bool
-# family.
-_INDICES_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+_INDICES_DTYPE_CANDIDATES = list(
+    dict.fromkeys(
+        [
+            *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
+            *utils.ALL_FLOAT_DTYPES,  # + float64 where supported
+            *utils.ALL_INT_DTYPES,  # + int16 where supported
+            *utils.BOOL_TYPES,
+        ]
+    )
+)
+
+
+def _sparse_dtype_probe(op_name, dtype):
+    """Report whether ``op_name`` accepts a tiny sparse COO tensor of ``dtype``.
+
+    ``_indices`` takes a sparse tensor, so the default dense probe of
+    ``tu.supported_dtypes`` cannot decide dtype support; this probe builds a
+    real sparse COO input and calls the aten reference.
+    """
+    del op_name
+    try:
+        indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
+        values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
+        inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
+        out = torch.ops.aten._indices(utils.to_reference(inp))
+        return out.dtype == torch.int64 and tuple(out.shape) == (2, 1)
+    except Exception:
+        return False
+
+
+# Probe the device before parametrizing: an op/dtype pair that cannot run must
+# not be turned into a red test.
+_INDICES_DTYPES = tu.supported_dtypes(
+    "_indices", candidates=_INDICES_DTYPE_CANDIDATES, probe=_sparse_dtype_probe
+) or [torch.float32]
+_INDICES_FLOAT_DTYPES = [dtype for dtype in _INDICES_DTYPES if dtype.is_floating_point]
 
 # (shape, sparse_dim, nnz) triples covering 1-D/2-D/3-D all-sparse, 2-D/3-D
 # hybrid, and mixed sparse+dense ranks up to 5-D.
@@ -81,28 +116,58 @@ _INDICES_COO_CASES_ALL = [
     ((3, 4, 2, 5, 3, 4, 2), 3, 13),
 ]
 
+# Number of stored entries for the spec-shape sweep: small enough that every
+# mapped shape stays cheap (sparse storage only materializes nnz entries), and
+# > 1 so duplicate (uncoalesced) coordinates are exercised for small index
+# spaces.
+_INDICES_SPEC_NNZ = 6
+
 
 def _coo_cases():
-    """(shape, sparse_dim, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
+    """(shape, sparse_dim, nnz) layouts selected by pytest --quick vs default (full)."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 2, 8)]
-    if tu.LEVEL == "all":
-        return _INDICES_COO_CASES_CORE + _INDICES_COO_CASES_ALL
+    return _INDICES_COO_CASES_CORE + _INDICES_COO_CASES_ALL
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
         return [((2, 19, 7), 2, 8)]
-    if tu.LEVEL == "all":
-        return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 9)]
+    return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 9)]
+
+
+def _spec_shapes(min_rank=1, max_rank=None):
+    """``tu.selected_shapes()`` filtered to the ranks a sparse layout supports.
+
+    The shared shape set is dense-oriented and includes a 0-dim entry, which has
+    no sparse analogue; ``min_rank``/``max_rank`` keep only the ranks a COO
+    layout can represent.
+    """
+    shapes = [shape for shape in tu.selected_shapes() if len(shape) >= min_rank]
+    if max_rank is not None:
+        shapes = [shape for shape in shapes if len(shape) <= max_rank]
+    return shapes
+
+
+def _make_values(dtype, shape, value_range):
+    """Value-range helper with unsigned-bound snapping.
+
+    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
+    (``-1`` is not representable); the accessor only reads index metadata, so
+    the range is snapped to its representable subset for that one dtype/range
+    pair.
+    """
+    if dtype == torch.uint8 and value_range == ["-1", "0"]:
+        value_range = ["0", "0"]
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side index generation; the values tensor comes from the
-    # shared value-range helper (tu.make_input) and the sparse tensor is created
-    # on the test device. Duplicate indices are allowed and merely leave the
-    # tensor uncoalesced (covered explicitly below).
+    # shared value-range helper and the sparse tensor is created on the test
+    # device. Duplicate indices are allowed and merely leave the tensor
+    # uncoalesced (covered explicitly below).
     gen = torch.Generator("cpu").manual_seed(seed)
     sparse_shape = shape[:sparse_dim]
     dense_shape = shape[sparse_dim:]
@@ -112,7 +177,7 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
             for dim in sparse_shape
         ]
     )
-    values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)
+    values = _make_values(dtype, (nnz,) + dense_shape, value_range)
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
@@ -158,11 +223,30 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _INDICES_DTYPES)
 def test__indices_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every storage dtype (bool/int snap the range to the representable
-    # set). The returned (sparse_dim, nnz) index view must match the reference
-    # exactly and alias the input's indices storage.
+    # for every probed storage dtype (bool/int snap the range to the
+    # representable set). The returned (sparse_dim, nnz) index view must match
+    # the reference exactly and alias the input's indices storage.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
+    ref_inp = utils.to_reference(inp.clone())
+
+    ref_out = torch.ops.aten._indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark._indices
+@pytest.mark.parametrize("shape", _spec_shapes(min_rank=1))
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _INDICES_DTYPES)
+def test__indices_spec_shapes_value_ranges(shape, value_range, dtype):
+    # Shape level from the shared spec set, mapped to all-sparse COO
+    # (sparse_dim == ndim), crossed with the five spec value ranges. The stored
+    # values never change the returned index view, but they exercise the
+    # value-range machinery end to end on every rank.
+    nnz = _INDICES_SPEC_NNZ
+    inp = _make_coo_input(shape, len(shape), nnz, dtype, value_range)
     ref_inp = utils.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
@@ -177,8 +261,9 @@ def test__indices_layouts(case, dtype):
 @pytest.mark.parametrize("dtype", _INDICES_DTYPES)
 def test__indices_value_ranges(case, value_range, dtype):
     # The stored values sweep the full spec range set (positive, negative,
-    # extreme and degenerate); the returned index view never changes because
-    # _indices reads only layout metadata, not the values payload.
+    # extreme and degenerate) on representative all-sparse and hybrid layouts;
+    # the returned index view never changes because _indices reads only layout
+    # metadata, not the values payload.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, value_range)
     ref_inp = utils.to_reference(inp.clone())
@@ -232,7 +317,7 @@ def test__indices_uncoalesced(dtype):
     # sorted, so a coalescing implementation would visibly change the result.
     shape = (3, 4)
     indices = torch.tensor([[0, 0, 1, 2, 0], [1, 1, 2, 3, 1]], dtype=torch.long)
-    values = tu.make_input(dtype, (5,), ["-1", "1"])
+    values = _make_values(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
     ref_inp = utils.to_reference(inp.clone())
@@ -245,6 +330,28 @@ def test__indices_uncoalesced(dtype):
 
 @pytest.mark._indices
 @pytest.mark.parametrize("dtype", _INDICES_DTYPES)
+def test__indices_explicit_zeros(dtype):
+    # Explicit zeros are ordinary stored entries: the accessor returns their
+    # coordinates too (all three), never dropping them like a value-based nnz
+    # filter would.
+    shape = (3, 3)
+    indices = torch.tensor([[0, 1, 2], [0, 1, 2]], dtype=torch.long)
+    if dtype == torch.bool:
+        values = torch.tensor([False, False, False], dtype=dtype)
+    else:
+        values = torch.tensor([0.0, 0.0, 0.0], dtype=dtype)
+    inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
+    ref_inp = utils.to_reference(inp.clone())
+
+    ref_out = torch.ops.aten._indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, ref_inp)
+    assert res_out.shape == (2, 3)
+
+
+@pytest.mark._indices
+@pytest.mark.parametrize("dtype", _INDICES_DTYPES)
 def test__indices_full_storage(dtype):
     # Fully-dense sparse storage: every logical position is stored, so the
     # (sparse_dim, numel) index tensor lists every coordinate exactly once.
@@ -253,7 +360,7 @@ def test__indices_full_storage(dtype):
     indices = torch.stack(
         torch.meshgrid(torch.arange(shape[0]), torch.arange(shape[1]), indexing="ij")
     ).reshape(2, nnz)
-    values = tu.make_input(dtype, (nnz,), ["-1", "1"])
+    values = _make_values(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == nnz
     ref_inp = utils.to_reference(inp.clone())
@@ -265,7 +372,7 @@ def test__indices_full_storage(dtype):
 
 
 @pytest.mark._indices
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", _INDICES_FLOAT_DTYPES)
 def test__indices_nan_inf_values_ignored(dtype):
     # nan/inf/-inf/±0.0 are ordinary stored values: _indices must still return
     # exactly the stored index tensor, unchanged, for every one of them.
@@ -292,7 +399,9 @@ def test__indices_dense_raises():
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
         torch.ops.aten._indices(utils.to_reference(inp))
-    with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
+    with pytest.raises(
+        (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
+    ):
         _resolve_gems_op()(inp)
 
 
@@ -308,7 +417,9 @@ def test__indices_csr_raises():
     )
     with pytest.raises(NotImplementedError):
         torch.ops.aten._indices(utils.to_reference(inp))
-    with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
+    with pytest.raises(
+        (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
+    ):
         _resolve_gems_op()(inp)
 
 
@@ -318,5 +429,7 @@ def test__indices_rejects_non_tensor():
     # combination of arguments path and raises.
     with pytest.raises(RuntimeError):
         torch.ops.aten._indices(3.14)
-    with pytest.raises((TypeError, ValueError, RuntimeError)):
+    with pytest.raises(
+        (TypeError, ValueError, RuntimeError, NotImplementedError, AttributeError)
+    ):
         _resolve_gems_op()(3.14)

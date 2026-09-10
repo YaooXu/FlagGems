@@ -21,54 +21,73 @@ from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # aten::can_cast(ScalarType from_, ScalarType to) -> bool answers whether a value
-# of ScalarType ``from_`` can be cast to ScalarType ``to`` according to aten's
+# of ScalarType ``from_`` can be cast to ScalarType ``to`` under aten's
 # cast-safety rules. It is a pure dtype-metadata query: no tensor is created,
 # the device is never touched, and the result is a plain Python bool.
 #
 # Regular-operator spec dimension applicability:
 #   * value ranges -- N/A: the op takes two ScalarType arguments and never a
 #     tensor, so there is no payload to sweep (tu.make_input / selected_ranges
-#     do not apply). The dtype cross product below is the analogue: it covers
-#     every family pair (bool/integral/floating/complex) in both directions,
-#     including the diagonal (every type can cast to itself) and the asymmetric
-#     cases such as float -> int.
+#     do not apply). The (from_, to) dtype cross product below is the analogue:
+#     it covers every family pair (bool / integral / floating / complex / fp8)
+#     in both directions, including the diagonal (every type casts to itself)
+#     and the asymmetric cases such as float -> int.
 #   * shape levels -- N/A: no tensor shapes exist for the op.
-#   * broadcast    -- N/A: the op is a unary-dtype function returning a scalar.
+#   * broadcast    -- N/A: the op is a scalar dtype-pair function.
 #   * backward     -- N/A: the op is not differentiable and builds no graph.
 #   * negative     -- covered: non-ScalarType arguments (str/None/float/list)
 #     raise on the reference and must raise on the candidate too.
 #   * nan/inf      -- N/A: no tensor payload.
-_CAN_CAST_DTYPES = [
-    torch.bool,
-    torch.uint8,
-    torch.int8,
-    torch.int16,
-    torch.int32,
-    torch.int64,
-    torch.float16,
-    torch.bfloat16,
-    torch.float32,
-    torch.float64,
-]
-if hasattr(torch, "complex32"):
-    _CAN_CAST_DTYPES.append(torch.complex32)
-_CAN_CAST_DTYPES += [torch.complex64, torch.complex128]
+#
+# Case budget: since a call is O(1) and allocates nothing, even the quick level
+# runs the full required-dtype cross product. Quick = 11 dtypes x 11 dtypes +
+# 8 negative cases = 129 cases; full = 15 x 15 + 8 = 233, both well above
+# tu.MIN_CASES.
+_REQUIRED_DTYPE_NAMES = (
+    "bool",
+    "int8",
+    "uint8",
+    "float8_e4m3fn",
+    "float8_e5m2",
+    "float32",
+    "bfloat16",
+    "float16",
+    "int32",
+    "int64",
+    "complex64",
+)
+_EXTRA_DTYPE_NAMES = ("int16", "float64", "complex32", "complex128")
+
+
+def _torch_dtypes(names):
+    # Resolve only the ScalarTypes the running PyTorch actually exposes (fp8
+    # and complex32 are absent on some builds).
+    resolved = []
+    for name in names:
+        dtype = getattr(torch, name, None)
+        if isinstance(dtype, torch.dtype):
+            resolved.append(dtype)
+    return resolved
+
+
+_REQUIRED_CAN_CAST_DTYPES = _torch_dtypes(_REQUIRED_DTYPE_NAMES)
+_ALL_CAN_CAST_DTYPES = _torch_dtypes(_REQUIRED_DTYPE_NAMES + _EXTRA_DTYPE_NAMES)
 
 
 def _can_cast_dtypes():
-    # Level-aware dtype coverage: quick keeps one representative ScalarType per
-    # family (bool/integral/floating/complex); core/all cover every standard
-    # ScalarType the runtime exposes so the full cross product runs.
+    # The op touches no memory, so the "quick" level keeps the mandated dtype
+    # set while "all" widens it to every ScalarType the runtime exposes. Both
+    # levels clear the spec's tu.MIN_CASES budget.
     if tu.LEVEL == "quick":
-        return [torch.bool, torch.int32, torch.float16, torch.float32, torch.complex64]
-    return _CAN_CAST_DTYPES
+        return list(_REQUIRED_CAN_CAST_DTYPES)
+    return list(_ALL_CAN_CAST_DTYPES)
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. The default stays None
-    # until flag_gems.can_cast is registered; resolution order is: (1) override,
-    # (2) the direct flag_gems.can_cast callable, (3) LookupError.
+    # Resolved inside each test (never at import time) so the process-local
+    # override installed by KernelGen for this run wins. The direct fallback
+    # stays None until flag_gems.can_cast is available; resolution order is
+    # (1) override, (2) the direct flag_gems.can_cast callable, (3) LookupError.
     return flag_gems.testing.resolve_gems_op(
         "can_cast", getattr(flag_gems, "can_cast", None)
     )
@@ -87,6 +106,7 @@ def _as_bool(value):
     # return a 0-dim bool tensor. Normalize both before comparing.
     if isinstance(value, torch.Tensor):
         assert value.numel() == 1
+        assert value.dtype == torch.bool
         return bool(value.item())
     return bool(value)
 
@@ -109,8 +129,8 @@ def test_can_cast(from_dtype, to_dtype):
     # Cross product over every standard ScalarType in both directions. Each
     # (from_, to) pair is one workload; the expected outcome comes from the
     # reference and the candidate must agree on both True (same-family
-    # widening, bool -> float, complex widening) and False (float -> int,
-    # int -> float16, complex -> float) cases.
+    # widening, bool -> float, fp8 <-> float, complex widening) and False
+    # (float -> int, int -> float16, complex -> float) cases.
     ref_out = torch.ops.aten.can_cast(from_dtype, to_dtype)
     res_out = _resolve_gems_op()(from_dtype, to_dtype)
 

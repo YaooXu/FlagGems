@@ -36,90 +36,110 @@ for _name in (
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_make_per_channel_quantized_tensor copies a plain integer storage
-# tensor (uint8/int8/int32) into a per-channel affine quantized tensor carrying
-# per-channel scale/zero_point metadata, so the benchmark measures copy
-# bandwidth plus output allocation. There is no core_shapes.yaml entry for it,
-# so the base class would fall back to consts.DEFAULT_SHAPES, which includes a
-# 1-B-element 1-D tensor whose allocation cost would dominate the measurement.
-# Use a modest, allocation-friendly shape set that still spans a realistic range
-# of ranks and tensor sizes.
-QUANT_STORAGE_DTYPES = [torch.uint8, torch.int8, torch.int32]
+# aten::_make_per_channel_quantized_tensor(Tensor self, Tensor scale, Tensor
+# zero_point, int axis) -> Tensor wraps an integer storage tensor into a
+# per-channel affine quantized tensor. The output dtype is derived from the
+# input dtype (uint8 -> quint8, int8 -> qint8, int32 -> qint32) and the data
+# path is a pure bit copy, so the benchmark measures copy bandwidth plus the
+# per-channel output allocation. Only these three integer input dtypes are
+# accepted, so the dtype set is local rather than consts.FLOAT_DTYPES.
+STORAGE_DTYPES = [torch.uint8, torch.int8, torch.int32]
+_QUANT_DTYPE = {
+    torch.uint8: torch.quint8,
+    torch.int8: torch.qint8,
+    torch.int32: torch.qint32,
+}
 
-MPCQT_SHAPES = [
-    (1024,),
-    (4096, 256),
-    (1024, 1024),
-    (64, 512, 512),
-    (16, 128, 64, 1280),
+# (shape, axis) pairs. The axis must stay small because the per-channel
+# metadata has one element per slice along it, while the element count drives
+# the copy cost. The default shape set contains a 1-G-element 1-D tensor whose
+# int32 input + output would need ~8 GiB and OOM on busy GPUs, so these
+# allocation-friendly shapes (<= 2**26 elements, <= 256 MiB int32 per tensor)
+# are used instead.
+SHAPE_AXIS = [
+    ((2**20,), 0),  # 1M channels, 1M elements
+    ((1024, 1024), 0),  # 1024 channels, 1M elements
+    ((4096, 4096), 0),  # 4096 channels, 16M elements
+    ((64, 512, 512), 0),  # 64 channels, 16M elements
+    ((16, 128, 64, 1280), 0),  # 16 channels, 16.7M elements
+    ((8, 512, 512, 32), 0),  # 8 channels, 67M elements
 ]
+
+
+def _make_input(shape, dtype, device):
+    info = torch.iinfo(dtype)
+    return torch.randint(info.min, info.max + 1, shape, dtype=dtype, device=device)
+
+
+def _make_metadata(num_channels, device):
+    # Per-channel metadata has one entry per slice along the axis; the op stores
+    # it verbatim, so the values do not affect the timing of the copy path.
+    scales = torch.rand(num_channels, dtype=torch.float32, device=device) + 0.1
+    zero_points = torch.zeros(num_channels, dtype=torch.int64, device=device)
+    return scales, zero_points
 
 
 def _case_fn(shape, dtype):
     del dtype
+    axis = dict(SHAPE_AXIS)[tuple(shape)]
     yield base.BenchmarkCasePlan(
         shape={"input": shape},
-        params={"axis": 0},
-        builder_args=(shape,),
+        params={"axis": axis},
+        builder_args=(shape, axis),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    shape = plan.builder_args[0]
-    axis = plan.params["axis"]
-    num_channels = shape[axis]
-    # The storage tensor holds raw integer values; scales stay positive and
-    # zero_points stay in [1, 128) so every storage dtype stays in range.
-    inp = torch.randint(0, 100, shape, dtype=dtype, device=device)
-    scale = torch.rand(num_channels, dtype=torch.float32, device=device) + 0.1
-    zero_point = torch.randint(1, 128, (num_channels,), dtype=dtype, device=device)
-    return inp, scale, zero_point, axis
+    shape, axis = plan.builder_args
+    inp = _make_input(shape, dtype, device)
+    scales, zero_points = _make_metadata(shape[axis], device)
+    return inp, {
+        "scale": scales,
+        "zero_point": zero_points,
+        "axis": plan.params["axis"],
+    }
 
 
 def _build_inputs_fn_out(plan, dtype, device):
-    shape = plan.builder_args[0]
-    axis = plan.params["axis"]
+    shape, axis = plan.builder_args
+    inp = _make_input(shape, dtype, device)
+    scales, zero_points = _make_metadata(shape[axis], device)
+    # The .out overload writes into an existing per-channel quantized tensor
+    # whose dtype is the derived quantized dtype; allocate it with the same shape
+    # and different metadata so the overwrite is observable (allocation happens
+    # in the builder and is not timed).
     num_channels = shape[axis]
-    quantized_dtype = {
-        torch.uint8: torch.quint8,
-        torch.int8: torch.qint8,
-        torch.int32: torch.qint32,
-    }[dtype]
-    inp = torch.randint(0, 100, shape, dtype=dtype, device=device)
-    scale = torch.rand(num_channels, dtype=torch.float32, device=device) + 0.1
-    zero_point = torch.randint(1, 128, (num_channels,), dtype=dtype, device=device)
-    # The .out variant writes into (and returns) the provided buffer without
-    # changing its dtype, so the buffer is created with the quantized dtype
-    # derived from the benchmarked storage dtype. The initial metadata is
-    # deliberately different so the overwrite performed by the op is observable.
-    # Allocation is not timed.
     out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=torch.full((num_channels,), 1.0, dtype=torch.float64, device=device),
-        zero_points=torch.full((num_channels,), 0, dtype=torch.int64, device=device),
+        scales=torch.full((num_channels,), 9.0, dtype=torch.float64, device=device),
+        zero_points=torch.full((num_channels,), 9, dtype=torch.int64, device=device),
         axis=axis,
-        dtype=quantized_dtype,
+        dtype=_QUANT_DTYPE[dtype],
         device=device,
     )
-    return inp, scale, zero_point, axis, {"out": out}
+    return inp, {
+        "scale": scales,
+        "zero_point": zero_points,
+        "axis": plan.params["axis"],
+        "out": out,
+    }
 
 
 class MakePerChannelQuantizedTensorBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark restricted to allocation-friendly shapes.
+    """Two-phase GenericBenchmark that supplies the per-channel metadata.
 
     aten::_make_per_channel_quantized_tensor(Tensor self, Tensor scale, Tensor
-    zero_point, int axis) -> Tensor needs per-channel metadata tensors and an
-    axis scalar alongside the storage tensor, which the pointwise families do
-    not supply, so the case builder and input builder forward them explicitly.
-    The output is a quantized tensor of the same shape (dtype derived from the
-    storage dtype), so each case needs input + output (2x one tensor's memory).
+    zero_point, int axis) -> Tensor needs the axis plus two metadata tensors
+    alongside the input, which the pointwise families do not supply, so the case
+    builder and input builder forward them explicitly. The output is a quantized
+    tensor of the same shape (dtype derived from the input dtype), so each case
+    needs input + output (2x one tensor's memory).
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = MPCQT_SHAPES
-
-    def set_more_shapes(self):
-        return []
+        # Ignore core_shapes.yaml / DEFAULT_SHAPES and use the allocation-friendly
+        # per-channel shape set above.
+        self.shapes = [shape for shape, _ in SHAPE_AXIS]
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -129,8 +149,11 @@ def test__make_per_channel_quantized_tensor():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._make_per_channel_quantized_tensor,
+        # KernelGen installs the candidate through flag_gems.testing.override_gems_op;
+        # the direct attribute may not exist yet, so fall back to None (the
+        # resolve step then picks up the override).
         gems_op=getattr(flag_gems, "_make_per_channel_quantized_tensor", None),
-        dtypes=QUANT_STORAGE_DTYPES,
+        dtypes=STORAGE_DTYPES,
     )
     bench.run()
 
@@ -143,6 +166,6 @@ def test__make_per_channel_quantized_tensor_out():
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._make_per_channel_quantized_tensor.out,
         gems_op=getattr(flag_gems, "_make_per_channel_quantized_tensor_out", None),
-        dtypes=QUANT_STORAGE_DTYPES,
+        dtypes=STORAGE_DTYPES,
     )
     bench.run()

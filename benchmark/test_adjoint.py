@@ -22,15 +22,19 @@ from . import base, consts, utils
 # aten::adjoint conjugates and swaps the last two dimensions of a matrix or
 # batch of matrices; it is a zero-copy view, so the benchmark measures
 # dispatch + view-materialization overhead. 1-D shapes are excluded because
-# aten::adjoint rejects rank-1 tensors, and 0-D is a deprecated edge case.
+# aten::adjoint rejects rank-1 tensors and 0-D is a deprecated edge case that
+# does not exercise the transpose path.
 ADJOINT_SHAPES = [
     (64, 64),
     (256, 256),
     (1024, 1024),
+    (2048, 2048),
     (4096, 4096),
     (128, 512, 256),
     (64, 512, 512),
+    (32, 128, 256),
     (8, 16, 32, 64),
+    (4, 8, 16, 32, 64),
 ]
 
 
@@ -52,8 +56,9 @@ def _build_inputs_fn(plan, dtype, device):
 class AdjointBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark limited to matrix / batch-of-matrices shapes.
 
-    The default shape set contains 1-D tensors, which aten::adjoint rejects at
-    runtime, so the case list is restricted to the rank >= 2 shapes above.
+    The default shape set (and GenericBenchmark's additional COMPREHENSIVE
+    shapes) contain 1-D tensors, which aten::adjoint rejects at runtime, so the
+    benchmark overrides ``set_shapes`` with the rank >= 2 shape list above.
     """
 
     def set_shapes(self, shape_file_path=None):

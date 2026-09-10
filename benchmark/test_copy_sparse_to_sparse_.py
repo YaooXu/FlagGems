@@ -19,66 +19,97 @@ import flag_gems
 
 from . import base, consts
 
-# (sparse shape, sparse_dim, nnz). The copy transfers nnz entries, so timing
-# cases sweep nnz from a small working set up to a few million stored entries,
-# across 2-D, batched hybrid, all-sparse 3-D, and 4-D layouts. Every src keeps
-# nnz >= numel so duplicate indices guarantee an uncoalesced source, which is
-# the interesting storage for a verbatim structure copy.
+# aten::copy_sparse_to_sparse_(Tensor(a!) self, Tensor src, bool non_blocking=False)
+# -> Tensor(a!)
+#
+# Performance-relevant sparse COO layouts: (shape, sparse_dim, nnz). ``nnz`` is
+# always <= prod(shape[:sparse_dim]) so the requested number of stored entries
+# actually fits the sparse dimensions. Both a small and a large nnz (relative to
+# the sparse extent) are included because the copy cost tracks the stored-entry
+# count, not the logical shape.
+
 _COPY_SPARSE_SHAPES = [
-    ((1024, 1024), 2, 65536),
-    ((1024, 1024), 2, 1048576),
-    ((4096, 4096), 2, 1048576),
-    ((64, 512, 512), 3, 524288),
-    ((8, 256, 256), 3, 262144),
-    ((16, 1024, 1024), 2, 8192),
-    ((4, 8, 256, 256), 4, 262144),
+    ((65536,), 1, 32768),  # 1-D all-sparse
+    ((1024, 1024), 2, 262144),  # 2-D COO, 25% density
+    ((4096, 4096), 2, 1048576),  # 2-D COO, large sparse extent
+    ((16, 1024, 1024), 2, 8192),  # 3-D hybrid, low density
+    ((16, 1024, 1024), 2, 65536),  # 3-D hybrid, medium density
+    ((16, 1024, 1024), 2, 524288),  # 3-D hybrid, high density
+    ((16, 1024, 1024), 3, 8192),  # 3-D all-sparse
+    ((256, 2048, 128), 2, 524288),  # 3-D hybrid, dense extent 128
+    ((8, 16, 64, 64), 4, 262144),  # 4-D all-sparse
 ]
 
 
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, device):
+    """Deterministic coalesced sparse COO input on ``device``."""
+    gen = torch.Generator("cpu").manual_seed(0)
     indices = torch.stack(
         [
-            torch.randint(0, dim, (nnz,), dtype=torch.long, device=device)
-            for dim in shape[:sparse_dim]
+            torch.randint(0, shape[dim], (nnz,), generator=gen)
+            for dim in range(sparse_dim)
         ]
     )
-    values = torch.randn((nnz,) + tuple(shape[sparse_dim:]), dtype=dtype, device=device)
-    return torch.sparse_coo_tensor(indices, values, shape, device=device)
+    dense_shape = tuple(shape[sparse_dim:])
+    values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
+    return torch.sparse_coo_tensor(
+        indices.to(device), values.to(device), tuple(shape), device=device
+    )
 
 
 def _case_fn(shape, dtype):
+    # ``shape`` is the (shape, sparse_dim, nnz) descriptor from
+    # _COPY_SPARSE_SHAPES; the plan carries it through builder_args so the
+    # input builder can reconstruct both tensors without a legacy input_fn.
     del dtype
     shape, sparse_dim, nnz = shape
     yield base.BenchmarkCasePlan(
-        shape={"input": shape},
-        params={"nnz": nnz},
+        shape={"input": shape, "sparse_dim": sparse_dim, "nnz": nnz},
+        params={"non_blocking": False},
         builder_args=(shape, sparse_dim, nnz),
     )
 
 
 def _build_inputs_fn(plan, dtype, device):
     shape, sparse_dim, nnz = plan.builder_args
+    # The destination is deliberately a small empty tensor: copy_sparse_to_sparse_
+    # resizes it to the source structure, so the measured work is index/value
+    # materialization rather than any destination allocation done by the caller.
+    dst = torch.sparse_coo_tensor(
+        torch.empty((sparse_dim, 0), dtype=torch.long, device=device),
+        torch.empty((0,) + tuple(shape[sparse_dim:]), dtype=dtype, device=device),
+        tuple(shape),
+        device=device,
+    )
     src = _make_sparse_input(shape, sparse_dim, nnz, dtype, device)
-    dst = torch.zeros_like(src)
-    return dst, src, {"non_blocking": False}
+    return dst, src, {"non_blocking": plan.params["non_blocking"]}
 
 
 class CopySparseToSparseBenchmark(base.GenericBenchmark):
-    # copy_sparse_to_sparse_ is a sparse op; there are no meaningful dense
-    # shapes in core_shapes.yaml, so benchmark dedicated (shape, nnz) pairs
-    # instead.
+    """Two-phase GenericBenchmark with the dedicated sparse layout set.
+
+    ``core_shapes.yaml`` has no entry for this op, so the shape list is supplied
+    directly instead of being read from the shared file.
+    """
+
     def set_shapes(self, shape_file_path=None):
         self.shapes = _COPY_SPARSE_SHAPES
+        self.shape_desc = "sparse_coo(shape, sparse_dim, nnz)"
 
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_():
+    # Override first, then the direct flag_gems callable if this checkout ships
+    # one; ``None`` lets the harness fall back to its configured gem-routing.
+    # The override injected by KernelGen is still honored either way.
+    gems_op = getattr(flag_gems, "copy_sparse_to_sparse_", None)
     bench = CopySparseToSparseBenchmark(
         op_name="copy_sparse_to_sparse_",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.copy_sparse_to_sparse_,
-        gems_op=getattr(flag_gems, "copy_sparse_to_sparse_", None),
+        gems_op=gems_op,
         dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()

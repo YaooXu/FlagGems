@@ -19,6 +19,9 @@ from _pytest.mark.structures import Mark, MarkDecorator
 import flag_gems
 
 from . import accuracy_utils as utils
+from . import test_utils as tu
+
+_OP_NAME = "_nested_compute_contiguous_strides_offsets"
 
 # ``_nested_compute_contiguous_strides_offsets`` starts with an underscore, and
 # ``pytest.mark`` refuses to generate a marker via attribute access for such
@@ -27,51 +30,83 @@ from . import accuracy_utils as utils
 # ``-m _nested_compute_contiguous_strides_offsets`` both work.
 setattr(
     pytest.mark,
-    "_nested_compute_contiguous_strides_offsets",
-    MarkDecorator(
-        Mark("_nested_compute_contiguous_strides_offsets", (), {}, _ispytest=True),
-        _ispytest=True,
-    ),
+    _OP_NAME,
+    MarkDecorator(Mark(_OP_NAME, (), {}, _ispytest=True), _ispytest=True),
 )
 
 # aten::_nested_compute_contiguous_strides_offsets(Tensor nested_size)
-# -> (Tensor, Tensor) derives, from the sizes of every sub-tensor of a nested
-# tensor, the contiguous strides and the storage offsets of each sub-tensor.
-# ``nested_size`` is the (num_tensors, num_dims) int64 sizes tensor that nested
-# tensors carry: torch itself always creates it on the CPU (even when the
-# nested tensor lives on CUDA, see torch.nested.as_nested_tensor), and the
-# native reference reads the int64 data with a host pointer, so every workload
-# below feeds a CPU int64 tensor and compares the two int64 outputs exactly.
+#     -> (Tensor, Tensor)
+# derives, from the (num_tensors, num_dims) int64 sizes tensor of a
+# strided-layout nested tensor, the contiguous strides and the storage offsets
+# of every sub-tensor:
+#     strides[i][j] = prod(sizes[i][j+1:])   (row-major, innermost stride 1)
+#     offsets[0]    = 0
+#     offsets[i]    = offsets[i-1] + prod(sizes[i-1])
 #
-# Layout semantics:
-#   strides[i][j] = prod(sizes[i][j+1:])      (contiguous row-major strides)
-#   offsets[0]    = 0
-#   offsets[i]    = offsets[i-1] + prod(sizes[i-1])
+# torch always creates ``nested_size`` on the CPU (even for a CUDA nested
+# tensor, see torch.nested.nested_tensor) and the native reference reads the
+# int64 payload through a host pointer, so every workload below feeds a CPU
+# int64 tensor and compares the two int64 outputs exactly with
+# gems_assert_equal. Feeding a CUDA tensor to the reference (or an empty batch,
+# numel() == 0) segfaults in current torch builds -- a torch-side limit, not a
+# candidate property -- so those inputs are never generated.
 #
-# The value-range framework of tests/test_utils.py does not apply as-is: this
-# is a metadata operator over a single int64 sizes tensor, so there is no
-# floating-point value range to sweep and no broadcast / backward / nan-inf
-# semantics. tu.make_input / tu.selected_shapes would place the input on the
-# accelerator device, where the torch reference in current builds segfaults
-# (it reads the int64 payload with a host pointer), so the value ranges are
-# instead swept through the deterministic size patterns below (uniform,
-# zero-extent, all-ones, all-zero, wide) which cover the meaningful domains
-# of nested-tensor sizes. Invalid shapes and dtypes are covered by the
-# dedicated negative tests at the bottom.
+# Size magnitudes are bounded so that every per-row product stays < 2**20 and
+# the running batch sum stays < 2**29: the reference in current torch builds
+# truncates each per-row product / offset to int32 (sizes such as
+# [[2**15, 2**15, 2**15], ...] yield offsets that wrap to 0), so larger sizes
+# would make the reference itself wrong rather than exercise the candidate.
 #
-# num_tensors is kept >= 1: the reference in current torch builds segfaults on
-# an empty batch (nested_size with numel() == 0), which is a torch-side limit,
-# not a candidate property. Each per-row product is also kept well below 2**31
-# (the "wide" pattern bounds sizes so the worst-case product is < 2**20): the
-# reference in current torch builds computes per-row products with signed
-# int32 arithmetic (products >= 2**31 wrap, e.g. sizes [[2**30, 2]] yield a
-# negative offset and [[2**15, 2**15, 2**15]] wraps to 0), so the sizes must
-# stay under that limit for the reference itself to be correct. The running
-# offset sum over the batch (<= 512 rows) then stays below 512 * 2**20 =
-# 2**29, far inside int64.
+# Regular-operator spec coverage notes: this is a metadata op whose only input
+# dtype is int64 (non-int64 inputs are rejected), so dtype coverage is a
+# negative-case dimension, and the spec's "shape levels" map to
+# (num_tensors, num_dims) batch layouts instead of the dense POINTWISE_SHAPES.
+# broadcast (the output shapes are fully determined by the input layout),
+# backward (integer metadata, no autograd) and nan/inf (sizes are integer
+# extents) do not apply. The spec's five value ranges do apply to the stored
+# extents, so ``test_..._value_ranges`` sweeps ``tu.selected_ranges()`` by
+# projecting each range into the valid non-negative small-extent domain [0, 9)
+# through ``tu.make_input``. The deterministic size-pattern grid plus the
+# dedicated known-layout and negative cases keep the collected case count above
+# ``tu.MIN_CASES`` in every run mode.
+#
+# The autogenerated aten::_nested_compute_contiguous_strides_offsets.out
+# overload is not tested: current torch builds register no kernel for it, so
+# the reference itself cannot run it.
+
+# (num_tensors, num_dims) batch layouts. num_tensors stays >= 1 because the
+# reference segfaults on an empty batch. The full product (5 x 4 = 20 layouts)
+# is kept in both run modes so the file always collects at least
+# tu.MIN_CASES cases.
 _NUM_TENSORS = [1, 3, 8, 64, 512]
 _NUM_DIMS = [1, 2, 3, 5]
-_SIZES_PATTERNS = ["uniform", "with_zero", "all_ones", "all_zero", "wide"]
+
+# Size-extent patterns (the metadata-domain analogue of the spec's value
+# ranges). Every per-row product stays well below 2**20.
+_SIZE_PATTERNS = ["uniform", "with_zero", "all_ones", "all_zero", "wide"]
+
+# Projected-extent modulus used by the value-range sweep (keeps every product
+# below 2**31, where the reference's int32 truncation begins).
+_SIZE_MODULUS = 9
+
+# Dtypes that must be rejected: only int64 sizes metadata is accepted.
+_UNSUPPORTED_DTYPES = [
+    torch.bool,
+    torch.int8,
+    torch.uint8,
+    torch.int16,
+    torch.int32,
+    torch.float16,
+    torch.bfloat16,
+    torch.float32,
+]
+
+
+def _value_range_layouts():
+    """(num_tensors, num_dims) layouts for the value-range sweep (tu levels)."""
+    if tu.LEVEL == "quick":
+        return [(8, 2)]
+    return [(8, 2), (64, 3)]
 
 
 def _make_nested_size(num_tensors, num_dims, pattern, seed=0):
@@ -91,24 +126,30 @@ def _make_nested_size(num_tensors, num_dims, pattern, seed=0):
         # Minimal positive sizes: every product is 1.
         return torch.ones((num_tensors, num_dims), dtype=torch.int64)
     if pattern == "all_zero":
-        # Degenerate batch: every sub-tensor has zero extent in every dim.
-        # Every per-row product is 0, so every offset is 0 and every stride
-        # row is [0, ..., 0, 1] (the innermost stride is prod(()) = 1).
+        # Degenerate batch: every per-row product is 0, so every offset is 0
+        # and every stride row is [0, ..., 0, 1] (innermost stride prod(()) = 1).
         return torch.zeros((num_tensors, num_dims), dtype=torch.int64)
     if pattern == "wide":
-        # Wider value range than "uniform". The bound keeps every per-row
-        # product below 2**20 (in the worst case 2**(20//num_dims) ** num_dims):
-        # the reference in current torch builds truncates each per-row product
-        # to int32 when it reaches 2**31 (offsets[i-1] + sizes[i-1]*strides[i-1]
-        # wraps, e.g. a single size of 2**31 yields a negative offset), so the
-        # sizes must stay well under that limit for the reference itself to be
-        # correct. The running offset sum over the batch (<= 512 rows) then
-        # stays below 512 * 2**20 = 2**29, far inside int64.
+        # Wider value range than "uniform"; the bound keeps every per-row
+        # product below 2**20 even in the worst case.
         bound = max(2, 2 ** (20 // num_dims))
         return torch.randint(
             1, bound, (num_tensors, num_dims), dtype=torch.int64, generator=gen
         )
     raise ValueError(f"Unknown size pattern: {pattern!r}")
+
+
+def _make_sizes_from_range(num_tensors, num_dims, value_range, seed=0):
+    """Project one spec value range onto valid size extents on the CPU.
+
+    ``tu.make_input`` builds the tensor on ``flag_gems.device`` (the reference
+    needs a CPU host pointer) and may produce negative or huge int64 values; the
+    remainder by ``_SIZE_MODULUS`` maps them into the non-negative small-extent
+    domain [0, 9) that nested sizes actually occupy, while still sweeping the
+    five range endpoints the spec asks for.
+    """
+    raw = tu.make_input(torch.int64, (num_tensors, num_dims), value_range)
+    return raw.cpu().remainder(_SIZE_MODULUS)
 
 
 def _resolve_gems_op():
@@ -118,16 +159,16 @@ def _resolve_gems_op():
     # is registered; resolution order is: (1) override, (2) the direct
     # flag_gems callable, (3) LookupError.
     return flag_gems.testing.resolve_gems_op(
-        "_nested_compute_contiguous_strides_offsets",
-        getattr(flag_gems, "_nested_compute_contiguous_strides_offsets", None),
+        _OP_NAME,
+        getattr(flag_gems, _OP_NAME, None),
     )
 
 
 def _assert_layout(num_tensors, num_dims, res_strides, res_offsets):
     # Structural checks plus layout invariants that hold for any correct
-    # implementation, independent of the reference: innermost stride is always
-    # 1, the first sub-tensor starts at offset 0 and (sizes are non-negative)
-    # the offsets never go backwards.
+    # implementation, independent of the reference: the innermost stride is
+    # always 1, the first sub-tensor starts at offset 0 and (sizes are
+    # non-negative) the offsets never go backwards.
     assert isinstance(res_strides, torch.Tensor)
     assert isinstance(res_offsets, torch.Tensor)
     assert res_strides.dtype == torch.int64
@@ -140,9 +181,9 @@ def _assert_layout(num_tensors, num_dims, res_strides, res_offsets):
 
 
 @pytest.mark._nested_compute_contiguous_strides_offsets
-@pytest.mark.parametrize("num_tensors", _NUM_TENSORS)
+@pytest.mark.parametrize("pattern", _SIZE_PATTERNS)
 @pytest.mark.parametrize("num_dims", _NUM_DIMS)
-@pytest.mark.parametrize("pattern", _SIZES_PATTERNS)
+@pytest.mark.parametrize("num_tensors", _NUM_TENSORS)
 def test__nested_compute_contiguous_strides_offsets(num_tensors, num_dims, pattern):
     sizes = _make_nested_size(num_tensors, num_dims, pattern)
     ref_sizes = utils.to_reference(sizes)
@@ -158,24 +199,80 @@ def test__nested_compute_contiguous_strides_offsets(num_tensors, num_dims, patte
 
 
 @pytest.mark._nested_compute_contiguous_strides_offsets
+@pytest.mark.parametrize("layout", _value_range_layouts())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+def test__nested_compute_contiguous_strides_offsets_value_ranges(layout, value_range):
+    # Regular-operator spec: value-range coverage. The input is the int64 size
+    # metadata itself, so each selected range is projected onto valid size
+    # extents (non-negative, small) before the op runs; the comparison is still
+    # exact int64.
+    num_tensors, num_dims = layout
+    sizes = _make_sizes_from_range(num_tensors, num_dims, value_range)
+    ref_sizes = utils.to_reference(sizes)
+
+    ref_strides, ref_offsets = (
+        torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
+    )
+    res_strides, res_offsets = _resolve_gems_op()(sizes)
+
+    _assert_layout(num_tensors, num_dims, res_strides, res_offsets)
+    utils.gems_assert_equal(res_strides, ref_strides)
+    utils.gems_assert_equal(res_offsets, ref_offsets)
+
+
+@pytest.mark._nested_compute_contiguous_strides_offsets
+def test__nested_compute_contiguous_strides_offsets_known_layout():
+    # Hand-computed layout for a fixed batch: sizes [[2,3],[4,3],[1,3],[3,3]]
+    # give strides [[3,1],[3,1],[3,1],[3,1]] and offsets [0, 6, 18, 21].
+    sizes = torch.tensor([[2, 3], [4, 3], [1, 3], [3, 3]], dtype=torch.int64)
+    expected_strides = torch.tensor([[3, 1], [3, 1], [3, 1], [3, 1]], dtype=torch.int64)
+    expected_offsets = torch.tensor([0, 6, 18, 21], dtype=torch.int64)
+
+    ref_strides, ref_offsets = (
+        torch.ops.aten._nested_compute_contiguous_strides_offsets(
+            utils.to_reference(sizes)
+        )
+    )
+    res_strides, res_offsets = _resolve_gems_op()(sizes)
+
+    _assert_layout(4, 2, res_strides, res_offsets)
+    utils.gems_assert_equal(res_strides, expected_strides)
+    utils.gems_assert_equal(res_offsets, expected_offsets)
+    # The hand-computed values also pin down the reference.
+    utils.gems_assert_equal(ref_strides, expected_strides)
+    utils.gems_assert_equal(ref_offsets, expected_offsets)
+
+
+@pytest.mark._nested_compute_contiguous_strides_offsets
 def test__nested_compute_contiguous_strides_offsets_invalid_ndim():
-    # A 1-D sizes tensor has no per-tensor dim count: the native reference
-    # raises IndexError, and the candidate must reject the same malformed
+    # Negative case: a 1-D sizes tensor has no per-tensor dim count. The native
+    # reference raises IndexError, and the candidate must reject the malformed
     # input rather than return a degenerate layout.
-    bad = torch.randint(1, 9, (4,), dtype=torch.int64)
+    bad = torch.ones(4, dtype=torch.int64)
     with pytest.raises(IndexError):
         torch.ops.aten._nested_compute_contiguous_strides_offsets(bad)
-    with pytest.raises((IndexError, RuntimeError)):
+    with pytest.raises((IndexError, RuntimeError, ValueError)):
         _resolve_gems_op()(bad)
 
 
 @pytest.mark._nested_compute_contiguous_strides_offsets
-def test__nested_compute_contiguous_strides_offsets_invalid_dtype():
-    # The sizes metadata is always int64: the native reference type-checks
-    # the input (RuntimeError), and the candidate must reject non-int64
-    # inputs the same way.
-    bad = torch.rand(4, 3)  # float32
+@pytest.mark.parametrize("dtype", _UNSUPPORTED_DTYPES)
+def test__nested_compute_contiguous_strides_offsets_rejects_non_int64(dtype):
+    # Negative case: the sizes metadata is always int64. The native reference
+    # type-checks the input (RuntimeError), and the candidate must reject every
+    # other dtype the same way.
+    bad = torch.zeros((4, 3), dtype=dtype)
     with pytest.raises(RuntimeError):
         torch.ops.aten._nested_compute_contiguous_strides_offsets(bad)
-    with pytest.raises((RuntimeError, TypeError)):
+    with pytest.raises((RuntimeError, TypeError, ValueError)):
         _resolve_gems_op()(bad)
+
+
+@pytest.mark._nested_compute_contiguous_strides_offsets
+def test__nested_compute_contiguous_strides_offsets_rejects_non_tensor():
+    # Negative case: the aten schema requires a Tensor; a Python scalar hits
+    # the invalid-combination path and raises, so the candidate must too.
+    with pytest.raises(RuntimeError):
+        torch.ops.aten._nested_compute_contiguous_strides_offsets(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(3.14)

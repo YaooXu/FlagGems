@@ -20,10 +20,10 @@ import flag_gems
 
 from . import base, consts
 
-# ``_efficientzerotensor`` starts with an underscore, and ``pytest.mark`` refuses
-# to generate a marker via attribute access for such names. Register the markers
-# directly on the MarkGenerator so ``@pytest.mark._efficientzerotensor`` and
-# ``-m _efficientzerotensor`` both work.
+# ``_efficientzerotensor`` starts with an underscore, and ``pytest.mark``
+# refuses to create a marker through attribute access for such names. Register
+# the markers on the MarkGenerator directly so both
+# ``@pytest.mark._efficientzerotensor`` and ``-m _efficientzerotensor`` work.
 for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
     setattr(
         pytest.mark,
@@ -31,14 +31,12 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_efficientzerotensor is a factory that on many backends returns an
-# all-zero tensor backed by a single shared zero byte (nbytes == 0), so the
-# default-variant benchmark measures dispatch + storage-construction overhead
-# rather than memory bandwidth. The default shape set contains a 1-B-element
-# 1-D tensor whose cost would be dominated by input allocation; use
-# allocation-friendly shapes that still exercise a realistic range of ranks.
-# The .out variant writes a real zero-fill, so these shapes keep the fill work
-# bounded as well.
+# aten::_efficientzerotensor is a factory that allocates a real, zero-filled
+# tensor on the active device. The default shape set contains a 1-B-element
+# 1-D tensor whose cost would be dominated by allocation rather than by the
+# measured call, and the allocation-friendly 4-D entry keeps the fill work
+# bounded; both variants below therefore use this local shape list instead of
+# resolving core_shapes.yaml (which has no entry for this operator).
 EFFICIENTZEROTENSOR_SHAPES = [
     (1024,),
     (64, 64),
@@ -60,28 +58,32 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
+    # Factory form: the only argument is the size; the dtype/device become
+    # keyword arguments so both the reference and the candidate share the exact
+    # same call semantics.
     shape = plan.builder_args[0]
     return shape, {"dtype": dtype, "device": device}
 
 
 def _build_inputs_fn_out(plan, dtype, device):
+    # ``.out`` form: a pre-allocated buffer is passed as a keyword argument.
     shape = plan.builder_args[0]
     out = torch.empty(shape, dtype=dtype, device=device)
     return shape, {"out": out}
 
 
 class EfficientZeroTensorBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark restricted to allocation-friendly shapes.
-
-    The default shape set contains a 1-B-element 1-D tensor whose cost would be
-    dominated by input allocation, so the case list is restricted to the shapes
-    above.
-    """
+    """Two-phase GenericBenchmark with allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
+        # ``_efficientzerotensor`` has no core_shapes.yaml entry, so the local
+        # list above replaces the default shape file lookup.
         self.shapes = EFFICIENTZEROTENSOR_SHAPES
 
 
+# ``flag_gems._efficientzerotensor`` is not registered in every checkout;
+# ``getattr(..., None)`` keeps the module importable while ``resolve_gems_op``
+# inside the benchmark still picks up the KernelGen override at runtime.
 @pytest.mark._efficientzerotensor
 def test__efficientzerotensor():
     bench = EfficientZeroTensorBenchmark(

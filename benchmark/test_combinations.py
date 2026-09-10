@@ -24,20 +24,25 @@ from . import base, consts, utils
 # replacement and C(n + r - 1, r) rows with replacement. The output grows
 # combinatorially (the r=2 output of a 4096-element input already has ~8.4M
 # rows), so the case list keeps n modest while still spanning small, medium and
-# large (n, r) pairs for both replacement modes. Each case is a (n, r,
-# with_replacement) triple; the default r=2 / without-replacement workload is
-# the primary one. The largest case writes ~16.8M output elements (67 MiB for
-# float32); the with-replacement cases cover the C(n + r - 1, r) growth path.
+# large (n, r) pairs for both replacement modes, including r=4/r=5 to exercise
+# the higher-degree enumeration path. Each case is a (n, r, with_replacement)
+# triple; the default r=2 / without-replacement workload is the primary one.
+# The largest case writes ~16.8M output elements (67 MiB for float32); the
+# with-replacement cases cover the C(n + r - 1, r) growth path.
 _COMBINATIONS_CASES = [
     (64, 2, False),
     (256, 2, False),
     (1024, 2, False),
     (4096, 2, False),
+    (64, 2, True),
+    (512, 2, True),
+    (1024, 2, True),
     (64, 3, False),
     (256, 3, False),
     (64, 3, True),
     (256, 3, True),
-    (1024, 2, True),
+    (64, 4, False),
+    (32, 5, False),
 ]
 
 

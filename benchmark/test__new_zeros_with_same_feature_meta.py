@@ -37,7 +37,8 @@ setattr(
 # is ``self.shape[:self_num_batch_dims] + other.shape`` and whose dtype follows
 # ``other``, so the benchmark measures the cost of that zero allocation plus the
 # feature-meta bookkeeping. Every case allocates a sizable output so the timing
-# reflects actual device allocation rather than pure dispatch overhead.
+# reflects actual device allocation rather than pure dispatch overhead; the
+# inputs themselves are kept comparatively small.
 _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES = [
     ((4,), (1024, 1024), 1),
     ((16,), (256, 256), 1),
@@ -47,6 +48,8 @@ _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES = [
     ((8, 32), (512, 128), 2),
     ((2,), (20, 320, 15), 1),
     ((8, 16), (256, 256), 2),
+    ((16, 8, 4), (128, 128), 3),
+    ((2, 2, 2, 2), (64, 64), 4),
 ]
 
 

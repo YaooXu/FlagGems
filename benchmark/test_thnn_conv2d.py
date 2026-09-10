@@ -20,18 +20,24 @@ import flag_gems
 from . import base, consts, utils
 
 # aten::thnn_conv2d(self, weight, kernel_size, bias, stride, padding) performs
-# an im2col-based 2-D convolution (groups=1, no dilation). The default shape set
-# has no convolved input/weight pairs, so define local performance shapes whose
-# output sizes stay in the tens-of-MB range. Each tuple is
+# an im2col-based 2-D convolution (groups=1, no dilation). No public benchmark
+# family models a conv, so this uses the two-phase GenericBenchmark with both
+# case_fn (one BenchmarkCasePlan per shape) and build_inputs_fn. ``torch_op`` is
+# the perf reference and ``gems_op`` the candidate; both share the exact same
+# call semantics (self, weight, kernel_size, bias, stride, padding).
+#
+# The default shape set has no convolved input/weight pairs, so the local
+# performance shapes below are used. Each tuple is
 # (inp_shape, weight_shape, kernel_size, stride, padding); the im2col cost grows
 # with kernel area, so both 1x1 (pure GEMM) and 3x3/5x5 (im2col-heavy) kernels
-# are represented.
+# are represented, and output sizes stay in the tens-of-MB range.
 THNN_CONV2D_SHAPES = [
     ((32, 64, 128, 128), (32, 64, 1, 1), (1, 1), (1, 1), (0, 0)),
     ((32, 64, 56, 56), (32, 64, 3, 3), (3, 3), (1, 1), (1, 1)),
     ((64, 32, 18, 18), (64, 32, 5, 5), (5, 5), (2, 2), (1, 1)),
     ((64, 32, 32, 32), (32, 32, 3, 3), (3, 3), (2, 2), (0, 0)),
     ((16, 128, 16, 16), (64, 128, 3, 3), (3, 3), (1, 1), (1, 1)),
+    ((8, 256, 28, 28), (128, 256, 1, 1), (1, 1), (1, 1), (0, 0)),
 ]
 
 
@@ -62,16 +68,25 @@ class ThnnConv2dBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding)."""
 
     def set_shapes(self, shape_file_path=None):
+        # This op has no entry in core_shapes.yaml; use the local perf shapes
+        # directly instead of inheriting the (pointwise) default shape set.
         self.shapes = THNN_CONV2D_SHAPES
 
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d():
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
     bench = ThnnConv2dBenchmark(
         op_name="thnn_conv2d",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.thnn_conv2d,
+        # The op has no registered flag_gems.thnn_conv2d entry point in this
+        # checkout, so fall back to None: the candidate is supplied either by
+        # KernelGen's override_gems_op("thnn_conv2d", ...) or by the FlagGems
+        # dispatcher fallback inside Benchmark._measure_input.
         gems_op=getattr(flag_gems, "thnn_conv2d", None),
         dtypes=consts.FLOAT_DTYPES,
     )

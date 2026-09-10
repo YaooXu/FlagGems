@@ -55,7 +55,10 @@ from . import test_utils as tu
 #   by running the shared tu.selected_ranges() (sign coverage, per-dtype bounds
 #   and constants) over the storage values of every supported float/exact
 #   dtype, plus a dedicated boundary case pinning the finfo min/max/zero
-#   round-trip.
+#   round-trip. The uint8 storage cannot represent the negative half of two of
+#   the spec ranges, so a local clamp collapses those to the dtype's lower
+#   bound (0) before generation; the reference and candidate receive the same
+#   clamped values.
 # - Shape levels: tu.selected_shapes() is covered through _shape_level_cases()
 #   (which skips the 0-dim scalar, meaningless for a 2-D sparse layout, and
 #   turns 1-dim entries into square 2-D tensors), plus dedicated 2-D, batched
@@ -66,10 +69,18 @@ from . import test_utils as tu
 #   formula (sparse CSC constructors are non-differentiable).
 # - Negative cases: a dtype kwarg contradicting the values dtype, a missing
 #   dtype for non-float32 values, a non-CSC layout kwarg, cross-device
-#   index/value tensors, and a missing device kwarg on CUDA must raise on the
-#   aten reference and the candidate alike.
+#   index/value tensors, a missing device kwarg on CUDA and a negative size
+#   must raise on the aten reference and the candidate alike.
 # - nan/inf: non-finite values are stored verbatim and compared with
 #   equal_nan=True.
+#
+# Dtype coverage (spec REQUIRED_DTYPES): int8, uint8, float8_e4m3fn,
+# float8_e5m2, float32, bfloat16, float16, int32 and int64 are all supported by
+# this aten constructor on CUDA and are included. float64, int16 and bool are
+# added on top (probed via _CSC_DTYPES). fp8 needs a dedicated comparison path:
+# torch.testing's tolerance path is not implemented for fp8 sparse tensors and
+# ``to_dense()`` (index_add) has no fp8 kernel, so fp8 is compared bit-exactly
+# on the stored values.
 
 # ---------------------------------------------------------------------------
 # Shared cases and dtype sets
@@ -103,11 +114,17 @@ _CSC_NO_SIZE_CASES = [
 ]
 
 # The op stores every dtype the CUDA storage supports: fp16/fp32/bf16 (plus
-# fp64 when the device supports it), int16/int32/int64 and bool. Index tensors
-# are int32 or int64.
+# fp64 when the device supports it), the two fp8 flavours, int8/uint8,
+# int16/int32/int64 (int16 on top of the spec set) and bool. Index tensors are
+# int32 or int64.
 _FLOAT_CSC_DTYPES = utils.ALL_FLOAT_DTYPES
-_EXACT_CSC_DTYPES = utils.ALL_INT_DTYPES + utils.BOOL_TYPES
-_CSC_DTYPES = _FLOAT_CSC_DTYPES + _EXACT_CSC_DTYPES
+_FP8_CSC_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
+_SMALL_INT_CSC_DTYPES = [torch.int8, torch.uint8]
+_EXACT_CSC_DTYPES = _SMALL_INT_CSC_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+_CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES + _EXACT_CSC_DTYPES
+# Dtypes whose values live on the floating path (close comparison when the
+# backend supports it, exact for the fp8 fallback).
+_FLOATISH_CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
 
@@ -116,7 +133,21 @@ def _make_values(nnz, dtype, shape=None, value_range=("-1", "1")):
     # [low, high] range symbols resolve per-dtype via tu.make_input and the
     # tensor is generated on the test device. The construction is a pure copy,
     # so every in-range value round-trips verbatim.
+    #
+    # uint8 cannot represent the spec's negative bounds; clamp the resolved
+    # symbols to [0, dtype_max] so the generated range stays representable
+    # (torch.testing.make_tensor rejects a negative low for an unsigned dtype).
     shape = (nnz,) if shape is None else shape
+    if dtype == torch.uint8:
+        low = max(int(tu.resolve_bound(value_range[0], dtype)), 0)
+        high = max(int(tu.resolve_bound(value_range[1], dtype)), 0)
+        if low > high:
+            low = high
+        if low == high:
+            return torch.full(shape, low, device=flag_gems.device, dtype=dtype)
+        return torch.testing.make_tensor(
+            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
+        )
     return tu.make_input(dtype, shape, value_range).to(flag_gems.device)
 
 
@@ -190,7 +221,13 @@ def _assert_result(res_out, ref_out, dtype, index_dtype, equal_nan=False):
     assert res_out.row_indices().dtype == index_dtype
     utils.gems_assert_equal(res_out.ccol_indices(), ref_out.ccol_indices())
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
-    if dtype in _EXACT_CSC_DTYPES:
+    if dtype in _FP8_CSC_DTYPES:
+        # torch.testing's tolerance path is not implemented for fp8 sparse
+        # tensors, and to_dense() (index_add) has no fp8 kernel. The
+        # constructor is a pure copy, so compare the stored values bit-exactly.
+        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
+    elif dtype in _EXACT_CSC_DTYPES:
         utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
         utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
         utils.gems_assert_equal(
@@ -247,7 +284,7 @@ def test_sparse_csc_tensor(shape, nnz, dtype, index_dtype, value_range):
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("shape, nnz", _CSC_BATCHED_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOAT_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _CSC_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
     ccol, row, values = _make_csc_inputs(
@@ -285,7 +322,7 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("ccol_list, row_list, expected_shape", _CSC_NO_SIZE_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOAT_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_no_size(
     ccol_list, row_list, expected_shape, dtype, index_dtype, value_range
@@ -447,7 +484,7 @@ def _shape_level_cases():
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("shape, nnz", _shape_level_cases())
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOAT_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_range):
     ccol, row, values = _make_csc_inputs(
@@ -493,42 +530,44 @@ _BOUNDARY_RANGES = [
 
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("value_range", _BOUNDARY_RANGES)
-def test_sparse_csc_tensor_boundary_values(value_range):
+@pytest.mark.parametrize("dtype", _CSC_DTYPES)
+def test_sparse_csc_tensor_boundary_values(dtype, value_range):
     # Constant tensors at the dtype extremes must round-trip bit-exactly
     # through the construction (a pure copy).
-    for dtype in _CSC_DTYPES:
-        ccol, row, values = _make_csc_inputs(
-            (4, 4), 4, dtype, index_dtype=torch.int64, value_range=value_range
-        )
+    ccol, row, values = _make_csc_inputs(
+        (4, 4), 4, dtype, index_dtype=torch.int64, value_range=value_range
+    )
 
-        ref_out = torch.ops.aten.sparse_csc_tensor(
-            ccol,
-            row,
-            values,
-            [4, 4],
-            dtype=dtype,
-            layout=torch.sparse_csc,
-            device=flag_gems.device,
-        )
-        gems_op = _resolve_gems_op()
-        res_out = gems_op(
-            ccol,
-            row,
-            values,
-            [4, 4],
-            dtype=dtype,
-            layout=torch.sparse_csc,
-            device=flag_gems.device,
-        )
+    ref_out = torch.ops.aten.sparse_csc_tensor(
+        ccol,
+        row,
+        values,
+        [4, 4],
+        dtype=dtype,
+        layout=torch.sparse_csc,
+        device=flag_gems.device,
+    )
+    gems_op = _resolve_gems_op()
+    res_out = gems_op(
+        ccol,
+        row,
+        values,
+        [4, 4],
+        dtype=dtype,
+        layout=torch.sparse_csc,
+        device=flag_gems.device,
+    )
 
-        _assert_result(res_out, ref_out, dtype, torch.int64)
+    _assert_result(res_out, ref_out, dtype, torch.int64)
 
 
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.parametrize("dtype", _FLOAT_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
 def test_sparse_csc_tensor_nan_inf_values(dtype):
     # Non-finite values are stored verbatim; comparison uses equal_nan=True so
-    # nan == nan, inf == inf and the sign of zero are all matched.
+    # nan == nan, inf == inf and the sign of zero are all matched. For
+    # float8_e4m3fn the +/-inf inputs saturate to nan, which the equal_nan
+    # comparison still matches.
     values = torch.tensor(
         [float("nan"), float("inf"), float("-inf"), 1.5, -0.0],
         dtype=dtype,
@@ -649,6 +688,34 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
             [2, 1],
             dtype=torch.float32,
             layout=torch.sparse_coo,
+            device=flag_gems.device,
+        )
+
+
+@pytest.mark.sparse_csc_tensor
+def test_sparse_csc_tensor_rejects_negative_size():
+    # A negative logical size makes the reference overflow while computing the
+    # number of dense elements; the candidate must reject it as well.
+    ccol, row, values = _build_default_inputs()
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_csc_tensor(
+            ccol,
+            row,
+            values,
+            [-2, 2],
+            dtype=torch.float32,
+            layout=torch.sparse_csc,
+            device=flag_gems.device,
+        )
+    gems_op = _resolve_gems_op()
+    with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
+        gems_op(
+            ccol,
+            row,
+            values,
+            [-2, 2],
+            dtype=torch.float32,
+            layout=torch.sparse_csc,
             device=flag_gems.device,
         )
 

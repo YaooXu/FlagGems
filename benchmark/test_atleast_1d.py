@@ -22,11 +22,11 @@ import flag_gems
 from . import base, consts, utils
 
 # aten::atleast_1d is a pure view/identity op (0-dim -> (1,) view, ndim >= 1
-# returned as-is). No public Benchmark family models a view identity op, so both
-# overloads use a two-phase GenericBenchmark (case_fn + build_inputs_fn). The
-# 0-dim scalar case is the defining workload and is prepended to the shape set.
-# gems_op is resolved through getattr because flag_gems.atleast_1d is not yet
-# registered as a direct callable; KernelGen's override_gems_op("atleast_1d",
+# returned unchanged). No public Benchmark family models a view identity op, so
+# both overloads use a two-phase GenericBenchmark (case_fn + build_inputs_fn).
+# The 0-dim scalar case is the defining workload and is prepended to the shape
+# set. gems_op is resolved through getattr because flag_gems.atleast_1d is not
+# yet registered as a direct callable; KernelGen's override_gems_op("atleast_1d",
 # ...) still wins at run time via flag_gems.testing.resolve_gems_op.
 
 

@@ -24,8 +24,8 @@ from . import base, consts
 
 # ``_neg_view_copy`` starts with an underscore, and ``pytest.mark`` refuses to
 # generate a marker via attribute access for such names. Register the markers
-# directly on the MarkGenerator so ``@pytest.mark._neg_view_copy`` and ``-m
-# _neg_view_copy`` both work.
+# directly on the MarkGenerator so ``@pytest.mark._neg_view_copy`` and
+# ``-m _neg_view_copy`` both work.
 setattr(
     pytest.mark,
     "_neg_view_copy",
@@ -46,6 +46,8 @@ MAX_ELEMENTS = 2**26
 
 
 class NegViewCopyBenchmark(base.UnaryPointwiseBenchmark):
+    # The op is a pure unary pointwise copy, so the public unary pointwise
+    # family covers its call semantics (single input tensor -> fresh output).
     MAX_ELEMENTS = MAX_ELEMENTS
 
     def set_shapes(self, shape_file_path=None):
@@ -56,6 +58,8 @@ class NegViewCopyBenchmark(base.UnaryPointwiseBenchmark):
 
 
 class NegViewCopyOutBenchmark(base.UnaryPointwiseOutBenchmark):
+    # The .out overload writes into a caller-supplied buffer; the public unary
+    # pointwise-out family builds that buffer and passes it as ``out=``.
     MAX_ELEMENTS = MAX_ELEMENTS
 
     def set_shapes(self, shape_file_path=None):
@@ -70,6 +74,9 @@ def test__neg_view_copy():
     bench = NegViewCopyBenchmark(
         op_name="_neg_view_copy",
         torch_op=torch.ops.aten._neg_view_copy,
+        # flag_gems._neg_view_copy is not registered as a direct callable yet;
+        # KernelGen's override_gems_op("_neg_view_copy", ...) still wins at run
+        # time through flag_gems.testing.resolve_gems_op.
         gems_op=getattr(flag_gems, "_neg_view_copy", None),
         dtypes=consts.FLOAT_DTYPES,
     )
@@ -81,6 +88,8 @@ def test__neg_view_copy_out():
     bench = NegViewCopyOutBenchmark(
         op_name="_neg_view_copy.out",
         torch_op=torch.ops.aten._neg_view_copy.out,
+        # KernelGen's override_gems_op("_neg_view_copy.out", ...) is picked up
+        # through flag_gems.testing.resolve_gems_op.
         gems_op=getattr(flag_gems, "_neg_view_copy_out", None),
         dtypes=consts.FLOAT_DTYPES,
     )

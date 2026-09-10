@@ -29,6 +29,10 @@ from . import base, consts
 # (nrows, ncols) / (batch, nrows, ncols) / (batch_1, batch_2, nrows, ncols) and
 # nnz values. The device-side allocation stays small relative to the logical
 # size because only nnz entries are stored.
+#
+# crow_indices has no dense core_shapes.yaml entry and no matching public
+# Benchmark family (it is a sparse metadata accessor), so this uses the
+# two-phase GenericBenchmark with an explicit case_fn / build_inputs_fn pair.
 _CROW_SHAPES = [
     ((1024, 1024), 65536),
     ((1024, 1024), 1048576),
@@ -93,6 +97,10 @@ class CrowIndicesBenchmark(base.GenericBenchmark):
 
 @pytest.mark.crow_indices
 def test_crow_indices():
+    # torch_op is the perf comparison reference; gems_op is the candidate. Both
+    # take a single sparse CSR tensor (same call semantics). gems_op stays None
+    # until flag_gems.crow_indices is registered, so the base class resolves the
+    # KernelGen override at run time.
     bench = CrowIndicesBenchmark(
         op_name="crow_indices",
         case_fn=_case_fn,

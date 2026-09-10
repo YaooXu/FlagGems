@@ -31,10 +31,11 @@ setattr(
 )
 
 # aten::_dim_arange(like, dim) builds a fresh 1-D int64 tensor of length
-# like.size(dim). The measured work is proportional to the extent of the
-# selected dim (plus the input allocation), so each benchmark shape is paired
-# with its largest extent. The 1-D shapes dominate the arange materialization
-# itself; the multi-dim shapes cover the common "arange along one axis" usage.
+# like.size(dim). Only the extent of the selected dim is materialized, while the
+# input allocation itself scales with the full shape, so the shapes below pair a
+# large total size with a large selected dim. The 1-D shapes dominate the arange
+# materialization itself; the multi-dim shapes cover the common "arange along
+# one axis" usage.
 _DIM_ARANGE_SHAPES = [
     (2**20,),
     (2**24,),
@@ -65,6 +66,8 @@ class DimArangeBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with shapes tuned for _dim_arange."""
 
     def set_shapes(self, shape_file_path=None):
+        # _dim_arange is not listed in core_shapes.yaml; use the local list
+        # instead of resolving a shape file.
         self.shapes = _DIM_ARANGE_SHAPES
 
 
@@ -75,6 +78,8 @@ def test__dim_arange():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._dim_arange,
+        # ``flag_gems._dim_arange`` may not be registered yet; resolve_gems_op
+        # picks up the KernelGen override at runtime when one is installed.
         gems_op=getattr(flag_gems, "_dim_arange", None),
         dtypes=consts.FLOAT_DTYPES,
     )

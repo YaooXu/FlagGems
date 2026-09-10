@@ -37,15 +37,26 @@ from . import test_utils as tu
 #     empty with the requested shape / sparse / dense split.
 #
 # The op is a pure structural mutation (no arithmetic), so the regular-operator
-# spec's value-range / shape-level / nan-inf dimensions assert that the stored
-# payload is carried verbatim; broadcast does not apply (unary op) and backward
-# does not apply (the op has no autograd support). The negative cases pin the
-# invalid-parameter paths the reference rejects.
+# spec's value-range / shape-level / dtype / nan-inf dimensions assert that the
+# stored payload is carried verbatim. Broadcast does not apply (single input,
+# no elementwise pairing) and backward does not apply (the op is not
+# differentiable / has no autograd formula), so both are intentionally absent.
 #
-# Each (src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim) case
-# below is a distinct layout: 2-D, 1-D, all-sparse 3-D, hybrid (dense trailing
-# dims), the no-op path, sparse-dimension growth on a non-empty tensor, and
-# free reshapes of the empty tensor.
+# Coverage:
+#   * layouts: each (src_shape, src_sparse_dim, src_nnz, size, new_sparse_dim,
+#     new_dense_dim) case below is a distinct structure -- 2-D, 1-D, all-sparse
+#     3-D, hybrid (dense trailing dims), the no-op path, sparse-dimension growth
+#     on a non-empty tensor, and free reshapes of the empty tensor;
+#   * dtypes: every sparse COO storage dtype the runtime supports, including the
+#     spec-required int8 / uint8 / float8_e4m3fn / float8_e5m2 (probed on the
+#     active device before parametrization) plus fp16/fp32/bf16/fp64,
+#     int16/int32/int64 and bool;
+#   * value ranges: the shared five per-dtype ranges, plus an explicit
+#     nan / inf / -inf / -0.0 payload case;
+#   * shape levels: tu.selected_shapes() with a legal sparse/dense split
+#     (quick/all selected by the pytest --quick flag);
+#   * negative: the invalid parameter triples the reference rejects, plus a
+#     dense (non-sparse) input that cannot be routed to the sparse kernel.
 _RESIZE_CASES = [
     ((4, 5), 2, 3, [4, 5], 2, 0),
     ((4, 5, 6), 2, 3, [4, 5, 6], 2, 1),
@@ -60,17 +71,50 @@ _RESIZE_CASES = [
     ((5,), 1, 0, [2, 3], 2, 0),
 ]
 
-# resize moves the stored entries verbatim (or clears them for empty-input
-# reshapes), so every sparse COO storage dtype the runtime supports is
-# exercised.
-_RESIZE_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
-
 # Value-range dimension: an all-sparse and a hybrid (dense trailing dims) grow,
 # so every shared value range is exercised on both storage layouts.
 _VALUE_RANGE_CASES = [
     ((4, 5), 2, 3, [6, 5], 2, 0),
     ((4, 5, 6), 2, 3, [6, 5, 6], 2, 1),
 ]
+
+# Dtype coverage: the spec-required 9 dtypes where the operator supports them.
+# int8 / uint8 / fp8 are hard requirements when the CUDA kernel supports them,
+# so they are probed on the active device rather than assumed. float8 dtypes are
+# looked up defensively (older torch builds have no float8 attribute).
+_EXTRA_DTYPES = [torch.int8, torch.uint8]
+for _fp8_name in ("float8_e4m3fn", "float8_e5m2"):
+    _fp8_dtype = getattr(torch, _fp8_name, None)
+    if _fp8_dtype is not None:
+        _EXTRA_DTYPES.append(_fp8_dtype)
+
+_CANDIDATE_DTYPES = (
+    utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + _EXTRA_DTYPES + utils.BOOL_TYPES
+)
+
+
+def _sparse_dtype_probe(op_name, dtype):
+    # tu.supported_dtypes' default probe calls the operator with a *dense*
+    # tensor, which sparse_resize_ rejects for every dtype; use a tiny 1-D
+    # sparse COO tensor instead and treat any exception as "unsupported".
+    try:
+        index = torch.tensor([0, 1], dtype=torch.long, device=flag_gems.device)
+        values = torch.ones((2,), dtype=torch.float32, device=flag_gems.device).to(
+            dtype
+        )
+        inp = torch.sparse_coo_tensor(
+            index.unsqueeze(0), values, (4,), device=flag_gems.device
+        )
+        torch.ops.aten.sparse_resize_(inp, [6], 1, 0)
+        return True
+    except Exception:
+        return False
+
+
+# Only the dtypes this device's sparse COO storage actually accepts.
+_RESIZE_DTYPES = tu.supported_dtypes(
+    "sparse_resize_", _CANDIDATE_DTYPES, probe=_sparse_dtype_probe
+)
 
 # Shape-level dimension: the shared selected_shapes (quick/all levels via
 # --quick) minus the 0-dim scalar, which is not representable as a sparse
@@ -119,13 +163,15 @@ def _num_sparse_positions(shape, sparse_dim):
 
 
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
-    # Deterministic CPU-side generation of a *coalesced* sparse COO tensor
-    # (unique, lexicographically sorted indices) so the verbatim storage
-    # preservation of resize can be asserted. nnz must not exceed the number of
-    # sparse positions; for sparse_dim == 0 only nnz == 0 is representable.
+    # Deterministic CPU-side generation of a sparse COO tensor with unique,
+    # lexicographically sorted indices so the verbatim storage preservation of
+    # resize can be asserted. nnz must not exceed the number of sparse
+    # positions; for sparse_dim == 0 only nnz == 0 is representable.
     # ``values``, when given, overrides the deterministic random payload (used
-    # by the value-range / nan-inf tests); it must have the shape
-    # ``(nnz,) + shape[sparse_dim:]`` and is moved to the test device.
+    # by the value-range / nan-inf tests); it must have shape
+    # ``(nnz,) + shape[sparse_dim:]``. The payload is always moved to the test
+    # device before the sparse tensor is constructed, so a dtype only needs to
+    # be constructible on the active (sparse-capable) backend.
     gen = torch.Generator("cpu").manual_seed(seed)
     dense_shape = tuple(shape[sparse_dim:])
     values_shape = (nnz,) + dense_shape
@@ -137,17 +183,20 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
         lin = torch.sort(lin).values
         indices = torch.stack(torch.unravel_index(lin, shape[:sparse_dim]), dim=0)
     if values is None:
-        if dtype.is_floating_point:
-            values = torch.randn(values_shape, dtype=dtype, generator=gen, device="cpu")
-        elif dtype == torch.bool:
+        # Generate in a wide dtype then cast: randn/randint do not accept every
+        # storage dtype (notably fp8), and random_ cannot sample unsigned
+        # ranges that include negative values.
+        if dtype == torch.bool:
             values = torch.randint(
-                0, 2, values_shape, dtype=dtype, generator=gen, device="cpu"
-            )
+                0, 2, values_shape, generator=gen, device="cpu"
+            ).bool()
+        elif dtype.is_floating_point:
+            values = torch.randn(values_shape, generator=gen, device="cpu").to(dtype)
         else:
             # Keep the magnitude small so the values stay valid for every
-            # integer storage dtype (int16 included).
-            values = torch.randint(
-                -5, 6, values_shape, dtype=dtype, generator=gen, device="cpu"
+            # integer storage dtype (int8/int16 included).
+            values = torch.randint(-5, 6, values_shape, generator=gen, device="cpu").to(
+                dtype
             )
     return torch.sparse_coo_tensor(
         indices.to(flag_gems.device),
@@ -179,10 +228,23 @@ def _resolve_gems_op():
     )
 
 
+def _range_for_dtype(value_range, dtype):
+    # For unsigned integer storage the shared [-1, 0] range collapses to the
+    # single value 0, which torch.testing.make_tensor cannot sample
+    # (from == to); use the equivalent constant-zero range instead.
+    if (
+        dtype != torch.bool
+        and not dtype.is_floating_point
+        and tu.dtype_bounds(dtype)[0] >= 0
+        and value_range == ["-1", "0"]
+    ):
+        return ["0", "0"]
+    return value_range
+
+
 def _assert_sparse_structure(t, ref, size, nnz, dtype, sparse_dim, dense_dim):
     # Structural checks independent of the stored values: layout, shape, dtype,
-    # sparse/dense split, the nnz count, the indices/values storage shapes and
-    # the coalesced flag.
+    # sparse/dense split, the nnz count and the indices/values storage shapes.
     assert t.layout == torch.sparse_coo
     assert ref.layout == torch.sparse_coo
     assert tuple(t.shape) == tuple(size)
@@ -203,8 +265,9 @@ def _assert_sparse_structure(t, ref, size, nnz, dtype, sparse_dim, dense_dim):
 
 def _assert_values_equal(t, ref, dtype):
     # resize preserves the stored entries verbatim (or leaves both tensors
-    # empty), so float storages compare exactly here; the dtype-aware close
-    # helper is still used to keep the usual float comparison policy.
+    # empty). fp32/fp16/bf16/fp64 use the dtype-aware close helper; every other
+    # storage dtype (ints, bool, fp8 -- which assert_close cannot compare) must
+    # match bit-exactly.
     if dtype in utils.ALL_FLOAT_DTYPES:
         utils.gems_assert_close(t, ref, dtype)
     else:
@@ -243,6 +306,7 @@ def test_sparse_resize_value_ranges(case, dtype, value_range):
     # per-dtype ranges (sign coverage, [0,max], [min,0] and, at the all level,
     # the constant ranges). resize performs no arithmetic, so the payload must
     # survive verbatim regardless of its magnitude or sign.
+    value_range = _range_for_dtype(value_range, dtype)
     src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim = case
     dense_shape = tuple(src_shape[sparse_dim:])
     values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)
@@ -259,8 +323,7 @@ def test_sparse_resize_value_ranges(case, dtype, value_range):
     _assert_sparse_structure(
         inp, ref_inp, size, nnz, dtype, new_sparse_dim, new_dense_dim
     )
-    # tu.assert_result_close handles bool/int exactness and float equal_nan.
-    tu.assert_result_close(inp, ref_inp)
+    _assert_values_equal(inp, ref_inp, dtype)
 
 
 @pytest.mark.sparse_resize_
@@ -322,6 +385,22 @@ def test_sparse_resize_invalid_raises(case, dtype):
 
 
 @pytest.mark.sparse_resize_
+@pytest.mark.parametrize("dtype", _NEGATIVE_DTYPES)
+def test_sparse_resize_dense_input_rejected(dtype):
+    # A dense (non-sparse) input cannot be routed to the sparse resize kernel;
+    # the reference raises NotImplementedError (a RuntimeError subclass) and
+    # the candidate must reject it too.
+    if dtype.is_floating_point:
+        inp = torch.randn((4, 5), dtype=dtype, device=flag_gems.device)
+    else:
+        inp = torch.randint(0, 5, (4, 5), dtype=dtype, device=flag_gems.device)
+    with pytest.raises(RuntimeError):
+        torch.ops.aten.sparse_resize_(utils.to_reference(inp.clone()), [6, 5], 2, 0)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(inp, [6, 5], 2, 0)
+
+
+@pytest.mark.sparse_resize_
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_uncoalesced(dtype):
     # (0, 0) appears twice, so the input is uncoalesced; growing the sparse
@@ -330,7 +409,7 @@ def test_sparse_resize_uncoalesced(dtype):
     indices = torch.tensor(
         [[0, 0, 1, 2], [0, 0, 1, 3]], dtype=torch.long, device=flag_gems.device
     )
-    values = tu.make_input(dtype, (4,), ["-1", "1"]).to(flag_gems.device)
+    values = tu.make_input(dtype, (4,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
     assert not inp.is_coalesced()
     ref_inp = utils.to_reference(inp.clone())

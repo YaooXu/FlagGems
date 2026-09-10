@@ -18,7 +18,9 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base
+from . import base, consts
+
+_OP_NAME = "_nested_compute_contiguous_strides_offsets"
 
 # ``_nested_compute_contiguous_strides_offsets`` starts with an underscore, and
 # ``pytest.mark`` refuses to generate a marker via attribute access for such
@@ -27,11 +29,8 @@ from . import base
 # ``-m _nested_compute_contiguous_strides_offsets`` both work.
 setattr(
     pytest.mark,
-    "_nested_compute_contiguous_strides_offsets",
-    MarkDecorator(
-        Mark("_nested_compute_contiguous_strides_offsets", (), {}, _ispytest=True),
-        _ispytest=True,
-    ),
+    _OP_NAME,
+    MarkDecorator(Mark(_OP_NAME, (), {}, _ispytest=True), _ispytest=True),
 )
 
 # aten::_nested_compute_contiguous_strides_offsets(Tensor nested_size)
@@ -42,9 +41,11 @@ setattr(
 # metadata, so the benchmark measures dispatch plus the small int64 scan rather
 # than data movement. int64 is the only dtype the op accepts (non-int64 inputs
 # raise RuntimeError), so the benchmark runs int64 cases only. The default
-# shape set is dominated by huge 1-D tensors that are meaningless for a
+# core_shapes set is dominated by huge dense tensors that are meaningless for a
 # (num_tensors, num_dims) layout, so the benchmark restricts itself to
 # batch x dim layouts.
+_NESTED_SIZE_DTYPES = [torch.int64]
+
 _NESTED_SIZE_SHAPES = [
     (16, 2),
     (64, 3),
@@ -67,6 +68,8 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
+    # The reference reads the int64 payload through a host pointer, so the
+    # sizes metadata must stay on the CPU regardless of the benchmark device.
     del dtype, device
     num_tensors, num_dims = plan.builder_args[0]
     gen = torch.Generator("cpu").manual_seed(0)
@@ -93,11 +96,12 @@ class NestedComputeContiguousStridesOffsetsBenchmark(base.GenericBenchmark):
 @pytest.mark._nested_compute_contiguous_strides_offsets
 def test__nested_compute_contiguous_strides_offsets():
     bench = NestedComputeContiguousStridesOffsetsBenchmark(
-        op_name="_nested_compute_contiguous_strides_offsets",
+        op_name=_OP_NAME,
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._nested_compute_contiguous_strides_offsets,
-        gems_op=getattr(flag_gems, "_nested_compute_contiguous_strides_offsets", None),
-        dtypes=[torch.int64],
+        gems_op=getattr(flag_gems, _OP_NAME, None),
+        dtypes=_NESTED_SIZE_DTYPES,
+        metrics=consts.DEFAULT_METRICS,
     )
     bench.run()

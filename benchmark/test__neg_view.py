@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -32,16 +34,17 @@ setattr(
 
 # aten::_neg_view is a zero-copy negative view: it shares the input storage and
 # only toggles the lazy neg bit, so the benchmark measures dispatch and
-# view-construction overhead. The default shape set contains a 1-B-element 1-D
-# tensor whose cost would be dominated by input allocation; use
-# allocation-friendly shapes instead.
+# view-construction overhead. No public Benchmark family models a view op, so
+# this uses the two-phase GenericBenchmark (case_fn + build_inputs_fn). The
+# default shape set is dominated by 1G/268M-element inputs whose allocation
+# cost swamps the signal; use allocation-friendly shapes instead.
 NEG_VIEW_SHAPES = [
+    (2, 2),
     (64, 64),
     (256, 256),
     (1024, 1024),
-    (4096, 4096),
-    (64, 512, 512),
-    (1024, 1024, 1024),
+    (4, 8, 16, 32),
+    (64, 128, 256),
 ]
 
 
@@ -61,10 +64,15 @@ def _build_inputs_fn(plan, dtype, device):
 
 
 class NegViewBenchmark(base.GenericBenchmark):
-    """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
+    # A view op's latency is dominated by the call overhead rather than the
+    # tensor size, so cap the input numel to avoid allocating multi-GB inputs
+    # for no signal.
+    MAX_NUMEL = 2**24  # 16M elements
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = NEG_VIEW_SHAPES
+        self.shapes = [
+            shape for shape in NEG_VIEW_SHAPES if math.prod(shape) <= self.MAX_NUMEL
+        ]
 
 
 @pytest.mark._neg_view
@@ -74,6 +82,9 @@ def test__neg_view():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._neg_view,
+        # flag_gems._neg_view is not registered as a direct callable yet;
+        # KernelGen's override_gems_op("_neg_view", ...) still wins at run time
+        # through flag_gems.testing.resolve_gems_op.
         gems_op=getattr(flag_gems, "_neg_view", None),
         dtypes=consts.FLOAT_DTYPES,
     )

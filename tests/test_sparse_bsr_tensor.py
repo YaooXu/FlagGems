@@ -24,7 +24,8 @@ from . import test_utils as tu
 #     Tensor col_indices, Tensor values, int[] size, *,
 #     ScalarType? dtype=None, Layout? layout=None, Device? device=None,
 #     bool? pin_memory=False) -> Tensor constructs a sparse BSR tensor of the
-# given ``size`` whose (rows, cols) trailing dims are tiled by ``block``.
+# given ``size`` whose trailing (rows, cols) dims are tiled by the block shape
+# inferred from ``values``.
 #
 # aten::sparse_bsr_tensor.crow_col_value(Tensor crow_indices,
 #     Tensor col_indices, Tensor values, *, ScalarType? dtype=None,
@@ -32,9 +33,9 @@ from . import test_utils as tu
 #     -> Tensor is the size-inferred variant: rows = (len(crow)-1)*block_rows,
 #     cols = (max(col)+1)*block_cols.
 #
-# The two overloads share one public name, and ``torch.ops.aten.sparse_bsr_tensor``
+# The two overloads share one public name and ``torch.ops.aten.sparse_bsr_tensor``
 # dispatches between them by argument count (4 args -> size variant, 3 args ->
-# inferred variant); the candidate under test is the same public callable, so
+# inferred variant). The candidate under test is the same public callable, so
 # every reference call below mirrors the candidate call exactly. The ``dtype``
 # keyword is always passed explicitly: without it the aten op forces the values
 # to float32 and raises RuntimeError for any other storage dtype. The ``device``
@@ -49,28 +50,27 @@ from . import test_utils as tu
 #
 # Regular-operator spec dimensions:
 # - Value ranges: the data path is a pure copy -- the op stores the given block
-#   values verbatim, so the value-range dimension is covered by running the
-#   shared tu.selected_ranges() (per-dtype bounds, sign coverage, constants)
-#   over the storage values of every float/exact dtype; a dedicated boundary
-#   case pins the exact finfo min/max/zero round-trip.
+#   values verbatim -- so every value range in tu.selected_ranges() is applied
+#   to the storage values of every supported dtype; a dedicated boundary case
+#   pins the exact finfo min/max/zero round-trip.
 # - Shape levels: tu.selected_shapes() is covered through _shape_level_cases()
-#   (which skips the 0-dim scalar, meaningless for a 2-D sparse layout, and
-#   turns 1-dim entries into square 2-D tensors), plus dedicated 2-D, batched
+#   (the 0-dim scalar is skipped as meaningless for a 2-D sparse layout, and
+#   1-dim entries become square 2-D tensors), plus dedicated 2-D, batched
 #   (3-D/4-D) and empty-grid grids.
-# - Broadcast: N/A -- a constructor with three index/value tensors, no
+# - Broadcast: N/A -- a constructor with three index/value tensors has no
 #   broadcasting semantics.
 # - Backward: N/A -- the op is a structural constructor with no autograd
 #   formula (sparse BSR constructors are non-differentiable).
 # - Negative cases: dtype kwarg contradicting the values dtype, missing dtype
 #   for non-float32 values, cross-device index/value tensors, and a missing
-#   device kwarg on CUDA must raise on the aten reference and the candidate
-#   alike.
+#   device kwarg on this torch build must raise on the aten reference and the
+#   candidate alike.
 # - nan/inf: non-finite block values are stored verbatim and compared with
 #   equal_nan=True.
 
-# Each 2-D case is (size, block, crow_indices, col_indices): 2x2 square
-# blocks, ragged rows with an empty row-block, non-square blocks, and empty
-# trailing row-blocks. col entries are always valid (< size[-1] // block[1]).
+# Each 2-D case is (size, block, crow_indices, col_indices): 2x2 square blocks,
+# ragged rows with an empty row-block, non-square blocks, and empty trailing
+# row-blocks. col entries are always valid (< size[-1] // block[1]).
 _BSR_2D_CASES = [
     ((4, 4), (2, 2), [0, 2, 4], [0, 1, 0, 1]),
     ((6, 6), (2, 2), [0, 2, 3, 3], [0, 2, 1]),
@@ -101,22 +101,83 @@ _BSR_EMPTY_CASES = [
 
 # Size-inferred ``crow_col_value`` cases as (block, crow_indices, col_indices)
 # with values of shape (nnz, br, bc). Expected size is derived from crow/col:
-# rows = (len(crow)-1)*br, cols = (max(col)+1)*bc. This overload's inference
-# for batched (3-D) values is underspecified, so only 2-D values are covered.
+# rows = (len(crow)-1)*br, cols = (max(col)+1)*bc. This overload's inference for
+# batched (3-D) values is underspecified, so only 2-D values are covered.
 _BSR_2D_INFERRED_CASES = [
     ((2, 2), [0, 2, 4], [0, 1, 0, 1]),
     ((2, 2), [0, 2, 3, 3], [0, 2, 1]),
     ((2, 3), [0, 1, 2], [0, 1]),
 ]
 
-# The op copies the given values verbatim into the new tensor (no arithmetic),
-# so every float storage dtype the runtime supports is fair game, and exact
-# equality holds for integer/bool storages.
-_FLOAT_BSR_DTYPES = utils.FLOAT_DTYPES
-_EXACT_BSR_DTYPES = utils.ALL_INT_DTYPES + utils.BOOL_TYPES
-
 # Block used when deriving grids from the shared shape-level set.
 _BLOCK = (2, 2)
+
+# ---------------------------------------------------------------------------
+# Dtype coverage
+# ---------------------------------------------------------------------------
+#
+# The regular-operator spec requires int8, uint8, the two fp8 formats, fp32,
+# bf16, fp16, int32 and int64 where the operator supports them. The BSR factory
+# accepts every storage dtype the underlying tensor supports, so the list is
+# probed against the real ATen call (tu.supported_dtypes cannot be used here: it
+# probes ``packet.default(x)`` with a single tensor, while this op needs three
+# component tensors).
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+_REQUIRED_VALUE_DTYPES = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float32,
+    torch.bfloat16,
+    torch.float16,
+    torch.int32,
+    torch.int64,
+]
+# bool and int16 were part of the pre-existing coverage; float64 is added when
+# the backend supports it (part of the shared float set).
+_EXTRA_VALUE_DTYPES = [torch.bool, torch.int16, torch.float64]
+
+
+def _probe_value_dtypes(candidates):
+    crow = torch.tensor([0, 1, 1], dtype=torch.long, device=flag_gems.device)
+    col = torch.tensor([0], dtype=torch.long, device=flag_gems.device)
+    supported = []
+    for dtype in candidates:
+        try:
+            values = torch.zeros((1, 2, 2), dtype=dtype, device=flag_gems.device)
+            torch.ops.aten.sparse_bsr_tensor(
+                crow, col, values, [2, 2], dtype=dtype, device=flag_gems.device
+            )
+        except Exception:
+            continue
+        supported.append(dtype)
+    return supported
+
+
+_VALUE_DTYPES = _probe_value_dtypes(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
+if not _VALUE_DTYPES:
+    _VALUE_DTYPES = [torch.float32]
+
+# Exact-copy dtypes (integer/bool and the fp8 formats) are asserted bit-exactly
+# with gems_assert_equal; true float dtypes use the tolerance-based helper. The
+# fp8 formats live here because torch.testing.assert_close has no fp8
+# comparison kernel, while the values are copied verbatim anyway.
+_EXACT_VALUE_DTYPES = frozenset(
+    dtype
+    for dtype in _VALUE_DTYPES
+    if (not dtype.is_floating_point) or dtype in _FP8_DTYPES
+)
+_FLOAT_VALUE_DTYPES = [
+    dtype
+    for dtype in _VALUE_DTYPES
+    if dtype.is_floating_point and dtype not in _FP8_DTYPES
+] or [torch.float32]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _shape_level_cases():
@@ -124,8 +185,8 @@ def _shape_level_cases():
     # the shared shape-level set is covered. The 0-dim scalar entry has no BSR
     # meaning; 1-dim entries become square 2-D tensors. Rows/cols are snapped
     # down to a multiple of the block, and the col grid is a deterministic
-    # ragged pattern (every row-block has 1 or 2 blocks, so the grid always
-    # has real content).
+    # ragged pattern (every row-block has 1 or 2 blocks, so the grid always has
+    # real content).
     cases = []
     for shape in tu.selected_shapes():
         if len(shape) == 0:
@@ -155,29 +216,47 @@ def _make_index_tensor(indices):
     return torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
 
 
-def _make_value_input(shape, dtype, value_range):
-    # tu.make_input delegates to torch.testing.make_tensor, which for uint8
-    # clamps negative bounds to 0 and then raises on the degenerate randint
-    # range; none of the dtypes used here is uint8, so the shared helper is
-    # used directly for the spec's per-dtype value ranges.
-    return tu.make_input(dtype, shape, value_range)
+def _make_values(shape, dtype, value_range):
+    # Value-range dimension of the regular-operator spec. Bounds resolve
+    # per-dtype (max/min are the dtype limits); unsigned dtypes clip the
+    # negative lower bound, and a degenerate (low >= high) range fills the
+    # constant instead of calling make_tensor, which rejects an empty interval.
+    if dtype == torch.bool:
+        return torch.randint(0, 2, shape, device=flag_gems.device).bool()
+
+    low = tu.resolve_bound(value_range[0], dtype)
+    high = tu.resolve_bound(value_range[1], dtype)
+
+    if dtype.is_floating_point:
+        finfo = torch.finfo(dtype)
+        low = max(low, finfo.min)
+        high = min(high, finfo.max)
+        if not low < high:
+            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
+    else:
+        low, high = int(low), int(high)
+        dmin, dmax = tu.dtype_bounds(dtype)
+        low = max(low, int(dmin))
+        high = min(max(high, low), int(dmax))
+        if low >= high:
+            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
+
+    return torch.testing.make_tensor(
+        shape, dtype=dtype, device=flag_gems.device, low=low, high=high
+    )
 
 
 def _make_bsr_values(nnz, block, dtype, batch=None, value_range=("-1", "1")):
-    # Deterministic CPU-side generation of the stored block values so the exact
-    # structural copy semantics can be asserted; the tensor is moved to the test
-    # device. Shape is (nnz, br, bc), or (batch..., nnz, br, bc) for batched
-    # BSR (batch may be an int batch count or a tuple of batch dims).
-    # ``value_range`` is a [low, high] symbol pair resolved per-dtype by
-    # tu.resolve_bound (the value-range dimension of the regular-operator
-    # spec); the data path is a pure copy, so any in-range values round-trip.
+    # Deterministic, contiguous block values of shape (nnz, br, bc), or
+    # (batch..., nnz, br, bc) for batched BSR (batch may be an int batch count
+    # or a tuple of batch dims).
     if batch is None:
         shape = (nnz, block[0], block[1])
     elif isinstance(batch, tuple):
         shape = batch + (nnz, block[0], block[1])
     else:
         shape = (batch,) + (nnz, block[0], block[1])
-    return _make_value_input(shape, dtype, value_range)
+    return _make_values(shape, dtype, value_range)
 
 
 def _assert_bsr_structure(out, size, block, nnz, dtype, batch=None):
@@ -202,6 +281,14 @@ def _assert_bsr_structure(out, size, block, nnz, dtype, batch=None):
     assert (out.col_indices() >= 0).all()
 
 
+def _assert_sparse(res, ref, dtype, equal_nan=False):
+    if dtype in _EXACT_VALUE_DTYPES:
+        utils.gems_assert_equal(res, ref, equal_nan=equal_nan)
+    else:
+        utils.gems_assert_close(res, ref, dtype, equal_nan=equal_nan)
+    utils.gems_assert_equal(res.values(), ref.values(), equal_nan=equal_nan)
+
+
 def _resolve_gems_op():
     # Resolved inside each test (never at module import time) so the
     # process-local override injected by KernelGen for this run wins. The
@@ -213,9 +300,14 @@ def _resolve_gems_op():
     )
 
 
+# ---------------------------------------------------------------------------
+# Forward coverage
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.parametrize("case", _BSR_2D_CASES)
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _VALUE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_bsr_tensor_crow_col_value_size(case, dtype, value_range):
     size, block, crow, col = case
@@ -235,12 +327,9 @@ def test_sparse_bsr_tensor_crow_col_value_size(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    # Block values are stored verbatim, so the float comparison is exact within
-    # tolerance; the index arrays must match bit-for-bit.
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    _assert_sparse(res_out, ref_out, dtype)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
     # The constructor reads its inputs; it must not mutate them.
     utils.gems_assert_equal(crow_t, ref_crow)
     utils.gems_assert_equal(col_t, ref_col)
@@ -249,7 +338,7 @@ def test_sparse_bsr_tensor_crow_col_value_size(case, dtype, value_range):
 
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.parametrize("case", _BSR_BATCHED_CASES)
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range):
     size, block, crow, col = case
@@ -270,15 +359,14 @@ def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range)
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype, batch=batch)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    _assert_sparse(res_out, ref_out, dtype)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.parametrize("case", _BSR_EMPTY_CASES)
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
 def test_sparse_bsr_tensor_crow_col_value_size_empty(case, dtype):
     # Empty storage (nnz == 0): the grid still exists but stores no blocks.
     size, block, batch = case
@@ -298,43 +386,14 @@ def test_sparse_bsr_tensor_crow_col_value_size_empty(case, dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, 0, dtype, batch=batch)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    _assert_sparse(res_out, ref_out, dtype)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
-
-
-@pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("case", _BSR_2D_CASES)
-@pytest.mark.parametrize("dtype", _EXACT_BSR_DTYPES)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-def test_sparse_bsr_tensor_crow_col_value_size_exact_dtypes(case, dtype, value_range):
-    # Integer and bool storages: the block values are transferred verbatim, so
-    # the comparison is exact (no tolerance).
-    size, block, crow, col = case
-    nnz = len(col)
-    crow_t = _make_index_tensor(crow)
-    col_t = _make_index_tensor(col)
-    values = _make_bsr_values(nnz, block, dtype, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
-
-    ref_out = torch.ops.aten.sparse_bsr_tensor(
-        ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
-    )
-    res_out = _resolve_gems_op()(
-        crow_t, col_t, values, list(size), dtype=dtype, device=crow_t.device
-    )
-
-    _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_equal(res_out, ref_out)
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.parametrize("case", _BSR_2D_INFERRED_CASES)
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _VALUE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_bsr_tensor_crow_col_value(case, dtype, value_range):
     # Size-inferred overload: the 3-argument call (no size) derives the tensor
@@ -357,48 +416,19 @@ def test_sparse_bsr_tensor_crow_col_value(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    _assert_sparse(res_out, ref_out, dtype)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
-
-
-@pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("case", _BSR_2D_INFERRED_CASES)
-@pytest.mark.parametrize("dtype", _EXACT_BSR_DTYPES)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-def test_sparse_bsr_tensor_crow_col_value_exact_dtypes(case, dtype, value_range):
-    # Integer/bool storage through the size-inferred overload.
-    block, crow, col = case
-    nnz = len(col)
-    size = ((len(crow) - 1) * block[0], (max(col) + 1) * block[1])
-    crow_t = _make_index_tensor(crow)
-    col_t = _make_index_tensor(col)
-    values = _make_bsr_values(nnz, block, dtype, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
-
-    ref_out = torch.ops.aten.sparse_bsr_tensor(
-        ref_crow, ref_col, ref_values, dtype=dtype, device=ref_crow.device
-    )
-    res_out = _resolve_gems_op()(
-        crow_t, col_t, values, dtype=dtype, device=crow_t.device
-    )
-
-    _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_equal(res_out, ref_out)
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.parametrize("case", _shape_level_cases())
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     # Shape-level dimension: grids derived from tu.selected_shapes() (0-dim
-    # scalar excluded; 1-dim entries become square 2-D tensors, all others
-    # keep their leading batch dims).
+    # scalar excluded; 1-dim entries become square 2-D tensors, all others keep
+    # their leading batch dims).
     size, block, crow, col = case
     batch = size[:-2]
     nnz = len(col)
@@ -417,14 +447,13 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype, batch=batch)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    _assert_sparse(res_out, ref_out, dtype)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
 def test_sparse_bsr_tensor_nan_inf_values(dtype):
     # The nan/inf dimension: non-finite block values are stored verbatim (no
     # arithmetic touches them). Compare with equal_nan=True so nan positions
@@ -432,7 +461,6 @@ def test_sparse_bsr_tensor_nan_inf_values(dtype):
     size, block, crow, col = _BSR_2D_CASES[0]
     nnz = len(col)
     values = _make_bsr_values(nnz, block, dtype)
-    values = values.clone()
     flat = values.reshape(-1)
     flat[0] = float("nan")
     flat[1] = float("inf")
@@ -461,12 +489,11 @@ def test_sparse_bsr_tensor_nan_inf_values(dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
-    utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=True)
+    _assert_sparse(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("dtype", _FLOAT_BSR_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
 def test_sparse_bsr_tensor_boundary_values(dtype):
     # torch.testing.make_tensor draws values strictly inside the dtype bounds,
     # so pin the exact finfo min/max (and a few exact constants) explicitly:
@@ -507,8 +534,7 @@ def test_sparse_bsr_tensor_boundary_values(dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_close(res_out, ref_out, dtype)
-    utils.gems_assert_equal(res_out.values(), ref_out.values())
+    _assert_sparse(res_out, ref_out, dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -606,14 +632,14 @@ def test_sparse_bsr_tensor_rejects_device_mismatch():
 
 @pytest.mark.sparse_bsr_tensor
 @pytest.mark.skipif(
-    flag_gems.device != "cuda",
-    reason="the missing-device quirk only exists on CUDA",
+    flag_gems.device == "cpu",
+    reason="device inference from component tensors only applies to accelerators",
 )
 def test_sparse_bsr_tensor_rejects_missing_device():
-    # On CUDA this torch build cannot infer the device from the input tensors
-    # ("Values and compressed tensor instance need to be on the same device")
-    # unless the device kwarg is given; the candidate must reject the same
-    # request.
+    # On this torch build the factory cannot infer the device from the input
+    # tensors ("Values and compressed tensor instance need to be on the same
+    # device") unless the device kwarg is given; the candidate must reject the
+    # same request.
     size, block, crow, col = _BSR_2D_CASES[0]
     nnz = len(col)
     crow_t = _make_index_tensor(crow)

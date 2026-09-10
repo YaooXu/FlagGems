@@ -18,7 +18,7 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import base, consts
+from . import base, consts, utils
 
 # ``_nnz`` starts with an underscore, and ``pytest.mark`` refuses to generate a
 # marker via attribute access for such names. Register it directly on the
@@ -33,8 +33,8 @@ setattr(
 # sparse tensor. It is a pure metadata query (the measured work is dispatch and
 # layout introspection, never data movement), and dense tensors raise
 # NotImplementedError for it, so every benchmark input is a sparse tensor. The
-# shapes below cover representative logical sizes across ranks 2-4; the actual
-# device allocation stays tiny because nnz is fixed and small.
+# logical shapes below cover ranks 2-4 at representative sizes; the actual
+# device allocation stays modest because nnz is fixed and small.
 _NNZ_SHAPES = [
     (64, 64),
     (1024, 1024),
@@ -59,12 +59,7 @@ def _make_sparse_coo_input(shape, sparse_dim, dtype, device, nnz=_NNZ, seed=0):
             for dim in sparse_shape
         ]
     )
-    if dtype.is_floating_point:
-        values = torch.randn((nnz,) + dense_shape, dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, (nnz,) + dense_shape, dtype=dtype, generator=gen)
-    else:
-        values = torch.randint(-5, 6, (nnz,) + dense_shape, dtype=dtype, generator=gen)
+    values = utils.generate_tensor_input((nnz,) + dense_shape, dtype, device)
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
@@ -87,16 +82,12 @@ def _make_sparse_csr_input(shape, dtype, device, nnz=_NNZ, seed=0):
             torch.full((1,), nnz, dtype=torch.long),
         ]
     )
-    if dtype.is_floating_point:
-        values = torch.randn(nnz, dtype=dtype, generator=gen)
-    elif dtype == torch.bool:
-        values = torch.randint(0, 2, (nnz,), dtype=dtype, generator=gen)
-    else:
-        values = torch.randint(-5, 6, (nnz,), dtype=dtype, generator=gen)
     if len(shape) == 3:
         crow_indices = crow_indices.expand(shape[0], -1).contiguous()
         col_indices = col_indices.expand(shape[0], -1).contiguous()
-        values = values.expand(shape[0], -1).contiguous()
+        values = utils.generate_tensor_input((shape[0], nnz), dtype, device)
+    else:
+        values = utils.generate_tensor_input((nnz,), dtype, device)
     return torch.sparse_csr_tensor(
         crow_indices, col_indices, values, shape, device=device
     )
@@ -136,6 +127,8 @@ class NnzBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark whose inputs are sparse COO/CSR tensors."""
 
     def set_shapes(self, shape_file_path=None):
+        # _nnz is a sparse-only op, so there are no meaningful dense shapes in
+        # core_shapes.yaml; benchmark the dedicated sparse descriptors above.
         self.shapes = _NNZ_SHAPES
 
 
@@ -146,6 +139,10 @@ def test__nnz():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten._nnz,
+        # flag_gems has no public ``_nnz`` direct callable; the candidate is
+        # supplied by the KernelGen process-local override keyed on the public
+        # operator name "_nnz" (resolved via flag_gems.testing.resolve_gems_op
+        # inside the benchmark runner).
         gems_op=getattr(flag_gems, "_nnz", None),
         dtypes=consts.FLOAT_DTYPES,
     )

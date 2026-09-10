@@ -26,12 +26,13 @@ from . import base, consts
 # overload (single tensor in, fresh tensor out) and UnaryPointwiseOutBenchmark
 # covers the .out overload (caller-supplied out buffer passed as a kwarg). Both
 # use the same call semantics as torch.ops.aten.detach_copy / .out, which are
-# the perf reference; the candidate is passed explicitly via gems_op (the
-# harness override wins through resolve_gems_op inside the Benchmark base).
+# the perf comparison reference; the candidate is passed explicitly via gems_op
+# (the harness override wins through resolve_gems_op inside the Benchmark base).
 #
-# The yaml-provided shapes include 1e9-element tensors (4 GiB fp32 per tensor);
-# the MAX_ELEMENTS cap keeps every timed copy within a few hundred MB so the
-# benchmark does not OOM.
+# flag_gems exposes no direct detach_copy callable today, so gems_op falls back
+# to None and the KernelGen override registry provides the candidate; the YAML
+# shape set contains 1e9-element tensors (~4 GiB fp32 per tensor), so the
+# MAX_ELEMENTS cap keeps every timed copy within a few hundred MB.
 _MAX_ELEMENTS = 2**26
 
 

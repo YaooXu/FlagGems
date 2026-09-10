@@ -20,50 +20,84 @@ import flag_gems
 from . import base, consts, utils
 
 # aten::dstack(Tensor[] tensors) -> Tensor views every input as 3-D (atleast_3d)
-# and concatenates along the new depth axis (dim 2); the output is ~3x the input
-# size for a 3-element TensorList. No public Benchmark family models a
-# TensorList depth-concatenation, so the benchmark uses a two-phase
-# GenericBenchmark (case_fn + build_inputs_fn). The benchmark trips every input
-# three times (3 tensors of the same shape) to keep the depth-axis copy
-# dominant; the cap on the total element count keeps allocations reasonable.
-# gems_op is resolved through getattr because flag_gems.dstack is not yet
-# registered as a direct callable; KernelGen's override_gems_op("dstack", ...)
-# still wins at run time via flag_gems.testing.resolve_gems_op.
+# and concatenates along the new depth axis (dim 2). No public Benchmark family
+# models a TensorList depth-concatenation, so the benchmark uses the two-phase
+# GenericBenchmark (case_fn + build_inputs_fn) rather than a bare legacy
+# input_fn.
+#
+# The benchmark concats three tensors: the equal-depth case (three identical
+# shapes) makes the raw copy bandwidth the bottleneck, and for tensors with
+# ndim >= 3 a second depth-varying case (only dim 2 differs between inputs,
+# which is legal for dstack) exercises the candidate's per-input depth
+# bookkeeping.
+#
+# The shape cap keeps allocations reasonable: dstack writes ~3x the input
+# elements and the generic DEFAULT_SHAPES include 1G-element tensors, so any
+# shape whose 3-tensor list exceeds MAX_ELEMENTS is dropped.
+#
+# gems_op is resolved inside the test function (never at import time) so the
+# process-local override installed by KernelGen wins. flag_gems.dstack is not
+# registered as a direct callable yet, so getattr(..., None) keeps the file
+# importable/runnable before an implementation exists; either way
+# torch_op=torch.ops.aten.dstack stays the perf comparison reference and
+# gems_op, when resolved, is the candidate timed against it.
 
 
 def _case_fn(shape, dtype):
+    # One Workload per (shape, depth layout): a 3-element TensorList.
     del dtype
     yield base.BenchmarkCasePlan(
         shape={"inputs": [shape, shape, shape]},
-        params={},
-        builder_args=(shape,),
+        params={"num_tensors": 3},
+        builder_args=((shape, shape, shape),),
     )
+
+    # Depth may vary per input (dim 2 is the concat axis); add one such case for
+    # every tensor that has a depth axis of its own.
+    if len(shape) >= 3 and shape[2] >= 2:
+        step = max(1, shape[2] // 2)
+        depths = (shape[2], shape[2] + step, max(1, shape[2] - step))
+        if len(set(depths)) > 1:
+            varying = tuple(
+                tuple(depths[j] if i == 2 else dim for i, dim in enumerate(shape))
+                for j in range(3)
+            )
+            yield base.BenchmarkCasePlan(
+                shape={"inputs": list(varying)},
+                params={"num_tensors": 3},
+                builder_args=(varying,),
+            )
 
 
 def _build_inputs_fn(plan, dtype, device):
-    shape = plan.builder_args[0]
-    inp = [utils.generate_tensor_input(shape, dtype, device) for _ in range(3)]
+    # builder_args[0] is the tuple of per-input shapes; the TensorList is passed
+    # positionally, matching aten::dstack(Tensor[])'s call semantics.
+    shapes = plan.builder_args[0]
+    inp = [
+        utils.generate_tensor_input(shape, dtype, device)
+        for shape in shapes[: plan.params["num_tensors"]]
+    ]
     return inp, {}
 
 
+def _numel(shape):
+    n = 1
+    for dim in shape:
+        n *= dim
+    return n
+
+
 class DstackBenchmark(base.GenericBenchmark):
-    # The depth-axis copy is the dominant cost, so capping the total element
-    # count avoids allocating multi-GB inputs (the generic DEFAULT_SHAPES
-    # include 1G-element tensors) for no signal: a 3-tensor dstack writes
-    # 3x the input elements, so the cap is 3 * 2**26 elements.
+    # A 3-tensor dstack allocates 3 inputs plus a ~3x input output; cap the
+    # total to avoid multi-GB cases (the generic DEFAULT_SHAPES reach 2**30
+    # elements) that carry no extra signal.
     MAX_ELEMENTS = 3 * 2**26
 
-    def set_shapes(self, shape_file_path=None):
-        super().set_shapes(shape_file_path)
-        self.shapes = [
-            shape for shape in self.shapes if _numel(shape) * 3 <= self.MAX_ELEMENTS
-        ]
-
     def set_more_shapes(self):
-        # Depth-axis performance-relevant shapes: 1-D (2**20,), 2-D rows of
-        # width 2**i, and 3-D (64, 2**i, 64) volumes whose depth axis is the
-        # concatenation dimension.
-        self.shapes = self.shapes + [
+        # Depth-axis performance-relevant shapes: long 1-D rows, 2-D rows of
+        # width 2**i, and 3-D volumes whose concat dim (dim 2) is the axis of
+        # interest. Each stays well inside MAX_ELEMENTS for a 3-tensor list.
+        return [
             (2**20,),
             (1024, 2**0),
             (1024, 2**8),
@@ -73,12 +107,24 @@ class DstackBenchmark(base.GenericBenchmark):
             (64, 2**8, 64),
         ]
 
+    def set_shapes(self, shape_file_path=None):
+        super().set_shapes(shape_file_path)
+        self.shapes = [
+            shape for shape in self.shapes if _numel(shape) * 3 <= self.MAX_ELEMENTS
+        ]
 
-def _numel(shape):
-    n = 1
-    for dim in shape:
-        n *= dim
-    return n
+
+def _resolve_gems_op():
+    # Resolved inside the test (never at module import time) so KernelGen's
+    # override_gems_op("dstack", ...) wins. Falls back to None when neither an
+    # override nor a direct flag_gems.dstack callable is registered; the
+    # benchmark then just times the torch reference.
+    try:
+        return flag_gems.testing.resolve_gems_op(
+            "dstack", getattr(flag_gems, "dstack", None)
+        )
+    except LookupError:
+        return None
 
 
 @pytest.mark.dstack
@@ -89,7 +135,7 @@ def test_dstack():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.dstack,
-        gems_op=getattr(flag_gems, "dstack", None),
+        gems_op=_resolve_gems_op(),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

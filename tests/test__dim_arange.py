@@ -32,37 +32,65 @@ setattr(
 )
 
 # aten::_dim_arange(Tensor like, int dim) -> Tensor builds a fresh 1-D int64
-# tensor of length like.size(dim) holding the values [0, 1, ..., like.size(dim)-1].
+# tensor of length like.size(dim) holding the values [0, 1, ..., size(dim)-1].
 # Only the shape and device of ``like`` are consulted; its values, dtype, strides
 # and layout never influence the result. The output is always a fresh (non-view,
 # non-alias) int64 tensor on the same device as ``like``. 0-D ``like`` raises
 # IndexError for every dim, so the scalar shape is excluded from the valid
 # workloads below and covered by the negative tests instead.
 #
-# Shape coverage follows the regular-operator spec's level selection
-# (quick/all via the pytest --quick flag): tu.selected_shapes() minus the
-# 0-D scalar. Every valid dim is exercised in both the positive and negative
-# indexing conventions, which aten normalizes identically.
-#
-# Adaptation notes for the regular-operator spec:
+# Regular-operator spec adaptation notes:
+# - Value ranges: the input values are semantically irrelevant, but every range
+#   from the spec (tu.selected_ranges()) is still exercised to prove the
+#   deterministic arange result is produced for arbitrary storage contents.
+# - Shapes: tu.selected_shapes() (the spec's seven shapes, 0-D excluded) plus a
+#   few small extra ranks; every valid dim is exercised in both the positive and
+#   negative indexing conventions, which aten normalizes identically.
 # - Broadcast: N/A -- the op takes a single ``like`` tensor.
 # - Backward: N/A -- the output is an int64 index tensor with no autograd
-#   support, so there is no gradient to compare.
-# - Value ranges: the input values are semantically irrelevant, so the
-#   value-range dimension below (tu.selected_ranges()) verifies that the
-#   deterministic arange result is produced for every storage range.
-# - nan/inf: covered by a dedicated case (non-finite storage values are
-#   ignored, equal_nan semantics do not apply to the int64 output).
-_DIM_ARANGE_SHAPES = tuple(s for s in tu.selected_shapes() if len(s) > 0)
+#   support. A dedicated case asserts the result carries no grad_fn.
+# - nan/inf: covered by a dedicated case (non-finite storage values are ignored;
+#   equal_nan semantics do not apply to the int64 output).
+
+# Spec shape levels via tests/test_utils.py, with a couple of small extra ranks
+# for extra dim-convention coverage. The 0-D scalar is dropped: it has no valid
+# ``dim`` (see the negative tests below).
+_EXTRA_SHAPES = [(1,), (5, 3), (2, 3, 4)]
+_DIM_ARANGE_SHAPES = []
+for _shape in list(tu.selected_shapes()) + _EXTRA_SHAPES:
+    if len(_shape) > 0 and _shape not in _DIM_ARANGE_SHAPES:
+        _DIM_ARANGE_SHAPES.append(_shape)
 _DIM_ARANGE_CASES = [
     (shape, dim)
     for shape in _DIM_ARANGE_SHAPES
     for dim in range(-len(shape), len(shape))
 ]
 
-# The op ignores the input values and dtype, so exercise every storage dtype
-# family the runtime supports (float, int, and bool "like" tensors).
-_DIM_ARANGE_INPUT_DTYPES = utils.FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+# The op ignores the values *and* the dtype of ``like`` -- it only reads its
+# shape/device -- so the spec's full required dtype set (int8, uint8, fp8,
+# fp32/bf16/fp16, int32/int64, bool) must be covered wherever the runtime can
+# actually build such a tensor and call the op. Probe instead of guessing.
+_DTYPE_CANDIDATES = []
+for _dtype in (
+    list(tu.REQUIRED_DTYPES)
+    + utils.ALL_INT_DTYPES
+    + utils.FLOAT_DTYPES
+    + utils.BOOL_TYPES
+):
+    if _dtype not in _DTYPE_CANDIDATES:
+        _DTYPE_CANDIDATES.append(_dtype)
+
+
+def _probe_like_dtype(dtype):
+    try:
+        probe = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
+        torch.ops.aten._dim_arange(probe, 0)
+    except Exception:
+        return False
+    return True
+
+
+_DIM_ARANGE_INPUT_DTYPES = [d for d in _DTYPE_CANDIDATES if _probe_like_dtype(d)]
 
 # Non-contiguous views of a (4, 8, 6) base: (view_fn, logical_shape, dim,
 # expected_len). The logical shape, not the storage, must drive the result.
@@ -84,10 +112,20 @@ def _resolve_gems_op():
     )
 
 
+def _make_like(dtype, shape, value_range):
+    # Unsigned dtypes cannot represent the negative bounds of some spec ranges;
+    # tu.make_input would clamp the low bound to 0 and fail on the resulting
+    # empty interval. The values are irrelevant here, so snap the range to the
+    # representable part and keep the (shape, dim) semantics under test.
+    if dtype == torch.uint8 and tu.resolve_bound(value_range[0], dtype) < 0:
+        value_range = ["0", value_range[1] if value_range[1] != "-1" else "1"]
+    return tu.make_input(dtype, shape, value_range)
+
+
 def _assert_arange_result(res_out, ref_out, inp, expected_len):
     # The result is a fresh 1-D int64 tensor on the ``like`` device holding
     # [0, ..., size(dim)-1]; it is never a view/alias of ``like``.
-    assert res_out.shape == ref_out.shape == (expected_len,)
+    assert tuple(res_out.shape) == tuple(ref_out.shape) == (expected_len,)
     assert res_out.dtype == ref_out.dtype == torch.int64
     assert res_out.device == inp.device
     assert ref_out.device == inp.device or ref_out.device == torch.device("cpu")
@@ -104,8 +142,8 @@ def test__dim_arange_value_ranges(shape, dim, value_range, dtype):
     # The result must be the deterministic arange(like.size(dim)) no matter
     # what values the storage holds, so every range from the regular-operator
     # spec is exercised here (this doubles as the value-range migration of the
-    # original zeros-based workload).
-    inp = tu.make_input(dtype, shape, value_range)
+    # original randn-based workload).
+    inp = _make_like(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
@@ -122,10 +160,10 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     # _dim_arange must work on any tensor layout; only the logical shape is
     # consulted, never the storage.
     view_fn, expected_shape, dim, expected_len = view_case
-    base = tu.make_input(dtype, (4, 8, 6), value_range)
+    base = _make_like(dtype, (4, 8, 6), value_range)
     inp = view_fn(base)
     assert not inp.is_contiguous()
-    assert inp.shape == expected_shape
+    assert tuple(inp.shape) == expected_shape
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
@@ -139,8 +177,7 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
 def test__dim_arange_nan_inf(dtype):
     # nan/inf are ordinary storage values for this op and must be ignored: the
     # result is still the deterministic arange sequence over the selected dim.
-    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"])
-    inp = inp.clone()
+    inp = _make_like(dtype, (4, 8, 6), ["-1", "1"]).clone()
     inp[0, :, 0] = float("inf")
     inp[1, :, 1] = float("-inf")
     inp[2, :, 2] = float("nan")
@@ -153,10 +190,28 @@ def test__dim_arange_nan_inf(dtype):
 
 
 @pytest.mark._dim_arange
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+def test__dim_arange_no_autograd(dtype):
+    # Backward is N/A: the int64 index output is not differentiable, so the
+    # result must never carry a grad_fn (and the op must not mutate ``like``).
+    inp = _make_like(dtype, (3, 5), ["-1", "1"])
+    before = inp.clone().detach()
+    ref_inp = utils.to_reference(inp)
+
+    ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
+    res_out = _resolve_gems_op()(inp, 1)
+
+    _assert_arange_result(res_out, ref_out, inp, 5)
+    assert res_out.grad_fn is None
+    assert not res_out.requires_grad
+    utils.gems_assert_equal(inp, before)
+
+
+@pytest.mark._dim_arange
 def test__dim_arange_rejects_out_of_range_dim():
     # dim must satisfy -like.dim() <= dim < like.dim(); both the positive and
     # the negative out-of-range bounds must raise like aten does.
-    inp = tu.make_input(torch.float32, (3, 5), ["-1", "1"])
+    inp = _make_like(torch.float32, (3, 5), ["-1", "1"])
     with pytest.raises(IndexError):
         torch.ops.aten._dim_arange(inp, 2)
     with pytest.raises(IndexError):
@@ -170,7 +225,7 @@ def test__dim_arange_rejects_out_of_range_dim():
 @pytest.mark._dim_arange
 def test__dim_arange_rejects_zero_dim_like():
     # 0-D ``like`` has no dims to arange over; aten raises IndexError for any dim.
-    inp = tu.make_input(torch.float32, (), ["-1", "1"])
+    inp = _make_like(torch.float32, (), ["-1", "1"])
     with pytest.raises(IndexError):
         torch.ops.aten._dim_arange(inp, 0)
     with pytest.raises((IndexError, RuntimeError)):
@@ -180,7 +235,7 @@ def test__dim_arange_rejects_zero_dim_like():
 @pytest.mark._dim_arange
 def test__dim_arange_rejects_non_integer_dim():
     # The schema requires an int ``dim``; a float is rejected at binding time.
-    inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
+    inp = _make_like(torch.float32, (4,), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._dim_arange(inp, 1.5)
     with pytest.raises((TypeError, ValueError, RuntimeError)):

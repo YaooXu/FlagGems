@@ -55,14 +55,16 @@ ZERO_POINT = 0
 
 # The default shape set contains a 1-G-element 1-D tensor whose int32 input +
 # output would need ~8 GiB and OOM on busy GPUs. Use allocation-friendly shapes
-# instead, capped at 2**26 elements (256 MiB int32 per tensor).
+# instead, spread over 1-D..4-D and capped at 2**24 elements (64 MiB int32 per
+# tensor, so a case needs ~128 MiB for input + output).
 MAKE_PERTENSOR_SHAPES = [
-    (2**26,),
+    (2**24,),
     (1024, 1024),
     (4096, 4096),
+    (20, 320, 15),
     (64, 512, 512),
-    (16, 128, 64, 1280),
-    (8, 512, 512, 32),
+    (16, 128, 64, 128),
+    (8, 256, 256, 32),
 ]
 
 
@@ -113,7 +115,8 @@ class MakePerTensorQuantizedTensorBenchmark(base.GenericBenchmark):
     pointwise families do not supply, so the case builder and input builder
     forward them explicitly. The output is a quantized tensor of the same shape
     (dtype derived from the input dtype), so each case needs input + output (2x
-    one tensor's memory).
+    one tensor's memory). set_shapes pins the allocation-friendly shape list
+    instead of the default 1-G-element shapes.
     """
 
     def set_shapes(self, shape_file_path=None):

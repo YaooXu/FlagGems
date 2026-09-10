@@ -27,10 +27,14 @@ from . import test_utils as tu
 # values, so every workload below feeds a sparse CSC tensor.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (shape, nnz) layouts from the quick/all levels, ranks
-#     2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank multi-batch-dims),
-#     with varying nnz so the (batch_dims + (ncols + 1,)) shape of the result
-#     is exercised;
+#   * dtypes: the spec's required int8 / uint8 / float8_e4m3fn / float8_e5m2
+#     plus fp16/fp32/bf16/fp64/int16/int32/int64/bool, probed at import time so
+#     a backend that cannot materialise a storage dtype is skipped cleanly;
+#   * shape levels: the shared tu.selected_shapes() levels mapped onto CSC
+#     layouts (rank >= 2) and dedicated (shape, nnz) layouts from the quick/all
+#     levels, ranks 2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank
+#     multi-batch-dims), with varying nnz so the (batch_dims + (ncols + 1,))
+#     shape of the result is exercised;
 #   * value ranges: tu.selected_ranges() over representative layouts, so every
 #     supported storage dtype is exercised with negative, positive, extreme and
 #     degenerate value ranges (the returned ccol is identical for all of them);
@@ -44,6 +48,46 @@ from . import test_utils as tu
 # No broadcast/backward dimensions apply: the operator is unary, returns a view
 # of the input's own storage (there is nothing to broadcast against) and its
 # result is an int64 metadata tensor (nothing to differentiate).
+
+# Required dtype coverage first, then the shared float/int/bool sets; the probe
+# below removes duplicates and anything the active device cannot build.
+_CCOL_DTYPE_CANDIDATES = list(
+    dict.fromkeys(
+        [
+            *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
+            *utils.ALL_FLOAT_DTYPES,  # + float64 where supported
+            *utils.ALL_INT_DTYPES,  # + int16 where supported
+            *utils.BOOL_TYPES,
+        ]
+    )
+)
+
+
+def _csc_dtype_probe(op_name, dtype):
+    """Report whether ``op_name`` accepts a tiny sparse CSC tensor of ``dtype``."""
+    del op_name
+    try:
+        ccol = torch.tensor([0, 1, 2], dtype=torch.long, device=flag_gems.device)
+        rows = torch.tensor([0, 1], dtype=torch.long, device=flag_gems.device)
+        values = torch.zeros(2, dtype=dtype, device=flag_gems.device)
+        inp = torch.sparse_csc_tensor(ccol, rows, values, (2, 2))
+        ref = torch.ops.aten.ccol_indices(utils.to_reference(inp))
+        return torch.is_tensor(ref) and ref.dtype == torch.int64
+    except Exception:
+        return False
+
+
+# Probe the device before parametrizing: an op/dtype pair that cannot run must
+# not be turned into a red test.
+_CSC_DTYPES = tu.supported_dtypes(
+    "ccol_indices", candidates=_CCOL_DTYPE_CANDIDATES, probe=_csc_dtype_probe
+) or [torch.float32]
+_CSC_FLOAT_DTYPES = [dtype for dtype in _CSC_DTYPES if dtype.is_floating_point]
+# fp8_e4m3fn cannot represent inf, so the nan/inf/-0.0 case only covers the
+# real floating families.
+_CSC_NAN_DTYPES = [
+    dtype for dtype in _CSC_DTYPES if dtype in set(utils.ALL_FLOAT_DTYPES)
+]
 
 # (shape, nnz) layouts covering 2-D all-sparse, 3-D batched, and 4-D
 # multi-batch-dims.
@@ -71,35 +115,62 @@ _CSC_CASES_ALL = [
 def _csc_cases():
     """(shape, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
     if tu.LEVEL == "quick":
-        return [((2, 19, 7), 8)]
+        # A 2-D and a batched layout, so the smoke level still exercises the
+        # unbatched (ncols + 1,) and batched batch + (ncols + 1,) result shapes.
+        return [((2, 19, 7), 8), ((4, 5), 6)]
     if tu.LEVEL == "all":
         return _CSC_CASES_CORE + _CSC_CASES_ALL
+
+
+def _csc_shape_level_cases():
+    """The shared tu.selected_shapes() levels mapped onto CSC layouts.
+
+    A sparse CSC tensor needs at least two compressed dimensions
+    (nrows, ncols); any leading dimensions are batch dims. The rank-0 / rank-1
+    shared shapes therefore do not apply and are dropped.
+    """
+    cases = []
+    for shape in tu.selected_shapes():
+        shape = tuple(shape)
+        if len(shape) < 2:
+            continue
+        nrows, ncols = shape[-2], shape[-1]
+        cases.append((shape, min(4, nrows * ncols)))
+    return cases
 
 
 def _csc_value_range_cases():
     """Representative 2-D + batched layouts for the value-range sweep."""
     if tu.LEVEL == "quick":
-        return [((2, 19, 7), 8)]
+        return [((2, 19, 7), 8), ((4, 5), 6)]
     if tu.LEVEL == "all":
         return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
 
 
-# The result ignores the stored values, but the candidate must accept any
-# storage dtype the sparse CSC runtime supports: every float, int, and bool
-# family.
-_CSC_DTYPES = utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
+def _make_values(dtype, shape, value_range):
+    """Value-range helper with unsigned-bound snapping.
+
+    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
+    (``-1`` is not representable, and the snapped interval degenerates);
+    ``ccol_indices`` only reads layout metadata, so that single dtype/range
+    pair is snapped to its representable subset.
+    """
+    if dtype == torch.uint8 and value_range == ["-1", "0"]:
+        value_range = ["0", "0"]
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _make_input(shape, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side (row, col) generation; the values tensor comes
-    # from the shared value-range helper (tu.make_input) and the sparse tensor
-    # is created on the test device. Duplicate entries are allowed and merely
-    # leave the tensor uncoalesced (covered explicitly below). The ccol pointer
-    # array is built with a (vectorized, per-batch) column-wise bincount, so it
-    # is always a valid CSC structure.
+    # from the shared value-range helper and the sparse tensor is created on
+    # the test device. (row, col) pairs are drawn with replacement: duplicate
+    # entries are allowed and merely leave the tensor uncoalesced (covered
+    # explicitly below). The ccol pointer array is built with a vectorized,
+    # per-batch column-wise bincount, so it is always a valid CSC structure and
+    # any batch size (including the large shared shape levels) stays cheap.
     gen = torch.Generator("cpu").manual_seed(seed)
     nrows, ncols = shape[-2], shape[-1]
-    batch = shape[:-2]
+    batch = tuple(shape[:-2])
     entries_shape = batch + (nnz,)
     rows = torch.randint(0, nrows, entries_shape, dtype=torch.long, generator=gen)
     cols = torch.randint(0, ncols, entries_shape, dtype=torch.long, generator=gen)
@@ -111,13 +182,10 @@ def _make_input(shape, nnz, dtype, value_range, seed=0):
         batch_numel *= dim
     offset = (torch.arange(batch_numel, dtype=torch.long) * ncols).view(batch_numel, 1)
     flat = (cols.reshape(batch_numel, nnz) + offset).reshape(-1)
-    counts = torch.bincount(flat, minlength=batch_numel * ncols).view(
-        batch_numel, ncols
-    )
-    ccol = torch.zeros(batch_numel, ncols + 1, dtype=torch.long)
-    ccol[:, 1:] = torch.cumsum(counts, -1)
-    ccol = ccol.view(batch + (ncols + 1,))
-    values = tu.make_input(dtype, entries_shape, value_range)
+    counts = torch.bincount(flat, minlength=batch_numel * ncols).view(batch + (ncols,))
+    ccol = torch.zeros(batch + (ncols + 1,), dtype=torch.long)
+    ccol[..., 1:] = torch.cumsum(counts, -1)
+    values = _make_values(dtype, entries_shape, value_range)
     return torch.sparse_csc_tensor(
         ccol.to(flag_gems.device),
         rows.to(flag_gems.device),
@@ -169,9 +237,26 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
 def test_ccol_indices_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every storage dtype (bool/int snap the range to the representable
-    # set). The returned (batch_dims + (ncols + 1,)) ccol view must match the
-    # reference exactly and alias the input's ccol storage.
+    # for every probed storage dtype (bool/int snap the range to the
+    # representable set). The returned (batch_dims + (ncols + 1,)) ccol view
+    # must match the reference exactly and alias the input's ccol storage.
+    shape, nnz = case
+    inp = _make_input(shape, nnz, dtype, ["-1", "1"])
+    ref_inp = utils.to_reference(inp.clone())
+
+    ref_out = torch.ops.aten.ccol_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+
+    _assert_result(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark.ccol_indices
+@pytest.mark.parametrize("case", _csc_shape_level_cases())
+@pytest.mark.parametrize("dtype", _CSC_DTYPES)
+def test_ccol_indices_shape_levels(case, dtype):
+    # The shared shape levels from the spec, mapped onto CSC layouts: the last
+    # two dims are (nrows, ncols) and any leading dims are batch dims, so the
+    # returned ccol keeps those batch dims and has shape batch + (ncols + 1,).
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
     ref_inp = utils.to_reference(inp.clone())
@@ -263,7 +348,7 @@ def test_ccol_indices_uncoalesced(dtype):
     ccol = torch.tensor([0, 3, 3, 5], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
     assert rows[0].item() == rows[1].item()
-    values = tu.make_input(dtype, (5,), ["-1", "1"])
+    values = _make_values(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
     ref_inp = utils.to_reference(inp.clone())
 
@@ -281,7 +366,7 @@ def test_ccol_indices_full_storage(dtype):
     shape = (2, 3)
     ccol = torch.tensor([0, 2, 4, 6], dtype=torch.long, device=flag_gems.device)
     rows = torch.arange(2).repeat(3).to(flag_gems.device)  # [0, 1, 0, 1, 0, 1]
-    values = tu.make_input(dtype, (6,), ["-1", "1"])
+    values = _make_values(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
     ref_inp = utils.to_reference(inp.clone())
@@ -293,7 +378,7 @@ def test_ccol_indices_full_storage(dtype):
 
 
 @pytest.mark.ccol_indices
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", _CSC_NAN_DTYPES)
 def test_ccol_indices_nan_inf_values_ignored(dtype):
     # nan/inf/-inf/±0.0 are ordinary stored values: ccol_indices must still
     # return exactly the stored ccol tensor, unchanged, for every one of them.
