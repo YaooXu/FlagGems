@@ -271,9 +271,10 @@ _VALUE_RANGE_CASES = (
 )
 
 # The aten op carries its own autograd (registered at the nn module level), so
-# backward is exercised directly. Gradients are only validated on fp32/fp64:
-# fp16/bf16 gradients accumulate too coarsely to compare against the analytic
-# reference gradient.
+# backward is exercised directly. fp16/bf16 are included: the native op
+# accumulates its gradients in the input dtype and the dtype-scaled _assert_close
+# tolerances below (fp16 2e-2, bf16 2e-1, plus the per-dtype rtol) cover that
+# rounding, as they do for the forward.
 _BACKWARD_CASES = (
     SLOW_CONV_TRANSPOSE3D_CASES[:1]
     if QUICK_MODE
@@ -285,7 +286,11 @@ _BACKWARD_CASES = (
 )
 _BACKWARD_DTYPES = [
     d
-    for d in ([torch.float32] if QUICK_MODE else [torch.float32, torch.float64])
+    for d in (
+        [torch.float32]
+        if QUICK_MODE
+        else [torch.float16, torch.float32, torch.bfloat16, torch.float64]
+    )
     if d in SUPPORTED_DTYPES
 ]
 

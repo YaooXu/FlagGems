@@ -37,9 +37,8 @@ from . import test_utils as tu
 #     exact device-resident helper since torch.testing cannot compare float8 on
 #     CPU);
 #   * value ranges -- the full tu.selected_ranges() sweep ([-1,1], [0,1],
-#     [-1,0], [0,max], [min,0]); ranges an unsigned dtype cannot represent are
-#     dropped before generation (the old randn-only value test is migrated onto
-#     this framework);
+#     [-1,0], [0,max], [min,0]) for every supported dtype (the old randn-only
+#     value test is migrated onto this framework);
 #   * shape levels -- dedicated depth-axis sets merged with the shared shape
 #     levels tu.selected_shapes() (quick/all via --quick) as self-pairs,
 #     bounded so one input stays <= 2**20 elements (the output is ~n_inputs x
@@ -70,10 +69,6 @@ _FP8_DTYPES = frozenset(
     )
     if dtype is not None
 )
-
-# Unsigned integers cannot represent the negative-only spec ranges, so those
-# combinations are dropped before they are fed to the generator.
-_UNSIGNED_DTYPES = frozenset({torch.uint8})
 
 # The spec's required dtype list first (int8 / uint8 / fp8 are hard
 # requirements when the backend supports them), then the shared float/int/bool
@@ -217,27 +212,10 @@ def _dstack_depth(shape):
     return utils.unsqueeze_tuple(shape, 3)[2]
 
 
-def _range_valid(dtype, value_range):
-    """False for spec ranges an unsigned dtype cannot represent."""
-    if dtype not in _UNSIGNED_DTYPES:
-        return True
-    low = tu.resolve_bound(value_range[0], dtype)
-    high = tu.resolve_bound(value_range[1], dtype)
-    return low >= 0 and high >= 0
-
-
-def _preferred_range(dtype):
-    """A non-degenerate range the dtype can represent (uint8 -> [0,1])."""
-    if _range_valid(dtype, _MAIN_RANGE):
-        return _MAIN_RANGE
-    return ["0", "1"]
-
-
 _DTYPE_RANGE_PAIRS = [
     (dtype, value_range)
     for dtype in DSTACK_DTYPES
     for value_range in tu.selected_ranges()
-    if _range_valid(dtype, value_range)
 ]
 
 
@@ -309,9 +287,10 @@ def _assert_dstack_output(res_out, ref_out, dtype):
 @pytest.mark.parametrize("shape_set", _dstack_shape_sets())
 @pytest.mark.parametrize("dtype", DSTACK_DTYPES)
 def test_dstack(shape_set, dtype):
-    # Shape levels x every supported dtype, with values from a non-degenerate
-    # range (negative and positive for signed dtypes, [0,1] for uint8).
-    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
+    # Shape levels x every supported dtype, with values from the shared
+    # non-degenerate [-1,1] range (tu.make_input clamps the negative bound for
+    # dtypes that cannot represent it).
+    inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
@@ -344,7 +323,7 @@ def test_dstack_value_ranges(shape_set, dtype, value_range):
 def test_dstack_out(shape_set, dtype):
     # The .out overload must write into the provided out tensor and return it
     # (alias semantics), matching the aten reference bit-for-bit.
-    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
+    inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_shape = torch.ops.aten.dstack(ref_inp).shape
@@ -369,7 +348,7 @@ def test_dstack_out(shape_set, dtype):
 def test_dstack_empty_inputs(shape_set, dtype):
     # Zero-sized tensors: 1-D (0,), 2-D (2, 0) and 3-D (0, 3, 4) all produce
     # valid (possibly empty) depth-axis concatenations.
-    inp = [tu.make_input(dtype, s, _preferred_range(dtype)) for s in shape_set]
+    inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
     ref_inp = [utils.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)

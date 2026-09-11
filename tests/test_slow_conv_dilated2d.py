@@ -101,9 +101,11 @@ else:
     ]
 
 # Backward coverage: the aten op carries autograd, so the fp64 reference
-# gradients come from torch.autograd.grad over the native op. fp16/bf16
-# gradients accumulate too coarsely to compare against the analytic reference,
-# so only fp32/fp64 are validated.
+# gradients come from torch.autograd.grad over the native op. fp16/bf16 are
+# included: the native op accumulates its gradients in the input dtype and the
+# dtype-scaled _assert_close tolerances (fp16 1e-2, bf16 5e-2 on the forward;
+# the gradient comparisons use reduce_dim-scaled atol with the per-dtype rtol)
+# cover that rounding.
 if QUICK_MODE:
     _SLOW_CONV_DILATED2D_BACKWARD_CASES = [
         ((1, 2, 5, 5), (3, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
@@ -114,7 +116,7 @@ else:
         ((1, 2, 5, 5), (3, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
         ((2, 3, 6, 6), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0), (1, 1)),
     ]
-    _BACKWARD_DTYPES = [torch.float32, torch.float64]
+    _BACKWARD_DTYPES = [torch.float16, torch.float32, torch.bfloat16, torch.float64]
 
 # Invalid configurations for the negative tests, as
 # (inp_shape, weight_shape, kernel_size, stride, padding, dilation): channel

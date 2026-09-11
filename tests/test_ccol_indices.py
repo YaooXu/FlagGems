@@ -35,9 +35,9 @@ from . import test_utils as tu
 #     levels, ranks 2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank
 #     multi-batch-dims), with varying nnz so the (batch_dims + (ncols + 1,))
 #     shape of the result is exercised;
-#   * value ranges: tu.selected_ranges() over representative layouts, so every
-#     supported storage dtype is exercised with negative, positive, extreme and
-#     degenerate value ranges (the returned ccol is identical for all of them);
+#   * value ranges: tu.selected_ranges() over representative layouts, so the
+#     five spec ranges reach every supported storage dtype (the returned ccol is
+#     identical for all of them);
 #   * edge cases: empty (nnz == 0, unbatched and batched), single column
 #     (ncols == 1), uncoalesced (duplicate row entries inside a column),
 #     fully-dense CSC storage, and nan/inf/-0.0 values (all ignored by the
@@ -149,19 +149,6 @@ def _csc_value_range_cases():
         return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
 
 
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with unsigned-bound snapping.
-
-    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
-    (``-1`` is not representable, and the snapped interval degenerates);
-    ``ccol_indices`` only reads layout metadata, so that single dtype/range
-    pair is snapped to its representable subset.
-    """
-    if dtype == torch.uint8 and value_range == ["-1", "0"]:
-        value_range = ["0", "0"]
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_input(shape, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side (row, col) generation; the values tensor comes
     # from the shared value-range helper and the sparse tensor is created on
@@ -187,7 +174,7 @@ def _make_input(shape, nnz, dtype, value_range, seed=0):
     counts = torch.bincount(flat, minlength=batch_numel * ncols).view(batch + (ncols,))
     ccol = torch.zeros(batch + (ncols + 1,), dtype=torch.long)
     ccol[..., 1:] = torch.cumsum(counts, -1)
-    values = _make_values(dtype, entries_shape, value_range)
+    values = tu.make_input(dtype, entries_shape, value_range)
     return torch.sparse_csc_tensor(
         ccol.to(flag_gems.device),
         rows.to(flag_gems.device),
@@ -350,7 +337,7 @@ def test_ccol_indices_uncoalesced(dtype):
     ccol = torch.tensor([0, 3, 3, 5], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
     assert rows[0].item() == rows[1].item()
-    values = _make_values(dtype, (5,), ["-1", "1"])
+    values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
     ref_inp = utils.to_reference(inp.clone())
 
@@ -368,7 +355,7 @@ def test_ccol_indices_full_storage(dtype):
     shape = (2, 3)
     ccol = torch.tensor([0, 2, 4, 6], dtype=torch.long, device=flag_gems.device)
     rows = torch.arange(2).repeat(3).to(flag_gems.device)  # [0, 1, 0, 1, 0, 1]
-    values = _make_values(dtype, (6,), ["-1", "1"])
+    values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
     ref_inp = utils.to_reference(inp.clone())

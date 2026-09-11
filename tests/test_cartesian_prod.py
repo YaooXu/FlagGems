@@ -88,7 +88,6 @@ if not _SUPPORTED_DTYPES:
     _SUPPORTED_DTYPES = list(_CANDIDATE_DTYPES)
 
 _FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
-_UNSIGNED_DTYPES = {torch.uint8}
 
 # fp32/bf16/fp16 are the autograd-capable float dtypes; fp8 has no autograd and
 # fp64 support is device dependent, so only the shared float set is used there.
@@ -101,19 +100,7 @@ _NAN_INF_DTYPES = [d for d in _FLOAT_DTYPES if d not in _FP8_DTYPE_SET]
 _RANGE_DTYPES = [d for d in _SUPPORTED_DTYPES if d != torch.bool]
 
 
-def _dtype_ranges(dtype):
-    """Return the spec's five ranges, adapting "-1" bounds for unsigned types.
-
-    ``torch.testing.make_tensor`` rejects ``low=-1`` for uint8, so map the "-1"
-    symbol to "0" (still a valid, boundary-covering range for unsigned values).
-    """
-    ranges = [list(r) for r in tu.selected_ranges()]
-    if dtype in _UNSIGNED_DTYPES:
-        ranges = [[("0" if s == "-1" else s) for s in r] for r in ranges]
-    return ranges
-
-
-_RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in _dtype_ranges(d)]
+_RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in tu.selected_ranges()]
 
 # Shape levels: each entry is the list of 1-D input sizes (the op's shape
 # dimension). The spec's seven dense shapes do not apply to this op: its input

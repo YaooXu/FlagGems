@@ -143,39 +143,14 @@ def _probe_csr_dtypes(candidates):
 _CSR_DTYPES = _probe_csr_dtypes(_CSR_DTYPE_CANDIDATES) or list(_CSR_DTYPE_CANDIDATES)
 
 
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with an unsigned-dtype fallback.
-
-    tu.make_input is used whenever possible. Unsigned dtypes (e.g. uint8) have
-    no negative values, so the [-1, 0] range clamps to a degenerate 0/0 range
-    and torch.testing.make_tensor rejects it; clamp both bounds into the dtype
-    bounds and fill the constant instead (still inside the requested range).
-    """
-    try:
-        return tu.make_input(dtype, shape, value_range)
-    except RuntimeError:
-        low = tu.resolve_bound(value_range[0], dtype)
-        high = tu.resolve_bound(value_range[1], dtype)
-        lo_bound, hi_bound = tu.dtype_bounds(dtype)
-        if not (dtype.is_floating_point or dtype.is_complex):
-            low, high = int(low), int(high)
-            lo_bound, hi_bound = int(lo_bound), int(hi_bound)
-        low = min(max(low, lo_bound), hi_bound)
-        high = min(max(high, lo_bound), hi_bound)
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-        )
-
-
 def _make_input(shape, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side (row, col) generation; the values tensor comes
-    # from the shared value-range helper and the sparse tensor is created on the
-    # test device. Duplicate entries are allowed and merely leave the tensor
-    # uncoalesced (covered explicitly below). The crow pointer array is built
-    # with a (vectorized, per-batch) row-wise bincount, so it is always a valid
-    # CSR structure.
+    # from the shared value-range helper (which clamps a negative bound into the
+    # dtype's range, realizing ``["-1", "0"]`` on uint8 as a constant zero fill)
+    # and the sparse tensor is created on the test device. Duplicate entries are
+    # allowed and merely leave the tensor uncoalesced (covered explicitly
+    # below). The crow pointer array is built with a (vectorized, per-batch)
+    # row-wise bincount, so it is always a valid CSR structure.
     gen = torch.Generator("cpu").manual_seed(seed)
     nrows, ncols = shape[-2], shape[-1]
     batch = shape[:-2]
@@ -196,7 +171,7 @@ def _make_input(shape, nnz, dtype, value_range, seed=0):
     crow = torch.zeros(batch_numel, nrows + 1, dtype=torch.long)
     crow[:, 1:] = torch.cumsum(counts, -1)
     crow = crow.view(batch + (nrows + 1,))
-    values = _make_values(dtype, entries_shape, value_range)
+    values = tu.make_input(dtype, entries_shape, value_range)
     return torch.sparse_csr_tensor(
         crow.to(flag_gems.device),
         cols.to(flag_gems.device),
@@ -342,7 +317,7 @@ def test_crow_indices_uncoalesced(dtype):
     crow = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
     assert cols[0].item() == cols[1].item()
-    values = _make_values(dtype, (5,), ["-1", "1"])
+    values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     ref_inp = utils.to_reference(inp.clone())
 
@@ -360,7 +335,7 @@ def test_crow_indices_full_storage(dtype):
     shape = (2, 3)
     crow = torch.tensor([0, 3, 6], dtype=torch.long, device=flag_gems.device)
     cols = torch.arange(3).repeat(2).to(flag_gems.device)  # [0, 1, 2, 0, 1, 2]
-    values = _make_values(dtype, (6,), ["-1", "1"])
+    values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
     ref_inp = utils.to_reference(inp.clone())
@@ -400,7 +375,7 @@ def test_crow_indices_dense_raises():
     # crow_indices dispatches only on the SparseCsr (CSR) backend key; dense
     # tensors have no implementation and raise. The candidate must fail too
     # rather than silently return a bogus crow tensor.
-    inp = _make_values(torch.float32, (4, 4), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises((RuntimeError, NotImplementedError)):
         torch.ops.aten.crow_indices(utils.to_reference(inp))
     with pytest.raises((RuntimeError, TypeError, NotImplementedError)):
@@ -416,7 +391,7 @@ def test_crow_indices_csc_raises():
     row_indices = torch.tensor(
         [0, 1, 0, 1, 0, 1], dtype=torch.long, device=flag_gems.device
     )
-    values = _make_values(torch.float32, (6,), ["-1", "1"])
+    values = tu.make_input(torch.float32, (6,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(
         ccol, row_indices, values.to(flag_gems.device), (2, 3)
     )

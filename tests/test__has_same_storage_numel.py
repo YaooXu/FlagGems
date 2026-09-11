@@ -179,33 +179,6 @@ def _make_tensor(spec, dtype, device):
     raise ValueError(f"Unknown tensor spec kind: {kind!r}")
 
 
-def _make_value_tensor(dtype, shape, value_range, device):
-    """Device-aware value-range tensor builder.
-
-    Mirrors ``tu.make_input`` but additionally (a) clamps integer bounds to the
-    dtype's representable range -- an unsigned dtype over ``["-1", "0"]`` would
-    otherwise collapse to the invalid interval ``[0, 0]`` rejected by
-    ``torch.testing.make_tensor`` -- and (b) allows an explicit device so the
-    CPU reference keeps the same contiguous storage layout.
-    """
-    if dtype == torch.bool:
-        return torch.randint(0, 2, shape, device=device).bool()
-
-    low = tu.resolve_bound(value_range[0], dtype)
-    high = tu.resolve_bound(value_range[1], dtype)
-
-    if not (dtype.is_floating_point or dtype.is_complex):
-        info = torch.iinfo(dtype)
-        low, high = max(int(low), info.min), min(int(high), info.max)
-
-    if low == high:
-        return torch.full(shape, low, dtype=dtype, device=device)
-
-    return torch.testing.make_tensor(
-        shape, dtype=dtype, device=device, low=low, high=high
-    )
-
-
 def _nan_inf_tensor(shape, dtype, device):
     """Build ``shape`` filled with a nan/inf/-inf payload the query ignores."""
     t = torch.zeros(shape, dtype=dtype, device=device)
@@ -311,8 +284,8 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     # The values sweep the full spec range set (positive, negative, extreme and
     # degenerate); the reported comparison never changes because the query reads
     # only storage metadata. Same-shape inputs always answer True.
-    self_t = _make_value_tensor(dtype, shape, value_range, flag_gems.device)
-    other_t = _make_value_tensor(dtype, shape, value_range, flag_gems.device)
+    self_t = tu.make_input(dtype, shape, value_range)
+    other_t = tu.make_input(dtype, shape, value_range)
     ref_self = utils.to_reference(self_t)
     ref_other = utils.to_reference(other_t)
 

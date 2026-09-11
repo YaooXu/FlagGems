@@ -124,28 +124,15 @@ _EFFICIENTZEROTENSOR_DTYPES = tu.supported_dtypes(
 ) or list(_DTYPE_CANDIDATES)
 
 
-def _applicable_ranges(dtype):
-    """Spec value ranges that ``tu.make_input`` can realise for ``dtype``.
-
-    ``uint8`` has no negative half, so the ``[-1, 0]`` range is not
-    representable for it and is dropped rather than masked with a skip.
-    """
-    ranges = []
-    for value_range in tu.selected_ranges():
-        try:
-            tu.make_input(dtype, (1,), value_range)
-        except Exception:
-            continue
-        ranges.append(value_range)
-    return ranges
-
-
 # One (dtype, value_range) pair per Workload: this crosses the five spec ranges
-# with every supported dtype without hiding cases inside a loop.
+# with every supported dtype without hiding cases inside a loop. The negative
+# ranges are realised for every dtype because ``tu.make_input`` clamps a bound
+# the dtype cannot represent (e.g. ``[-1, 0]`` on uint8) into the dtype's range
+# and fills that constant.
 _OUT_RANGE_PARAMS = [
     (dtype, value_range)
     for dtype in _EFFICIENTZEROTENSOR_DTYPES
-    for value_range in _applicable_ranges(dtype)
+    for value_range in tu.selected_ranges()
 ]
 
 # Zero-element boundary shapes (rank 1 to 3); the factory must still report the

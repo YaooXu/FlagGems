@@ -113,9 +113,10 @@ _VALUE_RANGES = (
 )
 
 # The aten op carries its own autograd (SlowConvDilated3DBackward0), so
-# backward is exercised directly. Gradients are only validated on fp32/fp64:
-# fp16/bf16 gradients accumulate too coarsely to compare against the analytic
-# reference gradient.
+# backward is exercised directly. fp16/bf16 are included: the native op
+# accumulates its gradients in the input dtype and the dtype-scaled _assert_close
+# tolerances below (fp16 2e-2, bf16 2e-1, plus the per-dtype rtol) cover that
+# rounding, as they do for the forward.
 _BACKWARD_CASES = (
     SLOW_CONV_DILATED3D_CASES[:1]
     if QUICK_MODE
@@ -125,7 +126,11 @@ _BACKWARD_CASES = (
         SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
     ]
 )
-_BACKWARD_DTYPES = [torch.float32] if QUICK_MODE else [torch.float32, torch.float64]
+_BACKWARD_DTYPES = (
+    [torch.float32]
+    if QUICK_MODE
+    else [torch.float16, torch.float32, torch.bfloat16, torch.float64]
+)
 
 
 def _resolve_gems_op():
@@ -307,9 +312,16 @@ def test_slow_conv_dilated3d_backward(case, dtype):
     inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
     out_shape = _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation)
 
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    weight = tu.make_input(dtype, weight_shape, ["-1", "1"])
-    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
+    # The candidate inputs must be graph leaves for the gradient comparison
+    # below to run (it is gated on ``res_out.requires_grad``). They are marked
+    # explicitly rather than relying on the fp64 reference path below, whose
+    # ``to_reference`` upcast happens to return the *same* object for fp64 only
+    # (a no-op ``.to(float64)``) -- for fp16/fp32/bf16 it returns a new tensor,
+    # which used to leave the candidate non-differentiable and silently skip the
+    # gradient check for every dtype except fp64.
+    inp = tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
+    weight = tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
+    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"]).requires_grad_()
     grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
     # Reference graph on the fp64-upcast inputs.

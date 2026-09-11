@@ -170,28 +170,6 @@ def _csr_value_range_cases():
         return [((4, 4), 3), ((2, 4, 4), 5)]
 
 
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with unsigned-bound clamping.
-
-    ``tu.make_input`` resolves the range symbols per dtype, but a negative low
-    bound is not representable for ``uint8`` (``[-1, 0]`` collapses to an empty
-    interval and ``torch.testing.make_tensor`` raises). ``dim`` never inspects
-    the stored values, so the range is clamped to the representable subset for
-    that one dtype/range pair.
-    """
-    if dtype == torch.uint8:
-        low = max(0, int(tu.resolve_bound(value_range[0], dtype)))
-        high = max(0, int(tu.resolve_bound(value_range[1], dtype)))
-        if low > high:
-            low = high
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-        )
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side index generation; the values tensor comes from the
     # shared value-range helper and the sparse tensor is created on the test
@@ -204,7 +182,7 @@ def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
             for dim in sparse_shape
         ]
     )
-    values = _make_values(dtype, (nnz,) + tuple(dense_shape), value_range)
+    values = tu.make_input(dtype, (nnz,) + tuple(dense_shape), value_range)
     size = tuple(sparse_shape) + tuple(dense_shape)
     return torch.sparse_coo_tensor(indices, values, size, device=flag_gems.device)
 
@@ -226,7 +204,7 @@ def _make_csr(shape, nnz, dtype, value_range, seed=0):
             torch.full((1,), nnz, dtype=torch.long),
         ]
     )
-    values = _make_values(dtype, (nnz,), value_range)
+    values = tu.make_input(dtype, (nnz,), value_range)
     if len(shape) == 3:
         # Batched CSR: every batch stores the same nnz entries (shared
         # crow/col pattern), so the logical rank is 3.
@@ -279,7 +257,7 @@ def _assert_result(res_out, ref_out, expected):
 def test_dim_dense_layouts(shape, expected, dtype):
     # Values from [-1, 1]: negative and positive stored values for every probed
     # dtype; the reported rank depends only on the layout.
-    inp = _make_values(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.dim(ref_inp)
@@ -293,7 +271,7 @@ def test_dim_dense_layouts(shape, expected, dtype):
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
 def test_dim_empty_dense(shape, expected, dtype):
     # numel == 0, but the rank is still reported exactly.
-    inp = _make_values(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     assert inp.numel() == 0
     ref_inp = utils.to_reference(inp)
 
@@ -311,7 +289,7 @@ def test_dim_dense_value_ranges(shape, value_range, dtype):
     # The stored values sweep the full spec range set (positive, negative,
     # extreme and degenerate); the reported rank never changes because dim
     # reads only layout metadata.
-    inp = _make_values(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.dim(ref_inp)
@@ -329,7 +307,7 @@ def test_dim_dense_value_ranges(shape, value_range, dtype):
 def test_dim_noncontiguous_dense(shape, dtype):
     # Transposed (non-contiguous) views: dim reads only the metadata, so the
     # reported rank is unchanged by the memory layout of the view.
-    inp = _make_values(dtype, shape, ["-1", "1"]).transpose(0, -1)
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(0, -1)
     assert not inp.is_contiguous()
     ref_inp = utils.to_reference(inp)
 
@@ -453,7 +431,7 @@ def test_dim_uncoalesced_coo(dtype):
     # inspects the index or data values.
     sparse_shape, dense_shape = (2, 2), (3,)
     indices = torch.tensor([[0, 0, 1, 1, 0], [0, 1, 0, 1, 0]], dtype=torch.long)
-    values = _make_values(dtype, (5,) + tuple(dense_shape), ["-1", "1"])
+    values = tu.make_input(dtype, (5,) + tuple(dense_shape), ["-1", "1"])
     inp = torch.sparse_coo_tensor(
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )

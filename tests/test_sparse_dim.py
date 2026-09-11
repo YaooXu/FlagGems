@@ -195,25 +195,6 @@ def _spec_shapes(min_rank=0, max_rank=None):
 # ---------------------------------------------------------------------------
 # Input builders
 # ---------------------------------------------------------------------------
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with unsigned-bound snapping.
-
-    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
-    (``-1`` is not representable); the reported sparse-dim count is
-    value-independent, so the range is snapped to its representable subset for
-    that one dtype/range pair.
-    """
-    if dtype == torch.uint8 and value_range == ["-1", "0"]:
-        value_range = ["0", "0"]
-    return tu.make_input(dtype, shape, value_range)
-
-
-def _make_dense(shape, dtype, value_range):
-    # Values come from the shared value-range helper; the reported sparse-dim
-    # count never depends on them.
-    return _make_values(dtype, shape, value_range)
-
-
 def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side index generation; the values tensor comes from the
     # shared value-range helper and the sparse tensor is created on the test
@@ -226,7 +207,7 @@ def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
             for dim in sparse_shape
         ]
     )
-    values = _make_values(dtype, (nnz,) + tuple(dense_shape), value_range)
+    values = tu.make_input(dtype, (nnz,) + tuple(dense_shape), value_range)
     size = tuple(sparse_shape) + tuple(dense_shape)
     return torch.sparse_coo_tensor(indices, values, size, device=flag_gems.device)
 
@@ -258,9 +239,9 @@ def _make_csr(shape, nnz, dtype, value_range, seed=0):
         # crow/col pattern), so the layout stays 2-D sparse for every batch.
         crow_indices = crow_indices.expand(shape[0], -1).contiguous()
         col_indices = col_indices.expand(shape[0], -1).contiguous()
-        values = _make_values(dtype, (shape[0], nnz), value_range)
+        values = tu.make_input(dtype, (shape[0], nnz), value_range)
     else:
-        values = _make_values(dtype, (nnz,), value_range)
+        values = tu.make_input(dtype, (nnz,), value_range)
     return torch.sparse_csr_tensor(
         crow_indices, col_indices, values, shape, device=flag_gems.device
     )
@@ -272,7 +253,7 @@ def _make_csr_with_dense_dims(dtype, value_range):
     # crow segments: row0 -> 1, row1 -> 1, row2 -> 2, row3 -> 1 stored block.
     crow = torch.tensor([0, 1, 2, 4, 5], dtype=torch.long, device=flag_gems.device)
     col = torch.tensor([0, 1, 0, 1, 2], dtype=torch.long, device=flag_gems.device)
-    values = _make_values(dtype, (nnz, dense), value_range)
+    values = tu.make_input(dtype, (nnz, dense), value_range)
     return torch.sparse_csr_tensor(
         crow, col, values, (rows, cols, dense), device=flag_gems.device
     )
@@ -327,7 +308,7 @@ def _assert_result(res_out, ref_out, expected):
 @pytest.mark.parametrize("shape, expected", _dense_cases())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_dense_layouts(shape, expected, dtype):
-    inp = _make_dense(shape, dtype, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
@@ -340,7 +321,7 @@ def test_sparse_dim_dense_layouts(shape, expected, dtype):
 @pytest.mark.parametrize("shape, expected", _EMPTY_DENSE_CASES)
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_empty_dense(shape, expected, dtype):
-    inp = _make_dense(shape, dtype, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     assert inp.numel() == 0
     ref_inp = utils.to_reference(inp)
 
@@ -359,7 +340,7 @@ def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
     # five spec value ranges on dense tensors. The stored values never change
     # the result (always 0 sparse dims), but they exercise the value-range
     # machinery end to end.
-    inp = _make_dense(shape, dtype, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
@@ -451,7 +432,7 @@ def test_sparse_dim_uncoalesced_coo(dtype):
     # it never inspects the index or data values.
     sparse_shape, dense_shape = (2, 2), (3,)
     indices = torch.tensor([[0, 0, 1, 1, 0], [0, 1, 0, 1, 0]], dtype=torch.long)
-    values = _make_values(dtype, (5,) + tuple(dense_shape), ["-1", "1"])
+    values = tu.make_input(dtype, (5,) + tuple(dense_shape), ["-1", "1"])
     inp = torch.sparse_coo_tensor(
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )

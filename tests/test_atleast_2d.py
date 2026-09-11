@@ -136,31 +136,11 @@ def _assert_close(result, reference, dtype):
 
 
 # ---------------------------------------------------------------------------
-# Value ranges: filter combos test_utils cannot materialise
+# Value ranges
 # ---------------------------------------------------------------------------
 
 
-def _ranges_for(dtype):
-    """Value ranges usable for ``dtype`` (unsigned dtypes cannot express some)."""
-    ranges = tu.selected_ranges()
-    if dtype == torch.bool:
-        # make_input ignores the range for bool, so a single range is enough.
-        return ranges[:1]
-    usable = []
-    for value_range in ranges:
-        low = tu.resolve_bound(value_range[0], dtype)
-        high = tu.resolve_bound(value_range[1], dtype)
-        if not (dtype.is_floating_point or dtype.is_complex):
-            dtype_min, dtype_max = tu.dtype_bounds(dtype)
-            # unsigned dtype + a negative lower bound collapses onto a
-            # degenerate (empty) interval -> make_tensor would raise.
-            if low != high and int(max(low, dtype_min)) == int(min(high, dtype_max)):
-                continue
-        usable.append(value_range)
-    return usable
-
-
-_VALUE_CASES = [(d, r) for d in _VALUE_DTYPES for r in _ranges_for(d)]
+_VALUE_CASES = [(d, r) for d in _VALUE_DTYPES for r in tu.selected_ranges()]
 _VALUE_CASE_IDS = [
     "{}-{}".format(str(d).replace("torch.", ""), "_".join(str(x) for x in r))
     for d, r in _VALUE_CASES

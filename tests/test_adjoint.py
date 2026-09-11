@@ -36,14 +36,14 @@ from . import test_utils as tu
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
 #   * dtypes: the 9 required spec dtypes (int8/uint8/fp8/fp32/bf16/fp16/int32/
 #     int64) probed on the active device, plus the operator's float64 / int16 /
-#     complex32 / complex64 / bool storage dtypes, each over the dtype's valid
-#     subset of the five value ranges (unsigned dtypes only accept ranges whose
-#     lower bound is non-negative);
+#     complex32 / complex64 / bool storage dtypes, each over the five value
+#     ranges (tu.make_input clamps a negative bound to the dtype minimum, so
+#     unsigned dtypes realise such a range as a constant fill);
 #   * shape levels: the spec's 7 shapes filtered to ndim >= 2 (0-D/1-D get
 #     dedicated edge-case tests);
-#   * value ranges: tu.selected_ranges() over representative ranks so every
-#     supported dtype is exercised with negative, positive, extreme and
-#     degenerate ranges (the aliasing view round-trips them exactly);
+#   * value ranges: tu.selected_ranges() over representative ranks so the five
+#     spec ranges reach every supported dtype (the aliasing view round-trips
+#     them exactly);
 #   * edge cases: non-contiguous (strided) inputs, the conj-bit toggle, writing
 #     through the returned alias, and nan/inf/+-0.0 special values;
 #   * backward: autograd.grad() through the adjoint view against the analytic
@@ -51,9 +51,6 @@ from . import test_utils as tu
 #   * negative: 1-D inputs and non-tensor inputs raise on both the aten
 #     reference and the candidate.
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-# Unsigned dtypes cannot materialize negative values; tu.make_input only
-# accepts ranges whose lower bound resolves to >= 0 for them.
-_UNSIGNED_DTYPES = [torch.uint8]
 
 
 def _is_fp8(dtype):
@@ -115,24 +112,14 @@ def _adjoint_test_shapes():
     return list(_ADJOINT_SHAPES)
 
 
-def _ranges_for(dtype):
-    # The five spec ranges, minus the ones an unsigned dtype cannot represent.
-    ranges = tu.selected_ranges()
-    if dtype in _UNSIGNED_DTYPES:
-        return [rng for rng in ranges if rng[0] == "0"]
-    return ranges
-
-
+# The five spec ranges for every supported dtype: tu.make_input clamps a
+# negative bound to the dtype minimum, so an unsigned dtype realises a
+# negative-lower-bound range as a constant fill instead of rejecting it.
 _RANGE_CASES = [
     (dtype, value_range)
     for dtype in _ADJOINT_DTYPES
-    for value_range in _ranges_for(dtype)
+    for value_range in tu.selected_ranges()
 ]
-
-
-def _basic_range(dtype):
-    # Non-degenerate representative range for the shape/dtype sweep.
-    return ["0", "max"] if dtype in _UNSIGNED_DTYPES else ["-1", "1"]
 
 
 def _resolve_gems_op():
@@ -179,7 +166,7 @@ def _assert_view_semantics(res_out, ref_out, inp):
 def test_adjoint(shape, dtype):
     # Shape levels x every supported dtype (including the required int8/uint8/
     # fp8 dtypes) over a non-degenerate representative value range.
-    inp = tu.make_input(dtype, shape, _basic_range(dtype))
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
@@ -213,7 +200,7 @@ def test_adjoint_non_contiguous(shape, dtype):
     # The transpose part of adjoint must preserve the strides of a
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
-    base = tu.make_input(dtype, shape, _basic_range(dtype))
+    base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = utils.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
@@ -342,7 +329,7 @@ def test_adjoint_0d(dtype):
     # deprecation warning): the identity for real/int/bool dtypes and a lazy
     # conj view for complex dtypes. The candidate must match both the value and
     # the conjugation state.
-    inp = tu.make_input(dtype, (), _basic_range(dtype))
+    inp = tu.make_input(dtype, (), ["-1", "1"])
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)

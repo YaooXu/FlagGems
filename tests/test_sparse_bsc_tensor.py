@@ -57,9 +57,16 @@ _BSC_DTYPE_CANDIDATES = list(
     )
 )
 
-# fp8 has no representable inf/nan in the e4m3fn variant and torch.testing's
-# sparse comparison cannot densify fp8 (index_add has no fp8 kernel), so fp8
-# storage is validated with the exact (bit-for-bit) comparison paths only.
+# fp8 storage is validated with the exact (bit-for-bit) comparison paths only:
+# torch.testing's tolerance-based comparison needs a CPU multiply that fp8 has
+# no kernel for (RuntimeError "mul_cpu_reduced_float" not implemented for
+# 'Float8_e5m2' -- it fails even for two identical fp8 tensors), and the sparse
+# densification path has no fp8 kernel either (RuntimeError "index_add" not
+# implemented for 'Float8_e4m3fn'). The factory copies the stored entries
+# verbatim, so exact equality is the right check. Both fp8 dtypes do carry the
+# special values (e5m2 stores +/-inf and nan bit-for-bit, e4m3fn preserves nan),
+# so they are included in the nan/inf workload with equal_nan threaded through
+# the exact comparisons below.
 _BSC_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
@@ -92,10 +99,9 @@ _BSC_DTYPES = tu.supported_dtypes(
     "sparse_bsc_tensor", candidates=_BSC_DTYPE_CANDIDATES, probe=_bsc_dtype_probe
 ) or list(_BSC_DTYPE_CANDIDATES)
 _BSC_FLOAT_DTYPES = [dtype for dtype in _BSC_DTYPES if dtype.is_floating_point]
-# nan/inf/-inf are representable in every float family except the fp8 pair.
-_BSC_NAN_INF_DTYPES = [
-    dtype for dtype in _BSC_FLOAT_DTYPES if dtype not in _BSC_FP8_DTYPES
-]
+# nan/inf/-inf are representable in every float family here, fp8 included (see
+# the fp8 note above); the comparisons carry equal_nan where needed.
+_BSC_NAN_INF_DTYPES = list(_BSC_FLOAT_DTYPES)
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
 # (logical matrix shape, block size, nnz) structural cases: 2x2 row/col blocks
@@ -185,18 +191,6 @@ def _make_bsc_structure(shape, block, nnz, seed=0, index_dtype=torch.int64):
     return ccol.to(flag_gems.device), row.to(flag_gems.device)
 
 
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with unsigned-bound snapping.
-
-    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
-    (``-1`` is not representable and the snapped interval degenerates to
-    ``[0, 0]``); snap that single dtype/range pair to its representable subset.
-    """
-    if dtype == torch.uint8 and value_range == ["-1", "0"]:
-        value_range = ["0", "0"]
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_bsc_inputs(
     shape, block, nnz, dtype, value_range, seed=0, index_dtype=torch.int64
 ):
@@ -206,7 +200,7 @@ def _make_bsc_inputs(
     ccol, row = _make_bsc_structure(
         shape, block, nnz, seed=seed, index_dtype=index_dtype
     )
-    values = _make_values(dtype, (nnz,) + tuple(block), value_range).to(
+    values = tu.make_input(dtype, (nnz,) + tuple(block), value_range).to(
         flag_gems.device
     )
     return ccol, row, values
@@ -273,10 +267,10 @@ def _assert_result(res_out, ref_out, dtype, *, check_dense=True, equal_nan=False
     utils.gems_assert_equal(res_out.ccol_indices(), ref_out.ccol_indices())
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
     if dtype in _BSC_FP8_DTYPES:
-        # torch.testing cannot run a sparse fp8 comparison (nor densify fp8);
-        # the factory is a verbatim copy, so exact equality is the right check.
-        utils.gems_assert_equal(res_out.values(), ref_out.values())
-        utils.gems_assert_equal(res_out, ref_out)
+        # fp8 only supports the exact comparison (see the fp8 note at the top);
+        # equal_nan is still honoured so the special-value workload can use fp8.
+        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
     elif dtype.is_floating_point:
         utils.gems_assert_close(
             res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
@@ -410,7 +404,7 @@ def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
     # ccol/row/values).
     shape, nnz = case
     ccol, row = _make_bsc_structure(shape, (1, 1), nnz, index_dtype=index_dtype)
-    values = _make_values(dtype, (nnz,), ["-1", "1"]).to(flag_gems.device)
+    values = tu.make_input(dtype, (nnz,), ["-1", "1"]).to(flag_gems.device)
 
     ref_out = _call_reference(ccol, row, values, shape, dtype)
     res_out = _call_candidate(ccol, row, values, shape, dtype)
@@ -428,7 +422,7 @@ def test_sparse_bsc_tensor_uncoalesced(dtype, index_dtype):
     # tensor (never coalesce them) and the dense form accumulates both blocks.
     ccol = torch.tensor([0, 2, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=index_dtype, device=flag_gems.device)
-    values = _make_values(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
+    values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
 
     ref_out = _call_reference(ccol, row, values, [4, 4], dtype)
     res_out = _call_candidate(ccol, row, values, [4, 4], dtype)
@@ -445,7 +439,7 @@ def test_sparse_bsc_tensor_unsorted_rows(dtype, index_dtype):
     # order instead of re-sorting the entries.
     ccol = torch.tensor([0, 3, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([1, 0, 1], dtype=index_dtype, device=flag_gems.device)
-    values = _make_values(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
+    values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
 
     ref_out = _call_reference(ccol, row, values, [4, 4], dtype)
     res_out = _call_candidate(ccol, row, values, [4, 4], dtype)
@@ -459,7 +453,7 @@ def test_sparse_bsc_tensor_negative_dtype_mismatch():
     # the reference raises RuntimeError and the candidate must fail too.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
-    values = _make_values(torch.float64, (3, 2, 2), ["-1", "1"])
+    values = tu.make_input(torch.float64, (3, 2, 2), ["-1", "1"])
 
     with pytest.raises(RuntimeError):
         _call_reference(ccol, row, values, [4, 4], torch.float32)
@@ -472,7 +466,7 @@ def test_sparse_bsc_tensor_negative_layout():
     # Only the sparse_bsc layout is accepted; any other layout raises.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
-    values = _make_values(torch.float32, (3, 2, 2), ["-1", "1"])
+    values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
     ref_ccol = utils.to_reference(ccol)
     ref_row = utils.to_reference(row)
     ref_values = utils.to_reference(values)
@@ -505,7 +499,7 @@ def test_sparse_bsc_tensor_negative_size():
     # fail too rather than accept a nonsensical shape.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
-    values = _make_values(torch.float32, (3, 2, 2), ["-1", "1"])
+    values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
     ref_ccol = utils.to_reference(ccol)
     ref_row = utils.to_reference(row)
     ref_values = utils.to_reference(values)
@@ -537,7 +531,7 @@ def test_sparse_bsc_tensor_negative_non_tensor():
     # The aten schema requires a Tensor for ccol_indices; a Python scalar hits
     # the invalid-argument path and raises. The candidate must reject it too.
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
-    values = _make_values(torch.float32, (3, 2, 2), ["-1", "1"])
+    values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(

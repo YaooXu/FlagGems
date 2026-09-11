@@ -152,24 +152,12 @@ def _spec_shapes(min_rank=1, max_rank=None):
     return shapes
 
 
-def _make_values(dtype, shape, value_range):
-    """Value-range helper with unsigned-bound snapping.
-
-    ``tu.make_input`` cannot build a uint8 tensor for the ``[-1, 0]`` range
-    (``-1`` is not representable); the accessor only reads index metadata, so
-    the range is snapped to its representable subset for that one dtype/range
-    pair.
-    """
-    if dtype == torch.uint8 and value_range == ["-1", "0"]:
-        value_range = ["0", "0"]
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
     # Deterministic CPU-side index generation; the values tensor comes from the
-    # shared value-range helper and the sparse tensor is created on the test
-    # device. Duplicate indices are allowed and merely leave the tensor
-    # uncoalesced (covered explicitly below).
+    # shared value-range helper (which clamps a negative bound into the dtype's
+    # range, realizing ``["-1", "0"]`` on uint8 as a constant zero fill) and the
+    # sparse tensor is created on the test device. Duplicate indices are allowed
+    # and merely leave the tensor uncoalesced (covered explicitly below).
     gen = torch.Generator("cpu").manual_seed(seed)
     sparse_shape = shape[:sparse_dim]
     dense_shape = shape[sparse_dim:]
@@ -179,7 +167,7 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
             for dim in sparse_shape
         ]
     )
-    values = _make_values(dtype, (nnz,) + dense_shape, value_range)
+    values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
@@ -319,7 +307,7 @@ def test__indices_uncoalesced(dtype):
     # sorted, so a coalescing implementation would visibly change the result.
     shape = (3, 4)
     indices = torch.tensor([[0, 0, 1, 2, 0], [1, 1, 2, 3, 1]], dtype=torch.long)
-    values = _make_values(dtype, (5,), ["-1", "1"])
+    values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
     ref_inp = utils.to_reference(inp.clone())
@@ -362,7 +350,7 @@ def test__indices_full_storage(dtype):
     indices = torch.stack(
         torch.meshgrid(torch.arange(shape[0]), torch.arange(shape[1]), indexing="ij")
     ).reshape(2, nnz)
-    values = _make_values(dtype, (nnz,), ["-1", "1"])
+    values = tu.make_input(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == nnz
     ref_inp = utils.to_reference(inp.clone())
