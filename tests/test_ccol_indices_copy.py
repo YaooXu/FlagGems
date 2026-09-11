@@ -396,6 +396,19 @@ def test_ccol_indices_copy(case, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
 
 
+# The .out buffers are garbage-prefilled rather than torch.empty: the .out
+# overload must overwrite every element, and torch.empty can hand back a
+# recycled allocator block that still holds the expected values, which would
+# let a candidate that never writes into out pass. No index array contains
+# -1, so it is a safe sentinel.
+def _out_buffer(shape, dtype, device):
+    # torch.full needs a sequence size, unlike torch.empty which also accepts a
+    # bare int.
+    if isinstance(shape, int):
+        shape = (shape,)
+    return torch.full(shape, -1, dtype=dtype, device=device)
+
+
 @pytest.mark.ccol_indices_copy_out
 @pytest.mark.parametrize("case", _ccol_cases())
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
@@ -403,10 +416,8 @@ def test_ccol_indices_copy_out(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(_expected_ccol_shape(case), dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(
-        _expected_ccol_shape(case), dtype=torch.long, device=ref_inp.device
-    )
+    out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
+    ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
@@ -442,10 +453,8 @@ def test_ccol_indices_copy_out_spec_shapes(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(_expected_ccol_shape(case), dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(
-        _expected_ccol_shape(case), dtype=torch.long, device=ref_inp.device
-    )
+    out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
+    ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
@@ -484,10 +493,8 @@ def test_ccol_indices_copy_out_value_ranges(case, value_range, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(_expected_ccol_shape(case), dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(
-        _expected_ccol_shape(case), dtype=torch.long, device=ref_inp.device
-    )
+    out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
+    ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
@@ -516,8 +523,8 @@ def test_ccol_indices_copy_empty_bsc(dtype):
 def test_ccol_indices_copy_out_empty_bsc(dtype):
     inp = _make_input("bsc", (4, 6), 0, (2, 2), dtype)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(4, dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(4, dtype=torch.long, device=ref_inp.device)
+    out = _out_buffer(4, torch.long, inp.device)
+    ref_out = _out_buffer(4, torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
@@ -557,8 +564,8 @@ def test_ccol_indices_copy_uncoalesced(dtype):
 def test_ccol_indices_copy_out_uncoalesced(dtype):
     inp = _uncoalesced_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(5, dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(5, dtype=torch.long, device=ref_inp.device)
+    out = _out_buffer(5, torch.long, inp.device)
+    ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
@@ -602,8 +609,8 @@ def test_ccol_indices_copy_nan_inf_values(dtype):
 def test_ccol_indices_copy_out_nan_inf_values(dtype):
     inp = _nan_inf_csc(dtype)
     ref_inp = utils.to_reference(inp.clone())
-    out = torch.empty(5, dtype=torch.long, device=inp.device)
-    ref_out = torch.empty(5, dtype=torch.long, device=ref_inp.device)
+    out = _out_buffer(5, torch.long, inp.device)
+    ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
     ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=out)
