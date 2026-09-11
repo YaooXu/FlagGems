@@ -26,8 +26,9 @@ Coverage follows the regular-operator spec adapted to a pure data-movement op:
 * dtype coverage is probed with :func:`tu.supported_dtypes` (all of the spec's
   required dtypes -- int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64
   -- plus bool are supported on the active backend here);
-* shape levels span 0-D .. 5-D plus the empty input, bounded so the quadratic
-  output stays small;
+* shape levels: the spec's 7 shapes (0-D, which torch.diagflat accepts, through
+  the large dense levels), bounded to inputs whose quadratic output stays small,
+  plus the empty input;
 * value ranges: the spec's five ranges via :func:`tu.make_input` (the values
   round-trip exactly through the diagonal placement);
 * edge cases: empty inputs, large offsets (|offset| > numel), non-contiguous
@@ -65,10 +66,13 @@ _PROBE_DTYPES = [
     torch.bool,
 ]
 # The probe builds a tiny input per dtype and calls the real aten op, treating
-# any exception as "unsupported" (see tests/test_utils.py).
+# any exception as "unsupported" (see tests/test_utils.py). If the probe yields
+# nothing, keep the full candidate list rather than a float32-only fallback, so
+# a failed/absent probe never silently drops the spec-required int8/uint8/fp8
+# dtypes.
 _DIAGFLAT_DTYPES = tu.supported_dtypes("diagflat", _PROBE_DTYPES)
 if not _DIAGFLAT_DTYPES:
-    _DIAGFLAT_DTYPES = list(utils.FLOAT_DTYPES)
+    _DIAGFLAT_DTYPES = list(_PROBE_DTYPES)
 
 # nan/inf cannot be represented/produced by the fp8 narrow types (e4m3fn is
 # finite-only), so the special-value case is restricted to regular floats.
@@ -83,31 +87,6 @@ _GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d in (torch.float32, torch.float6
 
 _DIAGFLAT_OFFSETS = [-2, -1, 0, 1, 2]
 
-# Bounded shape levels: 0-D .. 5-D plus the empty input. (32, 32) is the
-# largest input (numel 1024 -> output side 1025, ~1M output elements, at the
-# correctness cap).
-_DIAGFLAT_SHAPES = [
-    (),
-    (1,),
-    (16,),
-    (257,),
-    (0,),
-    (2, 3),
-    (32, 32),
-    (4, 5, 6),
-    (2, 3, 4, 5),
-    (2, 2, 2, 2, 3),
-]
-
-# Small inputs for the value-range sweep.
-_DIAGFLAT_RANGE_SHAPES = [(8,), (2, 3), (4, 5, 6)]
-
-_DIAGFLAT_NONCONTIG_SHAPES = [(4, 8), (6, 3), (2, 3, 4)]
-
-_DIAGFLAT_STRIDED_SHAPES = [(16, 32), (4, 8, 16)]
-
-_DIAGFLAT_BACKWARD_SHAPES = [(8,), (2, 3), (4, 5, 6)]
-
 
 def _numel(shape):
     n = 1
@@ -117,24 +96,39 @@ def _numel(shape):
 
 
 def _bounded_selected_shapes(limit=1024):
-    """The generic shape levels whose quadratic output stays small enough."""
+    """The spec shape levels whose quadratic diagflat output stays small enough."""
     return [shape for shape in tu.selected_shapes() if _numel(shape) <= limit]
 
 
-def _diagflat_shapes():
-    """Bounded shape levels for the main sweep.
+# Shape levels aligned with the spec's 7 shapes (``tu.selected_shapes()``).
+# diagflat accepts any input rank -- including 0-D, which torch.diagflat accepts
+# and maps to a (1, 1) matrix -- so the spec shape set is used directly instead
+# of a bespoke list. It is bounded to numel <= 1024 because the output side is
+# ``numel(self) + |offset|``: the output element count is quadratic in the
+# input, so the spec's multi-dim levels (``(1024, 1024)`` numel 1M,
+# ``(20, 320, 15)`` numel 96K, ...) would allocate multi-gigabyte/terabyte
+# outputs. Only the 0-D/1-D spec levels survive the bound, so small
+# representative multi-dim shapes are added below to preserve rank coverage;
+# ``(0,)`` (absent from the spec set) covers the empty-input case.
+_DIAGFLAT_SHAPES = (
+    _bounded_selected_shapes() + [(2, 3), (4, 5, 6), (2, 2, 2, 2, 3)] + [(0,)]
+)
 
-    The generic multi-dim levels from ``tu.selected_shapes()`` (e.g.
-    ``(1024, 1024)``) would make the quadratic diagflat output explode, so only
-    the small levels are merged into the dedicated bounded set above.
-    """
+# Small inputs for the value-range sweep (bounded spec levels + rank reps).
+_DIAGFLAT_RANGE_SHAPES = _bounded_selected_shapes() + [(2, 3), (4, 5, 6)]
+
+_DIAGFLAT_NONCONTIG_SHAPES = [(4, 8), (6, 3), (2, 3, 4)]
+
+_DIAGFLAT_STRIDED_SHAPES = [(16, 32), (4, 8, 16)]
+
+_DIAGFLAT_BACKWARD_SHAPES = [(8,), (2, 3), (4, 5, 6)]
+
+
+def _diagflat_shapes():
+    """The bounded spec shape levels for the main sweep."""
     if tu.LEVEL == "quick":
         return [(2, 19, 7)]
-    shapes = list(_DIAGFLAT_SHAPES)
-    for shape in _bounded_selected_shapes():
-        if shape not in shapes:
-            shapes.append(shape)
-    return shapes
+    return list(_DIAGFLAT_SHAPES)
 
 
 def _resolve_gems_op():

@@ -93,9 +93,12 @@ def _probe_values_sparse(operator, dtype):
         return False
 
 
+# If the probe yields nothing, keep the full candidate list rather than a
+# float32-only fallback, so a failed/absent probe never silently drops the
+# spec-required int8/uint8/fp8 dtypes.
 _VALUES_DTYPES = tu.supported_dtypes(
     "_values", candidates=_VALUES_DTYPE_CANDIDATES, probe=_probe_values_sparse
-) or [torch.float32]
+) or list(_VALUES_DTYPE_CANDIDATES)
 
 _VALUES_FLOAT_DTYPES = [d for d in _VALUES_DTYPES if d.is_floating_point]
 

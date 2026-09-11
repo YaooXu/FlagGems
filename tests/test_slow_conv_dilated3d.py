@@ -30,7 +30,8 @@ from .conftest import QUICK_MODE
 #   D_out = (D + 2*pD - dil_d*(kD - 1) - 1) // sD + 1
 # and likewise for H and W.
 #
-# Dtype probe (tu.supported_dtypes / direct ATen calls on the active device):
+# Dtype probe (direct ATen calls on the active device; this file does not use
+# tu.supported_dtypes because the probe needs the full 6-arg conv signature):
 # the CUDA kernel is implemented only for the floating dtypes fp16 / fp32 /
 # bf16 / fp64 -- int8, uint8, float8_e4m3fn, float8_e5m2, int32 and int64 all
 # raise `"slow_conv_dilated<>" not implemented for '<Int/Float8...>'`. The
@@ -39,10 +40,11 @@ from .conftest import QUICK_MODE
 # dropped.
 #
 # Rank probe: although the schema also accepts an unbatched 4-D input
-# (C_in, D, H, W), the CUDA reference kernel is non-deterministic on that path
-# (two identical ATen calls on identical fp64 inputs disagree, and the result
-# does not match F.conv3d), so it cannot serve as an oracle. Only the reliable
-# 5-D batched route is exercised; the 6-D rejection test covers the rank check.
+# (C_in, D, H, W), that route is not usable as a test oracle: an actual test
+# run on a 4-D case produced NaN candidate output while the fp64 reference was
+# finite (and repeated isolated calls showed occasional disagreement), so it is
+# excluded. Only the reliable 5-D batched route is exercised; the 6-D rejection
+# test covers the rank check.
 #
 # Shape coverage: the operator is rank-fixed and structurally constrained
 # (C_in must agree between input and weight, kernel_size must agree with the
@@ -78,14 +80,19 @@ else:
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
 
-# Value-range coverage: the conv reduction sums up to C_in*kD*kH*kW = 108
-# products of independently drawn input/weight values, so the shared
-# tu.selected_ranges() extremes (["0", "max"] / ["min", "0"]) overflow every
-# floating accumulator (e.g. fp32 max^2 = inf). Use bounded local ranges that
-# still span mixed-sign, non-negative and non-positive values; the
-# shape/dtype/bias grid comes from the main parametrized cases above. This is
-# the documented per-operator adaptation the spec allows for multiplicative
-# reductions.
+# Value-range coverage drops the two dtype-extreme ranges [0, dtype_max] and
+# [dtype_min, 0]: the conv reduction sums up to C_in*kD*kH*kW = 108 products of
+# independently drawn input/weight values, and the candidate accumulates them
+# in the *input* dtype (the native op does the same), so dtype-max inputs
+# saturate that accumulator to inf -- a single product of two ~dtype-max values
+# already exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- while the
+# fp64-upcast reference stays finite (measured: fp64 reference max ~2e78, far
+# below the fp64 limit 1.8e308). The comparison would then be dominated by
+# saturation rather than the operator's rounding. The three bounded ranges
+# below still span mixed-sign (cancellation), non-negative and non-positive
+# values; the shape/dtype/bias grid comes from the parametrized cases above.
+# This is the documented per-operator adaptation the spec allows for
+# multiplicative reductions.
 _VALUE_RANGE_CASES = (
     SLOW_CONV_DILATED3D_CASES[:1]
     if QUICK_MODE

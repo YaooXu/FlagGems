@@ -242,7 +242,9 @@ except Exception:
     SUPPORTED_DTYPES = []
 
 if not SUPPORTED_DTYPES:
-    # Fall back to the device-aware float dtype set when probing is not possible.
+    # conv dispatches to the CUDA/cuDNN convolution kernels, which only have
+    # floating-point implementations, so the float dtype set IS this operator's
+    # complete dtype set; keep it whole rather than narrowing it further.
     SUPPORTED_DTYPES = list(utils.ALL_FLOAT_DTYPES)
 
 FLOAT_DTYPES = (

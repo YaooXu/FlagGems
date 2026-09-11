@@ -64,7 +64,8 @@ setattr(
 #     below 1M.
 #   * value ranges: tu.selected_ranges() resolved per-dtype by tu.make_input,
 #     with the dtype-extreme ranges dropped because the op contracts over many
-#     products (values near the dtype max overflow even the fp64 reference);
+#     products in the *input* dtype and dtype-max inputs saturate that
+#     accumulator to inf (the fp64 reference stays finite);
 #     see _SLOW_CONV2D_VALUE_RANGES.
 #   * broadcast: not applicable - conv requires C_in to match exactly between
 #     input and weight (any mismatch is a negative case below).
@@ -115,11 +116,20 @@ _MIXED_MASKS = [(True, False, True), (False, True, True)]
 # indexing/formula bugs.
 _INPUT_SCALE = 0.1
 
-# The value-range sweep reuses tu.selected_ranges() (the spec ranges resolved
-# per-dtype by tu.make_input) but drops the dtype-extreme ones: the op contracts
-# over many products, so values near the dtype max overflow even the fp64
-# reference. The remaining ranges still cover negative, positive, mixed and
-# zero-containing inputs for every dtype.
+# Value-range coverage deviates from the spec's five ranges: the op contracts
+# over C_in*kH*kW products, and the candidate (like the native operator)
+# accumulates them in the *input* dtype. Dtype-max inputs overflow that
+# accumulator immediately -- a single product of two ~dtype-max values already
+# exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- so the three
+# gradients saturate to inf (NaN where opposite-sign terms cancel), while the
+# fp64 upcast reference stays finite. Measured on this device with fp32 inputs
+# drawn from [0, dtype_max] (scaled by _INPUT_SCALE): all three native
+# gradients are entirely inf and all three fp64 references are entirely finite
+# (max ~1e77, far below the fp64 limit 1.8e308). The two dtype-extreme ranges
+# [0, dtype_max] and [dtype_min, 0] are therefore dropped: the comparison would
+# be dominated by saturation rather than the operator's rounding. The three
+# retained ranges [-1, 1], [0, 1] and [-1, 0] still cover negative, positive,
+# mixed and zero-containing inputs for every dtype.
 _UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
 _SLOW_CONV2D_VALUE_RANGES = [
     value_range

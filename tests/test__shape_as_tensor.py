@@ -71,9 +71,12 @@ _EXTRA_INPUT_DTYPES = (
 _CANDIDATE_INPUT_DTYPES = list(
     dict.fromkeys(list(tu.REQUIRED_DTYPES) + _EXTRA_INPUT_DTYPES)
 )
+# If the probe yields nothing, keep the full candidate list rather than a
+# float32-only fallback, so a failed/absent probe never silently drops the
+# spec-required int8/uint8/fp8 dtypes.
 _SHAPE_AS_TENSOR_INPUT_DTYPES = tu.supported_dtypes(
     "_shape_as_tensor", candidates=_CANDIDATE_INPUT_DTYPES
-) or [torch.float32]
+) or list(_CANDIDATE_INPUT_DTYPES)
 
 # Zero-size dimensions are part of the logical shape and must be reported
 # faithfully; a ``numel == 0`` fast path would silently drop them.

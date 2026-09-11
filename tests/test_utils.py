@@ -85,6 +85,12 @@ def make_input(dtype, shape, value_range):
     ranges are snapped to ints; a degenerate range (low == high) fills the
     constant; everything else uses torch.testing.make_tensor (complex fills
     both real and imaginary parts).
+
+    Bounds are clamped to the dtype's representable range first, so the spec's
+    five ranges work unchanged for dtypes that cannot represent a bound (e.g.
+    uint8 cannot hold ``-1``, so ``[-1,0]`` becomes the degenerate ``[0,0]``
+    → a constant zero fill). This keeps the caller from having to special-case
+    unsigned dtypes.
     """
     low = resolve_bound(value_range[0], dtype)
     high = resolve_bound(value_range[1], dtype)
@@ -94,6 +100,11 @@ def make_input(dtype, shape, value_range):
 
     if not (dtype.is_floating_point or dtype.is_complex):
         low, high = int(low), int(high)
+        dtype_min, dtype_max = dtype_bounds(dtype)
+        # Clamp into the representable range (e.g. uint8 [-1,0] -> [0,0]).
+        low = max(low, int(dtype_min))
+        high = min(high, int(dtype_max))
+        low = min(low, high)
 
     if low == high:
         return torch.full(shape, low, device=flag_gems.device, dtype=dtype)

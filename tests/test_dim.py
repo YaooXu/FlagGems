@@ -58,10 +58,12 @@ _DIM_DTYPE_CANDIDATES = list(
 )
 
 # Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test.
-_DIM_DTYPES = tu.supported_dtypes("dim", candidates=_DIM_DTYPE_CANDIDATES) or [
-    torch.float32
-]
+# not be turned into a red test. If the probe yields nothing, keep the full
+# candidate list rather than a float32-only fallback, so a failed/absent probe
+# never silently drops the spec-required int8/uint8/fp8 dtypes.
+_DIM_DTYPES = tu.supported_dtypes("dim", candidates=_DIM_DTYPE_CANDIDATES) or list(
+    _DIM_DTYPE_CANDIDATES
+)
 _DIM_FLOAT_DTYPES = [dtype for dtype in _DIM_DTYPES if dtype.is_floating_point]
 
 # Dense (strided) tensors: dim == len(shape). Ranks 0 through 5 cover the full

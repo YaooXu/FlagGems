@@ -113,12 +113,15 @@ _DTYPE_CANDIDATES = _unique(
 
 # On CUDA every required dtype (int8 / uint8 / float8_e4m3fn / float8_e5m2 /
 # float32 / bfloat16 / float16 / int32 / int64) is accepted; backends that
-# cannot represent some of them simply drop those parametrizations.
+# cannot represent some of them simply drop those parametrizations. If the probe
+# yields nothing, keep the full candidate list rather than a float32-only
+# fallback, so a failed/absent probe never silently drops the spec-required
+# int8/uint8/fp8 dtypes.
 _EFFICIENTZEROTENSOR_DTYPES = tu.supported_dtypes(
     "_efficientzerotensor",
     candidates=_DTYPE_CANDIDATES,
     probe=_probe_dtype,
-) or [torch.float32]
+) or list(_DTYPE_CANDIDATES)
 
 
 def _applicable_ranges(dtype):

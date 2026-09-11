@@ -52,7 +52,7 @@ setattr(
 #     tuple in SLOW_CONV2D_CASES is one distinct parametrized workload (the
 #     shared tu.selected_shapes() set is pointwise-shaped and does not apply to
 #     a conv whose input must be 4-D); they cover 1x1/3x3/3x5/5x5 kernels,
-#     stride 1 and 2, padding 0/1/2, small outputs and channel counts up to 32;
+#     stride 1 and 2, padding 0/1/2, small outputs and channel counts up to 16;
 #   * dtype coverage: the op is probed (see UNSUPPORTED_DTYPES) and only the
 #     floating dtypes the CUDA/CPU kernel actually implements are exercised -
 #     fp16/fp32/bf16/fp64; int8/uint8/fp8/int32/int64/bool all raise
@@ -103,10 +103,18 @@ UNSUPPORTED_DTYPES = [
     torch.bool,
 ]
 
-# The value-range sweep reuses tu.selected_ranges() (the spec ranges resolved
-# per-dtype by tu.make_input) but drops the extreme ranges: a conv contracts
-# over C_in*kH*kW products, so values near the dtype max would overflow even
-# fp64 before the reference is computed. The remaining ranges still cover
+# Value-range coverage deviates from the spec's five ranges: a conv contracts
+# over C_in*kH*kW products, and the candidate (like the native operator)
+# accumulates them in the *input* dtype. Dtype-max inputs overflow that
+# accumulator immediately -- a single product of two ~dtype-max values already
+# exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- so the im2col GEMM
+# saturates to inf (NaN where opposite-sign terms cancel), while the fp64
+# upcast reference stays finite. Measured on this device with fp32 inputs drawn
+# from [0, dtype_max]: the native output is entirely inf and the fp64 reference
+# is entirely finite (max ~6e77, far below the fp64 limit 1.8e308). The two
+# dtype-extreme ranges [0, dtype_max] and [dtype_min, 0] are therefore dropped:
+# the comparison would be dominated by saturation rather than the operator's
+# rounding. The three retained ranges [-1, 1], [0, 1] and [-1, 0] still cover
 # negative, positive, mixed, zero and constant inputs for every dtype.
 _UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
 _CONV_VALUE_RANGES = [

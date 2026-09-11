@@ -110,12 +110,12 @@ DSTACK_DTYPES = tu.supported_dtypes(
     "dstack", candidates=_DTYPE_CANDIDATES, probe=_probe_dstack
 )
 if not DSTACK_DTYPES:
-    # Never collect zero cases: fall back to the shared storage dtype sets.
-    DSTACK_DTYPES = (
-        list(utils.ALL_FLOAT_DTYPES)
-        + list(utils.ALL_INT_DTYPES)
-        + list(utils.BOOL_TYPES)
-    )
+    # Never collect zero cases: fall back to the full candidate list so a
+    # failed/absent probe never silently drops the spec-required int8/uint8/fp8
+    # dtypes. (_DTYPE_CANDIDATES also carries the complex dtypes; those are
+    # additionally covered by the dedicated DSTACK_COMPLEX_DTYPES cases below,
+    # so the overlap is harmless.)
+    DSTACK_DTYPES = list(_DTYPE_CANDIDATES)
 
 # Complex dtypes are covered as their own case (make_tensor fills the real and
 # imaginary parts); they are probed separately for the same reason as above.

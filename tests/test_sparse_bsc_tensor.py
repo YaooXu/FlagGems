@@ -85,10 +85,12 @@ def _bsc_dtype_probe(op_name, dtype):
 
 
 # Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test.
+# not be turned into a red test. If the probe yields nothing, keep the full
+# candidate list rather than a float32-only fallback, so a failed/absent probe
+# never silently drops the spec-required int8/uint8/fp8 dtypes.
 _BSC_DTYPES = tu.supported_dtypes(
     "sparse_bsc_tensor", candidates=_BSC_DTYPE_CANDIDATES, probe=_bsc_dtype_probe
-) or [torch.float32]
+) or list(_BSC_DTYPE_CANDIDATES)
 _BSC_FLOAT_DTYPES = [dtype for dtype in _BSC_DTYPES if dtype.is_floating_point]
 # nan/inf/-inf are representable in every float family except the fp8 pair.
 _BSC_NAN_INF_DTYPES = [

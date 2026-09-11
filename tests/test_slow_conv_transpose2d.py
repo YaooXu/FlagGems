@@ -177,11 +177,20 @@ else:
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
 
-# Value ranges whose per-dtype bounds exceed what the transposed-conv reduction
-# can represent in the accumulation dtype (up to C_in*kH*kW terms): feeding
-# dtype-max inputs would overflow to inf even for the native op. Drop them from
-# the value-range sweep (the one-sided magnitudes they encode are covered by the
-# [-1, 0] / [0, 1] ranges; the sign/zero boundary behavior is preserved).
+# Value-range coverage deviates from the spec's five ranges: the transposed-conv
+# reduction accumulates up to C_in*kH*kW products in the *input* dtype (the
+# native op does the same), so dtype-max inputs overflow that accumulator right
+# away -- a single product of two ~dtype-max values already exceeds the input
+# dtype (fp32: ~1e77 vs a 3.4e38 max) -- saturating to inf (NaN where
+# opposite-sign terms cancel), while the fp64 upcast reference stays finite.
+# Measured on this device with fp32 inputs drawn from [0, dtype_max]: the native
+# output is entirely inf and the fp64 reference is entirely finite (max ~7e77,
+# far below the fp64 limit 1.8e308). The two dtype-extreme ranges [0, dtype_max]
+# and [dtype_min, 0] are therefore dropped: the comparison would be dominated by
+# saturation rather than the operator's rounding. The three retained ranges
+# [-1, 1], [0, 1] and [-1, 0] still cover mixed, non-negative and non-positive
+# inputs, and the one-sided magnitudes the dropped ranges encode are represented
+# by [0, 1] / [-1, 0].
 _UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
 _CONV_VALUE_RANGES = [
     r for r in tu.selected_ranges() if not ({r[0], r[1]} & _UNSAFE_FOR_REDUCTION)

@@ -131,9 +131,12 @@ _DTYPE_CANDIDATES = list(
         + utils.BOOL_TYPES
     )
 )
+# Fallback keeps the full candidate list rather than a float32-only one, so a
+# failed/absent nested-dtype probe never silently drops the spec-required
+# int8/uint8/fp8 dtypes.
 _COMPONENT_DTYPES = [
     dtype for dtype in _DTYPE_CANDIDATES if _nested_dtype_supported(dtype)
-] or [torch.float32]
+] or list(_DTYPE_CANDIDATES)
 # nan/inf are only representable by some floating dtypes (float8_e4m3fn has no
 # inf), so the nan/inf workload is restricted to the ones that can hold them.
 _NAN_INF_DTYPES = [

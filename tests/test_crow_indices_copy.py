@@ -182,12 +182,15 @@ _CANDIDATE_DTYPES = _dedup(
 # Only the dtypes the active device's sparse CSR/BSR runtime + accessor accept;
 # probed rather than guessed so unsupported vendor dtypes are skipped. On every
 # probed backend the crow accessor itself is dtype-agnostic, so all 12
-# candidates pass and int8 / uint8 / fp8 are always included.
+# candidates pass and int8 / uint8 / fp8 are always included. If the probe
+# yields nothing, keep the full candidate list rather than a float32-only
+# fallback, so a failed/absent probe never silently drops the spec-required
+# int8/uint8/fp8 dtypes.
 _CROW_DTYPES = tu.supported_dtypes(
     "crow_indices_copy",
     candidates=_CANDIDATE_DTYPES,
     probe=_probe_sparse_storage_dtype,
-) or [torch.float32]
+) or list(_CANDIDATE_DTYPES)
 
 # Value-range coverage uses non-bool storage dtypes (bool ignores the range and
 # adds nothing beyond the copy-semantics cases above).

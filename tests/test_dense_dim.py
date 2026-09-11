@@ -58,10 +58,13 @@ _DTYPE_CANDIDATES = list(
 # Probe the active device before parametrizing: an op/dtype pair that cannot
 # run must not be turned into a red test. dense_dim is a pure metadata query,
 # so the default dense probe resolves dtype support for every layout it
-# dispatches to (the reported count is dtype-independent).
-_DTYPES = tu.supported_dtypes("dense_dim", candidates=_DTYPE_CANDIDATES) or [
-    torch.float32
-]
+# dispatches to (the reported count is dtype-independent). If the probe yields
+# nothing, keep the full candidate list rather than a float32-only fallback, so
+# a failed/absent probe never silently drops the spec-required int8/uint8/fp8
+# dtypes.
+_DTYPES = tu.supported_dtypes("dense_dim", candidates=_DTYPE_CANDIDATES) or list(
+    _DTYPE_CANDIDATES
+)
 
 # Dense (strided) tensors: dense_dim == len(shape). Ranks 0 through 5 cover the
 # default/CompositeExplicitAutograd path, including the degenerate scalar case.

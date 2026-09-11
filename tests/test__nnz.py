@@ -80,10 +80,12 @@ def _sparse_dtype_probe(op_name, dtype):
 
 
 # Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test.
+# not be turned into a red test. If the probe yields nothing, keep the full
+# candidate list rather than a float32-only fallback, so a failed/absent probe
+# never silently drops the spec-required int8/uint8/fp8 dtypes.
 _NNZ_DTYPES = tu.supported_dtypes(
     "_nnz", candidates=_NNZ_DTYPE_CANDIDATES, probe=_sparse_dtype_probe
-) or [torch.float32]
+) or list(_NNZ_DTYPE_CANDIDATES)
 _NNZ_FLOAT_DTYPES = [dtype for dtype in _NNZ_DTYPES if dtype.is_floating_point]
 # float8 has no sparse coalesce kernel, so the coalesce-count assertion below
 # is only checked for the non-fp8 storage dtypes.

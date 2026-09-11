@@ -93,6 +93,10 @@ def _probe_chain_dtype(_op_name, dtype):
     return True
 
 
+# chain_matmul dispatches to addmm, which only has floating-point CUDA kernels
+# ("addmm_cuda" is not implemented for int8/uint8/fp8/int32/int64/bool), so the
+# float dtype set IS this operator's complete dtype set. The fallback therefore
+# keeps the full (float-only) candidate set rather than dropping any of it.
 _CHAIN_DTYPES = tu.supported_dtypes(
     "chain_matmul", list(utils.FLOAT_DTYPES), probe=_probe_chain_dtype
 )
@@ -104,7 +108,11 @@ if not _CHAIN_DTYPES:
 # ---------------------------------------------------------------------------
 
 # Rank-2 chains covering the shape levels of the spec adapted to a
-# list-of-matrices operator: a degenerate/single-matrix chain, short chains,
+# list-of-matrices operator. The spec's seven dense shapes do not apply here:
+# the input is ``Tensor[]`` (a matrix chain) whose adjacent matrices must agree
+# on the inner dimension (M0[k,n0] @ M1[n0,n1] @ ...), so a single dense shape
+# cannot express a legal input -- each entry below is a whole chain of matching
+# rank-2 shapes. They cover a degenerate/single-matrix chain, short chains,
 # rank-collapsing inner dims, 4/5-matrix chains and an odd, non-power-of-two
 # chain that exercises tiling edges.
 if tu.LEVEL == "quick":

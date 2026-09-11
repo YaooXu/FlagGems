@@ -39,8 +39,8 @@ from . import test_utils as tu
 #     complex32 / complex64 / bool storage dtypes, each over the dtype's valid
 #     subset of the five value ranges (unsigned dtypes only accept ranges whose
 #     lower bound is non-negative);
-#   * shape levels: rank >= 2 shapes selected by --quick plus representative
-#     matrix / batch-of-matrices shapes (0-D/1-D get dedicated edge-case tests);
+#   * shape levels: the spec's 7 shapes filtered to ndim >= 2 (0-D/1-D get
+#     dedicated edge-case tests);
 #   * value ranges: tu.selected_ranges() over representative ranks so every
 #     supported dtype is exercised with negative, positive, extreme and
 #     degenerate ranges (the aliasing view round-trips them exactly);
@@ -87,28 +87,23 @@ def _supported_dtypes():
             continue
         supported.append(dtype)
     if not supported:
-        supported = [torch.float32]
+        # Keep the full candidate list: a failed probe must not silently drop
+        # the spec-required int8/uint8/fp8 dtypes.
+        supported = list(_candidate_dtypes())
     return supported
 
 
 _ADJOINT_DTYPES = _supported_dtypes()
 
-# Representative matrix / batch-of-matrices shapes (2-D up to 5-D, small and
-# mid-size) exercising contiguous storage.
-_ADJOINT_SHAPES = [
-    (2, 3),
-    (32, 64),
-    (256, 256),
-    (2, 3, 4),
-    (20, 320, 15),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (8, 16, 32, 64),
-    (2, 3, 4, 5, 6),
-]
+# Shape levels aligned with the spec's 7 shapes. adjoint only accepts 2-D and
+# higher tensors (0-D falls back to a deprecated lazy conj() and 1-D raises
+# RuntimeError), so tu.selected_shapes() is filtered down to its ndim >= 2
+# members instead of using a bespoke matrix-shape list. 0-D/1-D behavior is
+# covered by the dedicated edge-case tests below.
+_ADJOINT_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) >= 2]
 
-# Representative ranks for the full value-range sweep (2-D, 3-D, 4-D).
-_ADJOINT_RANGE_SHAPES = [(2, 3), (32, 64), (7, 13, 29)]
+# Representative ranks for the full value-range sweep (the same rank >= 2 shapes).
+_ADJOINT_RANGE_SHAPES = list(_ADJOINT_SHAPES)
 _ADJOINT_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _ADJOINT_TOGGLE_SHAPES = [(16, 32), (4, 8, 16)]
 _ADJOINT_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
@@ -116,14 +111,8 @@ _ADJOINT_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
 def _adjoint_test_shapes():
-    # Shape levels (rank >= 2 only) merged with the representative matrix
-    # shapes; 0-D/1-D are covered by the dedicated edge-case tests.
-    return list(
-        dict.fromkeys(
-            _ADJOINT_SHAPES
-            + [shape for shape in tu.selected_shapes() if len(shape) >= 2]
-        )
-    )
+    # The rank >= 2 spec shapes; 0-D/1-D are covered by the edge-case tests.
+    return list(_ADJOINT_SHAPES)
 
 
 def _ranges_for(dtype):

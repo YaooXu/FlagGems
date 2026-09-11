@@ -157,7 +157,10 @@ def _probe_value_dtypes(candidates):
 
 _VALUE_DTYPES = _probe_value_dtypes(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
 if not _VALUE_DTYPES:
-    _VALUE_DTYPES = [torch.float32]
+    # Fallback keeps the full candidate list rather than a float32-only one, so
+    # a failed/absent probe never silently drops the spec-required int8/uint8/
+    # fp8 dtypes.
+    _VALUE_DTYPES = list(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
 
 # Exact-copy dtypes (integer/bool and the fp8 formats) are asserted bit-exactly
 # with gems_assert_equal; true float dtypes use the tolerance-based helper. The
@@ -172,7 +175,16 @@ _FLOAT_VALUE_DTYPES = [
     dtype
     for dtype in _VALUE_DTYPES
     if dtype.is_floating_point and dtype not in _FP8_DTYPES
-] or [torch.float32]
+]
+if not _FLOAT_VALUE_DTYPES:
+    # Derived subset (true-float dtypes only); empty only if the probe found no
+    # non-fp8 float support at all. Fall back to the float candidates rather
+    # than float32 alone, so the subset can never claim an unsupported dtype.
+    _FLOAT_VALUE_DTYPES = [
+        dtype
+        for dtype in _REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES
+        if dtype.is_floating_point and dtype not in _FP8_DTYPES
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -88,11 +88,14 @@ def _dtype_probe(op_name, dtype):
         return False
 
 
+# If the probe yields nothing, keep the full candidate list rather than a
+# float32-only fallback, so a failed/absent probe never silently drops the
+# spec-required int8/uint8/fp8 dtypes.
 _HAS_SAME_STORAGE_NUMEL_DTYPES = tu.supported_dtypes(
     "_has_same_storage_numel",
     candidates=_CANDIDATE_DTYPES,
     probe=_dtype_probe,
-) or [torch.float32]
+) or list(_CANDIDATE_DTYPES)
 
 # Floating storage families used for the nan/inf payload case.
 _FLOAT_STORAGE_DTYPES = [

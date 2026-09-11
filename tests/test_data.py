@@ -59,10 +59,13 @@ _DATA_DTYPE_CANDIDATES = list(
 )
 
 # Probe on the real device: aten::data is dtype-agnostic (pure alias), but the
-# probe keeps the file portable to backends where a storage dtype is missing.
-_DATA_DTYPES = tu.supported_dtypes("data", candidates=_DATA_DTYPE_CANDIDATES) or [
-    torch.float32
-]
+# probe keeps the file portable to backends where a storage dtype is missing. If
+# the probe yields nothing, keep the full candidate list rather than a
+# float32-only fallback, so a failed/absent probe never silently drops the
+# spec-required int8/uint8/fp8 dtypes.
+_DATA_DTYPES = tu.supported_dtypes("data", candidates=_DATA_DTYPE_CANDIDATES) or list(
+    _DATA_DTYPE_CANDIDATES
+)
 
 # fp8 cannot go through torch.testing.assert_close directly (its isclose path
 # calls mul, which has no fp8 CUDA kernel); widening to float32 first is exact

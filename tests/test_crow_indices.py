@@ -137,7 +137,10 @@ def _probe_csr_dtypes(candidates):
     return supported
 
 
-_CSR_DTYPES = _probe_csr_dtypes(_CSR_DTYPE_CANDIDATES) or [torch.float32]
+# Fallback keeps the full candidate list rather than a float32-only one, so a
+# failed/absent probe never silently drops the spec-required int8/uint8/fp8
+# dtypes.
+_CSR_DTYPES = _probe_csr_dtypes(_CSR_DTYPE_CANDIDATES) or list(_CSR_DTYPE_CANDIDATES)
 
 
 def _make_values(dtype, shape, value_range):

@@ -76,6 +76,17 @@ _EXTRA_CANDIDATES = [
     torch.complex32,
 ]
 
+# The spec requires int8/uint8/fp8 to be covered whenever the op supports them.
+# atleast_2d is a pure view, so keep them in the candidate list explicitly
+# (utils.ALL_INT_DTYPES only spans int16/int32/int64, and no shared set carries
+# fp8). Same pattern as test_atleast_1d.py / test_atleast_3d.py.
+_REQUIRED_EXTRA = [
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+]
+
 
 def _dedup(dtypes):
     seen = set()
@@ -87,15 +98,19 @@ def _dedup(dtypes):
     return out
 
 
-_SUPPORTED_DTYPES = tu.supported_dtypes(
-    "atleast_2d",
-    candidates=_dedup(
-        utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-        + utils.COMPLEX_DTYPES
-        + _EXTRA_CANDIDATES
-    ),
+_DTYPE_CANDIDATES = _dedup(
+    utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + utils.BOOL_TYPES
+    + utils.COMPLEX_DTYPES
+    + _EXTRA_CANDIDATES
+    + _REQUIRED_EXTRA
+)
+
+# Fallback keeps the full candidate list (not just float32): if the probe
+# cannot establish support it must not silently drop the required dtypes.
+_SUPPORTED_DTYPES = (
+    tu.supported_dtypes("atleast_2d", candidates=_DTYPE_CANDIDATES) or _DTYPE_CANDIDATES
 )
 
 _FP8_DTYPES = [

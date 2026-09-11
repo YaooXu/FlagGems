@@ -32,12 +32,14 @@ from .conftest import QUICK_MODE
 # dilation) tuple below is one distinct parametrized workload: they cover
 # 1x1/2x2/2x3/3x3/3x5/5x5 kernels, stride 1/2/3 and asymmetric strides, padding
 # 0/1/2 and asymmetric padding, dilation 1/2 and asymmetric dilation, with and
-# without bias. Element counts stay well below 1M so the correctness run stays
-# fast.
+# without bias. The canonical tu.selected_shapes() set is pointwise-shaped and
+# cannot describe a conv (whose input must be 4-D), so these local tuples play
+# the role of the shape levels. Element counts stay well below 1M so the
+# correctness run stays fast.
 #
-# Dtype coverage (常规算子测试用例): a probe of
-# ``tu.supported_dtypes("slow_conv_dilated2d")`` plus a direct call shows the
-# CUDA kernel only implements the floating types -- int8 / uint8 /
+# Dtype coverage (常规算子测试用例): a direct ATen call on the active device
+# (the same probe the negative dtype test below relies on) shows the CUDA
+# kernel only implements the floating types -- int8 / uint8 /
 # float8_e4m3fn / float8_e5m2 / int32 / int64 all raise
 # RuntimeError("slow_conv_dilated<>" not implemented for ...). The required
 # int8/uint8/fp8 grid therefore does not apply to this operator; the file covers

@@ -81,6 +81,11 @@ def _probe_dtype(operator, dtype):
 _SUPPORTED_DTYPES = tu.supported_dtypes(
     "cartesian_prod", candidates=_CANDIDATE_DTYPES, probe=_probe_dtype
 )
+if not _SUPPORTED_DTYPES:
+    # Never collect zero dtype cases: fall back to the full candidate list so a
+    # failed/absent probe never silently drops the spec-required int8/uint8/fp8
+    # dtypes.
+    _SUPPORTED_DTYPES = list(_CANDIDATE_DTYPES)
 
 _FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
 _UNSIGNED_DTYPES = {torch.uint8}
@@ -111,8 +116,12 @@ def _dtype_ranges(dtype):
 _RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in _dtype_ranges(d)]
 
 # Shape levels: each entry is the list of 1-D input sizes (the op's shape
-# dimension). Covers single / singleton / empty / equal-length / mixed-length /
-# 3-4 input configs and the resulting empty outputs.
+# dimension). The spec's seven dense shapes do not apply to this op: its input
+# is ``Tensor[]`` (a list of 1-D tensors, one per operand), so the natural shape
+# parameter is the number and lengths of those inputs rather than a single dense
+# shape -- a lone tuple like (256,) cannot express "k operands of length n".
+# These configs therefore cover single / singleton / empty / equal-length /
+# mixed-length / 3-4 input cases and the resulting empty outputs.
 _CARTESIAN_PROD_SIZES = (
     [[8], [3, 5], [2, 4, 3]]
     if tu.LEVEL == "quick"
