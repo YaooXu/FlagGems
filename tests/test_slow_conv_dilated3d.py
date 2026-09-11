@@ -39,12 +39,18 @@ from .conftest import QUICK_MODE
 # is covered by the negative dtype test below instead of being silently
 # dropped.
 #
-# Rank probe: although the schema also accepts an unbatched 4-D input
-# (C_in, D, H, W), that route is not usable as a test oracle: an actual test
-# run on a 4-D case produced NaN candidate output while the fp64 reference was
-# finite (and repeated isolated calls showed occasional disagreement), so it is
-# excluded. Only the reliable 5-D batched route is exercised; the 6-D rejection
-# test covers the rank check.
+# Rank probe: the schema accepts both a batched 5-D input (N, C_in, D, H, W)
+# and an unbatched 4-D one (C_in, D, H, W), so the 4-D rank IS exercised (see
+# test_slow_conv_dilated3d_unbatched). aten does not support the unbatched 4-D
+# route together with a bias on this build -- measured, some configurations
+# raise
+#   IndexError: select(): index 4 out of range for tensor of size [4, 4, 4]
+# and the rest return non-deterministic results (repeated identical calls
+# disagree by up to 1.1e38, incl. inf/NaN) that differ from F.conv3d by O(1).
+# The 4-D rank is therefore covered without a bias: there the op is
+# deterministic (0.0 across repeated calls) and matches F.conv3d to 0.0 in
+# fp64. The bias path is covered by the batched grid, and the 6-D rejection
+# test covers the rank check's negative side.
 #
 # Shape coverage: the operator is rank-fixed and structurally constrained
 # (C_in must agree between input and weight, kernel_size must agree with the
@@ -79,6 +85,23 @@ else:
     ]
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
+
+
+def _unbatched(case):
+    # (N, C_in, D, H, W) -> the unbatched (C_in, D, H, W) form of the same
+    # operator configuration; everything else is unchanged.
+    inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
+    return (inp_shape[1:], weight_shape, kernel_size, stride, padding, dilation)
+
+
+# The 4-D unbatched route, on the same three representative configurations the
+# value-range test uses (3x3x3/pad1, 1x1x1 pure-GEMM, pad2) so the rank is
+# covered without duplicating the whole batched grid. Bias is deliberately
+# excluded: aten does not support 4-D + bias (see the rank-probe note above),
+# so it cannot serve as the oracle.
+_UNBATCHED_CASES = [
+    _unbatched(SLOW_CONV_DILATED3D_CASES[i]) for i in ([0] if QUICK_MODE else [0, 5, 4])
+]
 
 # Value-range coverage drops the two dtype-extreme ranges [0, dtype_max] and
 # [dtype_min, 0]: the conv reduction sums up to C_in*kD*kH*kW = 108 products of
@@ -151,18 +174,31 @@ def _resolve_gems_op_out():
 
 
 def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
-    """(N, C_in, D, H, W) x (C_out, C_in, kD, kH, kW) -> (N, C_out, D_out, H_out, W_out)."""
+    """Batched (N, C_in, D, H, W) or unbatched (C_in, D, H, W) input x
+    (C_out, C_in, kD, kH, kW) weight -> the matching (N, C_out, ...) or
+    (C_out, ...) output shape."""
 
     def _out_size(in_size, k, s, p, d):
         return (in_size + 2 * p - d * (k - 1) - 1) // s + 1
 
+    # A 4-D input is the unbatched route: the spatial dims start one offset
+    # earlier and the output drops the batch dim too.
+    if len(inp_shape) == 4:
+        spatial_offset, lead = 1, (weight_shape[0],)
+    else:
+        spatial_offset, lead = 2, (inp_shape[0], weight_shape[0])
+
     spatial = tuple(
         _out_size(
-            inp_shape[2 + i], weight_shape[2 + i], stride[i], padding[i], dilation[i]
+            inp_shape[spatial_offset + i],
+            weight_shape[2 + i],
+            stride[i],
+            padding[i],
+            dilation[i],
         )
         for i in range(3)
     )
-    return (inp_shape[0], weight_shape[0]) + spatial
+    return lead + spatial
 
 
 def _make_conv_inputs(
@@ -227,6 +263,41 @@ def test_slow_conv_dilated3d(
     gems_op = _resolve_gems_op()
     res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding, dilation)
 
+    _assert_close(res_out, ref_out, dtype)
+
+
+@pytest.mark.slow_conv_dilated3d
+@pytest.mark.parametrize(
+    "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
+    _UNBATCHED_CASES,
+)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+def test_slow_conv_dilated3d_unbatched(
+    inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
+):
+    # The unbatched 4-D route (C_in, D, H, W) must produce the same result as
+    # the batched one -- the operator's rank dimension is part of the spec's
+    # shape coverage, so it is checked rather than skipped. No bias: aten does
+    # not support 4-D + bias, so it cannot be used as the oracle there.
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
+    inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, False, dtype)
+    ref_inp = utils.to_reference(inp, True)
+    ref_weight = utils.to_reference(weight, True)
+
+    ref_out = torch.ops.aten.slow_conv_dilated3d(
+        ref_inp, ref_weight, kernel_size, None, stride, padding, dilation
+    ).to(dtype)
+
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias_t, stride, padding, dilation
+    )
+
+    # The output must also drop the batch dim, not silently keep a leading 1.
+    assert tuple(res_out.shape) == _conv_output_shape(
+        inp_shape, weight_shape, stride, padding, dilation
+    )
     _assert_close(res_out, ref_out, dtype)
 
 
