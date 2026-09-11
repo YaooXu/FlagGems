@@ -15,20 +15,59 @@
 import pytest
 import torch
 
+import flag_gems
+
 from . import base, consts
+
+# abs is a unary pointwise op, so the public UnaryPointwiseBenchmark family
+# covers its timing semantics. The candidate is passed explicitly via gems_op
+# and the perf reference is the aten op itself (torch.ops.aten.abs / abs_);
+# both are called with the same single-tensor signature that the family's
+# build_inputs produces.
+#
+# The default consts.DEFAULT_SHAPES contains a 2**30-element 1-dim shape
+# (4 GiB per fp32 tensor), which OOMs the GPU during materialization; this
+# subclass pins bounded, performance-relevant shapes instead (square/wide
+# 2-dim, 3-dim, 4-dim and the canonical 20x320x15 attention shape).
+_ABS_BENCH_SHAPES = [
+    (1024, 1024),
+    (4096, 4096),
+    (1024, 4096),
+    (64, 512, 512),
+    (16, 128, 64, 60),
+    (20, 320, 15),
+]
+
+
+class _AbsBenchmark(base.UnaryPointwiseBenchmark):
+    def set_more_shapes(self):
+        # No additional comprehensive-level shapes: the pinned set above is the
+        # complete coverage for this benchmark.
+        return []
+
+    def set_shapes(self, shape_file_path=None):
+        _ = shape_file_path
+        self.shapes = [tuple(s) for s in _ABS_BENCH_SHAPES]
 
 
 @pytest.mark.abs
 def test_abs():
-    bench = base.UnaryPointwiseBenchmark(
-        op_name="abs", torch_op=torch.abs, dtypes=consts.FLOAT_DTYPES
+    bench = _AbsBenchmark(
+        op_name="abs",
+        torch_op=torch.ops.aten.abs,
+        gems_op=flag_gems.abs,
+        dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
 
 
 @pytest.mark.abs_
 def test_abs_inplace():
-    bench = base.UnaryPointwiseBenchmark(
-        op_name="abs_", torch_op=torch.abs_, dtypes=consts.FLOAT_DTYPES, is_inplace=True
+    bench = _AbsBenchmark(
+        op_name="abs_",
+        torch_op=torch.ops.aten.abs_,
+        gems_op=flag_gems.abs_,
+        dtypes=consts.FLOAT_DTYPES,
+        is_inplace=True,
     )
     bench.run()
