@@ -52,8 +52,9 @@ from . import test_utils as tu
 # Both overloads are resolved through the shared public operator name
 # "atleast_3d" via flag_gems.testing.resolve_gems_op(...) inside each test
 # (never at import time), so the process-local override injected by KernelGen
-# wins. When neither an override nor a native implementation exists yet the
-# tests fall back to the PyTorch reference so the file stays runnable.
+# wins. Resolution is unconditional: with no override and no native
+# implementation registered yet, resolve_gems_op raises LookupError and the
+# test fails loudly instead of measuring the PyTorch reference.
 
 _FP8_DTYPES = frozenset(
     dtype
@@ -158,50 +159,34 @@ for _dtype in ATLEAST_3D_DTYPES:
 
 
 def _resolve_named_gems_op(name):
-    """Resolve one operator/overload name through resolve_gems_op.
+    """Resolve one operator name through resolve_gems_op.
 
     Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct flag_gems callable for that name, (3) None -> the caller
-    falls back to the PyTorch reference.
+    (2) the direct flag_gems callable for that name. Resolution is
+    unconditional: when neither exists resolve_gems_op raises LookupError, so
+    the caller fails loudly instead of measuring the PyTorch reference.
     """
     default = getattr(flag_gems, name.replace(".", "_"), None)
     if default is None:
         default = getattr(flag_gems, name, None)
-    try:
-        return flag_gems.testing.resolve_gems_op(name, default)
-    except LookupError:
-        return None
+    return flag_gems.testing.resolve_gems_op(name, default)
 
 
 def _resolve_gems_op():
+    # One candidate per OPERATOR, not per overload: the injector registers a
+    # single callable under the public name "atleast_3d" and dispatches the
+    # Sequence form itself, so the test never probes overload-level names such
+    # as "atleast_3d.Sequence" / "atleast_3d_sequence".
     return _resolve_named_gems_op("atleast_3d")
 
 
-def _resolve_gems_op_sequence():
-    # The verify harness may register the overload as "atleast_3d.Sequence",
-    # "atleast_3d_sequence" or a single "atleast_3d" callable handling both.
-    for name in ("atleast_3d.Sequence", "atleast_3d_sequence", "atleast_3d"):
-        op = _resolve_named_gems_op(name)
-        if op is not None:
-            return op
-    return None
-
-
 def _apply_atleast_3d(inp):
-    gems_op = _resolve_gems_op()
-    if gems_op is None:
-        # No candidate injected and no native implementation registered yet:
-        # run the reference so the test remains runnable standalone. The aten
-        # packet auto-selects the Sequence overload when handed a list.
-        return torch.ops.aten.atleast_3d(inp)
-    return gems_op(inp)
+    return _resolve_gems_op()(inp)
 
 
 def _apply_atleast_3d_sequence(inp):
-    gems_op = _resolve_gems_op_sequence()
-    if gems_op is None:
-        return torch.ops.aten.atleast_3d.Sequence(inp)
-    return gems_op(inp)
+    # Same single candidate, called with the Sequence (list) form.
+    return _resolve_gems_op()(inp)
 
 
 def _assert_result(res_out, ref_out, dtype):
@@ -379,11 +364,9 @@ def test_atleast_3d_rejects_non_tensor():
         )
 
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op(3.14)
 
-    gems_seq_op = _resolve_gems_op_sequence()
-    if gems_seq_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_seq_op([torch.zeros(2, device=flag_gems.device), 3.14])
+    gems_seq_op = _resolve_gems_op()
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_seq_op([torch.zeros(2, device=flag_gems.device), 3.14])

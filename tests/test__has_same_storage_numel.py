@@ -203,14 +203,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_or_none():
-    """Like ``_resolve_gems_op`` but returns None while no candidate exists."""
-    try:
-        return _resolve_gems_op()
-    except LookupError:
-        return None
-
-
 def _assert_result(res_out, ref_out):
     # The op returns a plain Python bool; a candidate may equivalently return a
     # 0-dim bool tensor. The comparison is exact (no tolerance involved).
@@ -338,14 +330,12 @@ def test__has_same_storage_numel_rejects_non_tensor(self_arg, other_arg):
     # silently return a bogus comparison.
     with pytest.raises(RuntimeError):
         torch.ops.aten._has_same_storage_numel(self_arg, other_arg)
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        # The reference raises RuntimeError at the dispatcher level; a
-        # plain-Python candidate naturally raises AttributeError (or a
-        # TypeError/ValueError) for the same inputs, which is equally
-        # acceptable.
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(self_arg, other_arg)
+    # The reference raises RuntimeError at the dispatcher level; a
+    # plain-Python candidate naturally raises AttributeError (or a
+    # TypeError/ValueError) for the same inputs, which is equally
+    # acceptable.
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(self_arg, other_arg)
 
 
 @pytest.mark._has_same_storage_numel
@@ -354,7 +344,5 @@ def test__has_same_storage_numel_rejects_missing_argument():
     inp = torch.zeros((4,), device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten._has_same_storage_numel(inp)
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(inp)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(inp)

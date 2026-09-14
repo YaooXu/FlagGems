@@ -214,33 +214,14 @@ def _shape_level_cases():
 def _resolve_gems_op():
     # Resolved inside each test (never at import time) so the process-local
     # override installed by KernelGen for this run wins. Order: (1) override,
-    # (2) the direct flag_gems callable, (3) LookupError.
+    # (2) the direct flag_gems callable, (3) LookupError. One callable per
+    # OPERATOR: the injector registers a single entrypoint under the public
+    # name and dispatches the ``out=`` form itself, so the test never probes
+    # overload-level names such as "..._out".
     return flag_gems.testing.resolve_gems_op(
         "_new_zeros_with_same_feature_meta",
         getattr(flag_gems, "_new_zeros_with_same_feature_meta", None),
     )
-
-
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_new_zeros_with_same_feature_meta_out",
-        getattr(flag_gems, "_new_zeros_with_same_feature_meta_out", None),
-    )
-
-
-def _resolve_gems_op_or_none():
-    """Like _resolve_gems_op, but None while no candidate is registered yet."""
-    try:
-        return _resolve_gems_op()
-    except LookupError:
-        return None
-
-
-def _resolve_gems_op_out_or_none():
-    try:
-        return _resolve_gems_op_out()
-    except LookupError:
-        return None
 
 
 def _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims):
@@ -309,7 +290,7 @@ def test__new_zeros_with_same_feature_meta_out(
     ref_ret = torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims, out=ref_out
     )
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op()(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims, out=res_out
     )
 
@@ -439,10 +420,8 @@ def test__new_zeros_with_same_feature_meta_negative_batch_dims_raises(dtype):
         torch.ops.aten._new_zeros_with_same_feature_meta(
             self_t, other_t, self_num_batch_dims=-1
         )
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(self_t, other_t, self_num_batch_dims=-1)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(self_t, other_t, self_num_batch_dims=-1)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta_out
@@ -458,10 +437,8 @@ def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
         torch.ops.aten._new_zeros_with_same_feature_meta.out(
             self_t, other_t, self_num_batch_dims=1, out=out_t
         )
-    gems_op = _resolve_gems_op_out_or_none()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(self_t, other_t, self_num_batch_dims=1, out=out_t)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1, out=out_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -481,7 +458,5 @@ def test__new_zeros_with_same_feature_meta_rejects_non_tensor(self_arg, other_ar
     # silently return a bogus allocation.
     with pytest.raises(RuntimeError):
         torch.ops.aten._new_zeros_with_same_feature_meta(self_arg, other_arg)
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(self_arg, other_arg)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(self_arg, other_arg)

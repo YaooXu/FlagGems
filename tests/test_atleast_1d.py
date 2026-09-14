@@ -64,25 +64,21 @@ _ATLEAST_1D_BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 def _resolve_gems_op():
     # Resolution order: (1) the process-local override injected by KernelGen,
-    # (2) the direct flag_gems.atleast_1d callable, (3) None -> the test falls
-    # back to the PyTorch reference so it stays runnable before a FlagGems
-    # implementation is registered. Both the .default and .Sequence overloads
-    # are resolved through the shared public operator name "atleast_1d".
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "atleast_1d", getattr(flag_gems, "atleast_1d", None)
-        )
-    except LookupError:
-        return None
+    # (2) the direct flag_gems.atleast_1d callable. Resolution is unconditional:
+    # when neither exists resolve_gems_op raises LookupError, so the test fails
+    # loudly rather than silently measuring the PyTorch reference. Both the
+    # .default and .Sequence overloads are resolved through the shared public
+    # operator name "atleast_1d".
+    return flag_gems.testing.resolve_gems_op(
+        "atleast_1d", getattr(flag_gems, "atleast_1d", None)
+    )
 
 
 def _apply_atleast_1d(inp):
     # Called inside each test function (never at import time) so that the
     # override installed by KernelGen for this run is the one that is used. A
-    # Python list dispatches to the .Sequence overload on the reference packet.
+    # Python list dispatches to the .Sequence overload on the candidate packet.
     gems_op = _resolve_gems_op()
-    if gems_op is None:
-        return torch.ops.aten.atleast_1d(inp)
     return gems_op(inp)
 
 
@@ -223,8 +219,7 @@ def test_atleast_1d_rejects_non_tensor():
             [torch.zeros(2, device=flag_gems.device), 3.14]
         )
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op(3.14)
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op([torch.zeros(2, device=flag_gems.device), 3.14])

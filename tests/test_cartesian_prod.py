@@ -140,23 +140,17 @@ def _resolve_gems_op():
     """Resolve the candidate inside the test (never at import time).
 
     Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct ``flag_gems.cartesian_prod`` callable, (3) ``None`` when
-    neither exists yet (the tests then run against the PyTorch reference so the
-    file stays runnable before an implementation is merged).
+    (2) the direct ``flag_gems.cartesian_prod`` callable. ``LookupError`` from
+    ``resolve_gems_op`` is deliberately not caught: a test that cannot obtain
+    the candidate must fail loudly instead of silently running the reference.
     """
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "cartesian_prod", getattr(flag_gems, "cartesian_prod", None)
-        )
-    except LookupError:
-        return None
+    return flag_gems.testing.resolve_gems_op(
+        "cartesian_prod", getattr(flag_gems, "cartesian_prod", None)
+    )
 
 
 def _apply_cartesian_prod(inp):
-    gems_op = _resolve_gems_op()
-    if gems_op is None:
-        return torch.ops.aten.cartesian_prod(inp)
-    return gems_op(inp)
+    return _resolve_gems_op()(inp)
 
 
 def _assert_close(res_out, ref_out, dtype):
@@ -310,9 +304,8 @@ def test_cartesian_prod_rejects_empty_list():
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
-            gems_op([])
+    with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
+        gems_op([])
 
 
 @pytest.mark.cartesian_prod
@@ -325,9 +318,8 @@ def test_cartesian_prod_rejects_multidim_input(shape, dtype):
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([ref_inp])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises(RuntimeError):
-            gems_op([inp])
+    with pytest.raises(RuntimeError):
+        gems_op([inp])
 
 
 @pytest.mark.cartesian_prod
@@ -339,9 +331,8 @@ def test_cartesian_prod_rejects_mixed_dtype():
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod(ref_inp)
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op([a, b])
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op([a, b])
 
 
 @pytest.mark.cartesian_prod
@@ -353,6 +344,5 @@ def test_cartesian_prod_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([ref_inp, 3.14])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op([a, 3.14])
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        gems_op([a, 3.14])

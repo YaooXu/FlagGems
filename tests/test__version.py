@@ -206,13 +206,6 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("_version", _default_gems_op())
 
 
-def _resolve_gems_op_or_none():
-    try:
-        return _resolve_gems_op()
-    except LookupError:
-        return None
-
-
 def _as_int(value):
     # The reference returns a plain Python int; a candidate may equivalently
     # return a 0-dim / single-element integral tensor. Normalize both.
@@ -419,13 +412,11 @@ def test__version_rejects_non_tensor(bad_arg):
     with pytest.raises(RuntimeError):
         torch.ops.aten._version(bad_arg)
 
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        # The reference raises RuntimeError at the dispatcher level; a plain
-        # Python candidate naturally raises AttributeError / TypeError /
-        # ValueError for the same inputs, which is equally acceptable.
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(bad_arg)
+    # The reference raises RuntimeError at the dispatcher level; a plain
+    # Python candidate naturally raises AttributeError / TypeError /
+    # ValueError for the same inputs, which is equally acceptable.
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(bad_arg)
 
 
 @pytest.mark._version
@@ -441,12 +432,11 @@ def test__version_rejects_wrong_arity():
     # The single Tensor argument may be passed by keyword.
     assert torch.ops.aten._version(self=extra) == 0
 
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        # A candidate fails on a missing argument with whatever the runtime
-        # raises for a wrong arity: the reference (packet / bound method) raises
-        # RuntimeError, while a plain Python implementation raises TypeError.
-        with pytest.raises((TypeError, RuntimeError)):
-            gems_op()
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op(extra, 1)
+    gems_op = _resolve_gems_op()
+    # A candidate fails on a missing argument with whatever the runtime
+    # raises for a wrong arity: the reference (packet / bound method) raises
+    # RuntimeError, while a plain Python implementation raises TypeError.
+    with pytest.raises((TypeError, RuntimeError)):
+        gems_op()
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op(extra, 1)

@@ -163,24 +163,16 @@ _FLATTEN_BACKWARD_CASES = [
 def _resolve_gems_op():
     # Resolved inside each test (never at import time) so that the process-local
     # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.flatten_dense_tensors callable,
-    # (3) None when neither exists yet (the tests then fall back to the PyTorch
-    # reference, keeping them runnable before an implementation is merged).
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "flatten_dense_tensors", getattr(flag_gems, "flatten_dense_tensors", None)
-        )
-    except LookupError:
-        return None
+    # (1) override, (2) the direct flag_gems.flatten_dense_tensors callable.
+    # LookupError is not caught: a test that cannot obtain the candidate must
+    # fail loudly rather than run the PyTorch reference in its place.
+    return flag_gems.testing.resolve_gems_op(
+        "flatten_dense_tensors", getattr(flag_gems, "flatten_dense_tensors", None)
+    )
 
 
 def _apply_flatten_dense_tensors(inp):
-    gems_op = _resolve_gems_op()
-    if gems_op is None:
-        # No candidate injected and no native implementation registered yet:
-        # run the reference so the test remains runnable standalone.
-        return torch.ops.aten.flatten_dense_tensors(inp)
-    return gems_op(inp)
+    return _resolve_gems_op()(inp)
 
 
 def _assert_exact(res, ref, dtype):
@@ -342,9 +334,8 @@ def test_flatten_dense_tensors_rejects_empty_list():
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
-            gems_op([])
+    with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
+        gems_op([])
 
 
 @pytest.mark.flatten_dense_tensors
@@ -356,6 +347,5 @@ def test_flatten_dense_tensors_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([ref_a, 3.14])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op([a, 3.14])
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        gems_op([a, 3.14])

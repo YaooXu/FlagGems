@@ -333,31 +333,19 @@ def _assert_coo_values(res_out, ref_out, dtype, equal_nan=False):
 
 
 def _resolve_gems_op():
-    """Resolve the candidate inside the test (never at import time).
+    """Resolve the single candidate entrypoint for this OPERATOR.
 
-    Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct ``flag_gems.sparse_coo_tensor`` callable, (3) ``None`` when
-    neither exists yet -- the tests then run the reference callable with
-    identical call semantics on the active device, so the file stays runnable
-    before an implementation is merged.
+    One callable per operator, registered under the public name
+    ``sparse_coo_tensor`` — the injector dispatches the four schemas
+    (``size`` / ``indices`` / ``indices_size`` / ``size_out``) itself, so the
+    test never probes overload-level names. Resolution happens inside the test
+    (never at import time), and ``LookupError`` is deliberately not caught:
+    without a candidate the test must fail loudly rather than evaluate the
+    PyTorch reference a second time and pass.
     """
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "sparse_coo_tensor", getattr(flag_gems, "sparse_coo_tensor", None)
-        )
-    except LookupError:
-        return None
-
-
-def _resolve_gems_op_out():
-    # The .out overload is a distinct operator with its own public name.
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "sparse_coo_tensor.size_out",
-            getattr(flag_gems, "sparse_coo_tensor_size_out", None),
-        )
-    except LookupError:
-        return None
+    return flag_gems.testing.resolve_gems_op(
+        "sparse_coo_tensor", getattr(flag_gems, "sparse_coo_tensor", None)
+    )
 
 
 def _call_reference(indices, values, size, dtype):
@@ -377,8 +365,9 @@ def _call_reference(indices, values, size, dtype):
 
 
 def _call_candidate(indices, values, size, dtype, **extra):
-    op = _resolve_gems_op()
-    call = op if op is not None else torch.ops.aten.sparse_coo_tensor
+    # size=None means the size-inferred overload; a list selects the explicit
+    # ``indices_size`` overload (same shape of decision as _call_reference).
+    call = _resolve_gems_op()
     if size is None:
         return call(indices, values, dtype=dtype, device=indices.device, **extra)
     return call(
@@ -387,15 +376,14 @@ def _call_candidate(indices, values, size, dtype, **extra):
 
 
 def _call_candidate_size_only(size, dtype, **extra):
-    op = _resolve_gems_op()
-    call = op if op is not None else torch.ops.aten.sparse_coo_tensor
-    return call(list(size), dtype=dtype, device=flag_gems.device, **extra)
+    return _resolve_gems_op()(list(size), dtype=dtype, device=flag_gems.device, **extra)
 
 
 def _call_candidate_size_out(size, out):
-    op = _resolve_gems_op_out()
-    call = op if op is not None else torch.ops.aten.sparse_coo_tensor.size_out
-    return call(list(size), out=out)
+    # Same single candidate, called with the ``size_out`` form. torch.ops.aten
+    # does not select an overload for you, so the call form must match the
+    # reference (torch.ops.aten.sparse_coo_tensor.size_out(...)) exactly.
+    return _resolve_gems_op()(list(size), out=out)
 
 
 def _assert_rejected(ref_call, candidate_call):

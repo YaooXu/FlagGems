@@ -55,9 +55,9 @@ from . import test_utils as tu
 #
 # The candidate is resolved through flag_gems.testing.resolve_gems_op(...)
 # inside each test (never at import time) so the process-local override
-# installed by KernelGen wins. When neither an override nor a native
-# implementation is registered yet, the tests fall back to the PyTorch
-# reference so the file stays runnable standalone.
+# installed by KernelGen wins. Resolution raises LookupError when no override
+# and no native implementation is registered; that error is not caught, so a
+# test never passes by running the PyTorch reference instead of the candidate.
 
 _FP8_DTYPES = frozenset(
     dtype
@@ -220,48 +220,36 @@ _DTYPE_RANGE_PAIRS = [
 
 
 def _resolve_named_gems_op(name):
-    """Resolve one operator/overload name through resolve_gems_op.
+    """Resolve one operator name through resolve_gems_op.
 
     Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct flag_gems callable for that name, (3) None -> the caller
-    falls back to the PyTorch reference so the file is runnable standalone.
+    (2) the direct flag_gems callable for that name. ``LookupError`` is not
+    caught here: the caller must not substitute the PyTorch reference for a
+    missing candidate.
     """
     default = getattr(flag_gems, name.replace(".", "_"), None)
     if default is None:
         default = getattr(flag_gems, name, None)
-    try:
-        return flag_gems.testing.resolve_gems_op(name, default)
-    except LookupError:
-        return None
+    return flag_gems.testing.resolve_gems_op(name, default)
 
 
 def _resolve_gems_op():
+    # One candidate per OPERATOR, not per overload: the injector registers a
+    # single callable under the public operator name "dstack" and dispatches the
+    # ``out=`` form itself. The test therefore never probes overload-level names
+    # such as "dstack.out" / "dstack_out".
     return _resolve_named_gems_op("dstack")
 
 
-def _resolve_gems_op_out():
-    # The harness may register the out overload as "dstack.out" or
-    # "dstack_out"; try both and fall back to the reference when neither
-    # exists (the main "dstack" callable is deliberately not reused here).
-    for name in ("dstack.out", "dstack_out"):
-        op = _resolve_named_gems_op(name)
-        if op is not None:
-            return op
-    return None
-
-
 def _apply_dstack(inp):
-    gems_op = _resolve_gems_op()
-    if gems_op is None:
-        return torch.ops.aten.dstack(inp)
-    return gems_op(inp)
+    return _resolve_gems_op()(inp)
 
 
 def _apply_dstack_out(inp, out):
-    gems_op = _resolve_gems_op_out()
-    if gems_op is None:
-        return torch.ops.aten.dstack.out(inp, out=out)
-    return gems_op(inp, out=out)
+    # Same single candidate, called with the ``.out`` form. torch.ops.aten does
+    # not select an overload for you, so the call form must match the reference
+    # (torch.ops.aten.dstack.out(ref_inp, out=ref_out)) exactly.
+    return _resolve_gems_op()(inp, out=out)
 
 
 def _assert_values(res_out, ref_out, dtype):
@@ -441,9 +429,8 @@ def test_dstack_empty_list():
     with pytest.raises(RuntimeError):
         torch.ops.aten.dstack([])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op([])
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op([])
 
 
 @pytest.mark.dstack_negative
@@ -464,9 +451,8 @@ def test_dstack_mismatched_shapes(shape_set):
     with pytest.raises(RuntimeError):
         torch.ops.aten.dstack(ref_inp)
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op(inp)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op(inp)
 
 
 @pytest.mark.dstack_negative
@@ -476,6 +462,5 @@ def test_dstack_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.dstack([torch.zeros(2, device=flag_gems.device), 3.14])
     gems_op = _resolve_gems_op()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        gems_op([torch.zeros(2, device=flag_gems.device), 3.14])

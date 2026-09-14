@@ -93,14 +93,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_or_none():
-    """Like _resolve_gems_op, but None while no candidate is registered yet."""
-    try:
-        return _resolve_gems_op()
-    except LookupError:
-        return None
-
-
 def _as_bool(value):
     # The reference returns a plain Python bool; a candidate may equivalently
     # return a 0-dim bool tensor. Normalize both before comparing.
@@ -155,12 +147,10 @@ def test_can_cast_rejects_non_scalartype_from(bad_arg):
     # silently returning a bogus bool.
     with pytest.raises(RuntimeError):
         torch.ops.aten.can_cast(bad_arg, torch.float32)
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        # A plain-Python candidate naturally raises TypeError/ValueError (or an
-        # AttributeError) for the same inputs, which is equally acceptable.
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(bad_arg, torch.float32)
+    # A plain-Python candidate naturally raises TypeError/ValueError (or an
+    # AttributeError) for the same inputs, which is equally acceptable.
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(bad_arg, torch.float32)
 
 
 @pytest.mark.can_cast
@@ -169,7 +159,5 @@ def test_can_cast_rejects_non_scalartype_to(bad_arg):
     # Same contract for the ``to`` argument.
     with pytest.raises(RuntimeError):
         torch.ops.aten.can_cast(torch.float32, bad_arg)
-    gems_op = _resolve_gems_op_or_none()
-    if gems_op is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            gems_op(torch.float32, bad_arg)
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        _resolve_gems_op()(torch.float32, bad_arg)

@@ -42,25 +42,19 @@ def _resolve_candidate():
 
     Resolution is done *inside* the test function so an override installed by
     ``override_gems_op`` is honoured. ``flag_gems.atleast_2d`` is not a
-    registered op yet, hence ``getattr(..., None)``: when neither an override
-    nor a native callable exists we fall back to the PyTorch reference so the
-    file stays runnable before an implementation lands.
+    registered op yet, hence ``getattr(..., None)``. Resolution is
+    unconditional: when neither an override nor a native callable exists
+    ``resolve_gems_op`` raises ``LookupError`` and the test fails loudly instead
+    of silently measuring the PyTorch reference.
     """
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "atleast_2d", getattr(flag_gems, "atleast_2d", None)
-        )
-    except LookupError:
-        return None
+    return flag_gems.testing.resolve_gems_op(
+        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
+    )
 
 
 def _run(inp):
-    """Apply the candidate (or the reference) to a Tensor or a list of Tensors."""
+    """Apply the resolved candidate to a Tensor or a list of Tensors."""
     candidate = _resolve_candidate()
-    if candidate is None:
-        if isinstance(inp, list):
-            return torch.ops.aten.atleast_2d.Sequence(inp)
-        return torch.ops.aten.atleast_2d(inp)
     return candidate(inp)
 
 
@@ -358,8 +352,7 @@ def test_atleast_2d_rejects_non_tensor():
         )
 
     candidate = _resolve_candidate()
-    if candidate is not None:
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            candidate(3.14)
-        with pytest.raises((TypeError, ValueError, RuntimeError)):
-            candidate([torch.zeros(2, device=flag_gems.device), 3.14])
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        candidate(3.14)
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
+        candidate([torch.zeros(2, device=flag_gems.device), 3.14])
