@@ -355,3 +355,45 @@ def test_sparse_copy_input_error_does_not_use_another_generator(monkeypatch):
     with pytest.raises(RuntimeError, match="input construction failed"):
         cases._make_values((4,), torch.uint8, value_range=["0", "1"])
     failed.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "operator", ["copy_sparse_to_sparse_", "sparse_mask", "sparse_resize_"]
+)
+def test_sparse_storage_operations_reject_small_value_changes(operator):
+    from . import test_copy_sparse_to_sparse_ as copy_cases
+    from . import test_sparse_mask as mask_cases
+    from . import test_sparse_resize_ as resize_cases
+
+    def corrupted(*args, **kwargs):
+        result = getattr(torch.ops.aten, operator)(*args, **kwargs)
+        result._values().add_(1e-6)
+        return result
+
+    checks = {
+        "copy_sparse_to_sparse_": lambda: copy_cases.test_copy_sparse_to_sparse_(
+            ((4, 5), 2, 3), torch.float32, False
+        ),
+        "sparse_mask": lambda: mask_cases.test_sparse_mask_value_ranges(
+            (4, 5), ["0", "1"], torch.float32
+        ),
+        "sparse_resize_": lambda: resize_cases.test_sparse_resize_(
+            ((4, 5), 2, 3, (6, 5), 2, 0), torch.float32
+        ),
+    }
+    with testing.override_gems_op(operator, corrupted):
+        with pytest.raises(AssertionError):
+            checks[operator]()
+
+
+def test_sparse_copy_rejects_changed_coalesced_flag():
+    from . import test_copy_sparse_to_sparse_ as cases
+
+    def corrupted(dst, src, non_blocking):
+        result = torch.ops.aten.copy_sparse_to_sparse_(dst, src, non_blocking)
+        result._coalesced_(not result.is_coalesced())
+        return result
+
+    with testing.override_gems_op("copy_sparse_to_sparse_", corrupted):
+        with pytest.raises(AssertionError):
+            cases.test_copy_sparse_to_sparse_(((4, 5), 2, 3), torch.float32, False)

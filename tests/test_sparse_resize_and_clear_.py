@@ -241,10 +241,8 @@ def test_sparse_resize_and_clear_(case, dtype):
 
     # In-place semantics: the op returns self and mutates the input in place.
     assert res_out is inp
-    assert ref_out is ref_inp
     # The mutated input (not only the return value) carries the new structure.
     _assert_empty_resized(inp, dst_shape, dst_spd, dst_dnd, dtype)
-    _assert_empty_resized(ref_inp, dst_shape, dst_spd, dst_dnd, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 
@@ -263,9 +261,7 @@ def test_sparse_resize_and_clear_empty_source(dst_shape, dst_spd, dst_dnd, dtype
     res_out = _resolve_gems_op()(inp, list(dst_shape), dst_spd, dst_dnd)
 
     assert res_out is inp
-    assert ref_out is ref_inp
     _assert_empty_resized(inp, dst_shape, dst_spd, dst_dnd, dtype)
-    _assert_empty_resized(ref_inp, dst_shape, dst_spd, dst_dnd, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 
@@ -287,9 +283,7 @@ def test_sparse_resize_and_clear_uncoalesced(dtype):
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
 
     assert res_out is inp
-    assert ref_out is ref_inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
-    _assert_empty_resized(ref_inp, (6, 5), 2, 0, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 
@@ -308,9 +302,7 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
 
     assert res_out is inp
-    assert ref_out is ref_inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
-    _assert_empty_resized(ref_inp, (6, 5), 2, 0, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 
@@ -332,9 +324,7 @@ def test_sparse_resize_and_clear_nan_inf(dtype):
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
 
     assert res_out is inp
-    assert ref_out is ref_inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
-    _assert_empty_resized(ref_inp, (6, 5), 2, 0, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 
@@ -355,9 +345,7 @@ def test_sparse_resize_and_clear_shape_levels(shape, dtype):
     res_out = _resolve_gems_op()(inp, list(shape), sparse_dim, dense_dim)
 
     assert res_out is inp
-    assert ref_out is ref_inp
     _assert_empty_resized(inp, shape, sparse_dim, dense_dim, dtype)
-    _assert_empty_resized(ref_inp, shape, sparse_dim, dense_dim, dtype)
     utils.gems_assert_equal(res_out, ref_out)
 
 

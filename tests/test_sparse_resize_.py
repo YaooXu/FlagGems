@@ -198,36 +198,16 @@ def _resolve_gems_op():
     )
 
 
-def _assert_sparse_structure(t, ref, size, nnz, dtype, sparse_dim, dense_dim):
-    # Structural checks independent of the stored values: layout, shape, dtype,
-    # sparse/dense split, the nnz count and the indices/values storage shapes.
-    assert t.layout == torch.sparse_coo
-    assert ref.layout == torch.sparse_coo
-    assert tuple(t.shape) == tuple(size)
-    assert tuple(ref.shape) == tuple(size)
-    assert t.dtype == dtype
-    assert t.sparse_dim() == sparse_dim
-    assert t.dense_dim() == dense_dim
-    assert ref.sparse_dim() == sparse_dim
-    assert ref.dense_dim() == dense_dim
-    assert torch.ops.aten._nnz(t) == nnz
-    assert torch.ops.aten._nnz(ref) == nnz
-    assert tuple(torch.ops.aten._indices(t).shape) == (sparse_dim, nnz)
-    assert tuple(torch.ops.aten._indices(ref).shape) == (sparse_dim, nnz)
-    assert tuple(torch.ops.aten._values(t).shape) == (nnz,) + tuple(size[sparse_dim:])
-    assert tuple(torch.ops.aten._values(ref).shape) == (nnz,) + tuple(size[sparse_dim:])
-    assert t.is_coalesced() == ref.is_coalesced()
-
-
-def _assert_values_equal(t, ref, dtype):
-    # resize preserves the stored entries verbatim (or leaves both tensors
-    # empty). fp32/fp16/bf16/fp64 use the dtype-aware close helper; every other
-    # storage dtype (ints, bool, fp8 -- which assert_close cannot compare) must
-    # match bit-exactly.
-    if dtype in utils.ALL_FLOAT_DTYPES:
-        utils.gems_assert_close(t, ref, dtype)
-    else:
-        utils.gems_assert_equal(t, ref)
+def _assert_resized(res, ref):
+    # Resize preserves each stored entry, including uncoalesced duplicates.
+    assert res.layout == ref.layout
+    assert res.shape == ref.shape
+    assert res.dtype == ref.dtype
+    assert res.sparse_dim() == ref.sparse_dim()
+    assert res.dense_dim() == ref.dense_dim()
+    assert res.is_coalesced() == ref.is_coalesced()
+    tu.assert_result_equal(res._indices(), ref._indices())
+    tu.assert_result_equal(res._values(), ref._values())
 
 
 @pytest.mark.sparse_resize_
@@ -245,12 +225,8 @@ def test_sparse_resize_(case, dtype):
 
     # In-place semantics: the op returns self and mutates self in place.
     assert res_out is inp
-    assert ref_out is ref_inp
     # The mutated input (not only the return value) carries the new structure.
-    _assert_sparse_structure(
-        inp, ref_inp, size, nnz, dtype, new_sparse_dim, new_dense_dim
-    )
-    _assert_values_equal(inp, ref_inp, dtype)
+    _assert_resized(res_out, ref_out)
 
 
 @pytest.mark.sparse_resize_
@@ -259,8 +235,8 @@ def test_sparse_resize_(case, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_resize_value_ranges(case, dtype, value_range):
     # Value-range dimension: the stored entries are drawn from the shared
-    # per-dtype ranges (sign coverage, [0,max], [min,0] and, at the all level,
-    # the constant ranges). resize performs no arithmetic, so the payload must
+    # per-dtype ranges (sign coverage, [0,max], [min,0], and constant ranges).
+    # resize performs no arithmetic, so the payload must
     # survive verbatim regardless of its magnitude or sign.
     src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim = case
     dense_shape = tuple(src_shape[sparse_dim:])
@@ -274,11 +250,7 @@ def test_sparse_resize_value_ranges(case, dtype, value_range):
     res_out = _resolve_gems_op()(inp, size, new_sparse_dim, new_dense_dim)
 
     assert res_out is inp
-    assert ref_out is ref_inp
-    _assert_sparse_structure(
-        inp, ref_inp, size, nnz, dtype, new_sparse_dim, new_dense_dim
-    )
-    _assert_values_equal(inp, ref_inp, dtype)
+    _assert_resized(res_out, ref_out)
 
 
 @pytest.mark.sparse_resize_
@@ -297,9 +269,7 @@ def test_sparse_resize_shape_levels(shape, dtype):
     res_out = _resolve_gems_op()(inp, list(shape), sparse_dim, dense_dim)
 
     assert res_out is inp
-    assert ref_out is ref_inp
-    _assert_sparse_structure(inp, ref_inp, shape, nnz, dtype, sparse_dim, dense_dim)
-    _assert_values_equal(inp, ref_inp, dtype)
+    _assert_resized(res_out, ref_out)
 
 
 @pytest.mark.sparse_resize_
@@ -316,9 +286,7 @@ def test_sparse_resize_nan_inf(dtype):
     res_out = _resolve_gems_op()(inp, [6, 5, 6], 2, 1)
 
     assert res_out is inp
-    assert ref_out is ref_inp
-    _assert_sparse_structure(inp, ref_inp, (6, 5, 6), nnz, dtype, 2, 1)
-    utils.gems_assert_close(inp, ref_inp, dtype, equal_nan=True)
+    _assert_resized(res_out, ref_out)
 
 
 @pytest.mark.sparse_resize_
@@ -373,6 +341,4 @@ def test_sparse_resize_uncoalesced(dtype):
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
 
     assert res_out is inp
-    assert ref_out is ref_inp
-    _assert_sparse_structure(inp, ref_inp, (6, 5), 4, dtype, 2, 0)
-    _assert_values_equal(inp, ref_inp, dtype)
+    _assert_resized(res_out, ref_out)

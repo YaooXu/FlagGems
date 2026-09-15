@@ -200,36 +200,17 @@ def _resolve_gems_op():
     )
 
 
-def _assert_same_sparse(res, ref):
-    assert res.layout == torch.sparse_coo
-    assert ref.layout == torch.sparse_coo
-    assert tuple(res.shape) == tuple(ref.shape)
+def _assert_sparse_equal(res, ref):
+    # Compare stored entries directly: a copy must preserve duplicate entries,
+    # their order and their values without coalescing or rounding.
+    assert res.layout == ref.layout
+    assert res.shape == ref.shape
     assert res.dtype == ref.dtype
     assert res.sparse_dim() == ref.sparse_dim()
     assert res.dense_dim() == ref.dense_dim()
-    assert res._nnz() == ref._nnz()
-
-
-def _assert_sparse_values_close(res, ref):
-    """Compare two sparse COO tensors entry-by-entry.
-
-    torch.testing's sparse path routes through ``index_add``, which is not
-    implemented for float8, so the stored entries are compared directly (as
-    float32 for the fp8 dtypes).
-    """
-    _assert_same_sparse(res, ref)
-    torch.testing.assert_close(
-        res._indices().detach().to("cpu"),
-        ref._indices().detach().to("cpu"),
-        rtol=0,
-        atol=0,
-    )
-    res_val = res._values().detach().to("cpu")
-    ref_val = ref._values().detach().to("cpu")
-    if res.dtype in _FP8_DTYPES:
-        res_val = res_val.to(torch.float32)
-        ref_val = ref_val.to(torch.float32)
-    tu.assert_result_close(res_val, ref_val)
+    assert res.is_coalesced() == ref.is_coalesced()
+    tu.assert_result_equal(res._indices(), ref._indices())
+    tu.assert_result_equal(res._values(), ref._values())
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +234,9 @@ def test_copy_sparse_to_sparse_(layout, dtype, non_blocking):
 
     # In-place semantics: the op returns self and mutates dst in place.
     assert res_out is dst
-    assert ref_out is ref_dst
-    # The destination adopts the source's shape, layout, dtype, and nnz.
-    assert dst.layout == torch.sparse_coo
-    _assert_same_sparse(res_out, ref_out)
-    _assert_same_sparse(dst, src)
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
-    _assert_sparse_values_close(ref_dst, ref_src)
+    # Validate the copied structure and entries, and that src is unchanged.
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 # ---------------------------------------------------------------------------
@@ -283,11 +259,10 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert dst._nnz() == src._nnz()
     # A verbatim copy transfers the entries exactly for every value range.
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -311,12 +286,11 @@ def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert dst._nnz() == src._nnz()
     # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
     # uses equal_nan=True.
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 # ---------------------------------------------------------------------------
@@ -340,11 +314,10 @@ def test_copy_sparse_to_sparse_resizes_self(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert tuple(dst.shape) == tuple(src.shape) == (6, 5)
     assert dst._nnz() == src._nnz() == 8
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -362,11 +335,10 @@ def test_copy_sparse_to_sparse_resizes_nnz(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert tuple(dst.shape) == (4, 5)
     assert dst._nnz() == src._nnz() == 3
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -384,11 +356,10 @@ def test_copy_sparse_to_sparse_grows_dense_dims(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert tuple(dst.shape) == tuple(src.shape) == (4, 5, 3)
     assert dst.dense_dim() == src.dense_dim() == 1
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -412,12 +383,11 @@ def test_copy_sparse_to_sparse_empty_dst_adopts_sparse_dim(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert dst.sparse_dim() == src.sparse_dim() == 3
     assert dst.dense_dim() == src.dense_dim() == 0
     assert dst._nnz() == src._nnz() == 4
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -434,11 +404,10 @@ def test_copy_sparse_to_sparse_empty_src(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert tuple(dst.shape) == (4, 5)
     assert dst._nnz() == src._nnz() == 0
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -460,11 +429,10 @@ def test_copy_sparse_to_sparse_uncoalesced(dtype):
     res_out = _resolve_gems_op()(dst, src, False)
 
     assert res_out is dst
-    assert ref_out is ref_dst
     assert dst._nnz() == src._nnz() == 4
     # Entry order is preserved too, so the indices can be compared directly.
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+    _assert_sparse_equal(res_out, ref_out)
+    _assert_sparse_equal(src, ref_src)
 
 
 # ---------------------------------------------------------------------------
