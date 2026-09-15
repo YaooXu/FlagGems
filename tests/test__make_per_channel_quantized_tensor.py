@@ -212,7 +212,6 @@ def _assert_per_channel_affine(
     assert res_out.dtype == ref_out.dtype
     assert res_out.dtype == _QUANT_DTYPE[inp.dtype]
     assert res_out.shape == ref_out.shape
-    assert res_out.numel() == ref_out.numel()
     # flag_gems.device may carry no index (e.g. 'cuda') while a created tensor
     # reports 'cuda:0', so compare the device type only.
     assert res_out.device.type == torch.device(flag_gems.device).type

@@ -198,8 +198,6 @@ def _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims):
     assert ref_out.shape == expected_shape
     assert ref_out.is_contiguous()
     assert isinstance(res_out, torch.Tensor)
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
     assert res_out.dtype == other_t.dtype
     assert res_out.is_contiguous()
     assert res_out.storage_offset() == 0

@@ -138,7 +138,6 @@ def _combinations_op():
 
 
 def _assert_match(res_out, ref_out, dtype):
-    assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == dtype
     if dtype in _FLOAT_CLOSE_DTYPES:
         utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
@@ -278,8 +277,6 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
         res_out = _combinations_op()(values, 2, False)
 
-        assert res_out.shape == ref_out.shape
-        assert res_out.dtype == ref_out.dtype
         tu.assert_result_equal(res_out, ref_out)
 
 

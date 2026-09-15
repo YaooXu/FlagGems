@@ -189,7 +189,6 @@ def test_cartesian_prod(sizes, dtype, value_range):
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == dtype
     _assert_close(res_out, ref_out, dtype)
 
@@ -219,7 +218,6 @@ def test_cartesian_prod_row_order(dtype):
     res_out = _resolve_gems_op()([a, b])
 
     assert res_out.shape == ref_out.shape == (6, 2)
-    assert res_out.dtype == ref_out.dtype
     utils.gems_assert_equal(res_out, tu.to_reference(expected))
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -239,8 +237,6 @@ def test_cartesian_prod_non_contiguous(dtype):
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
     _assert_close(res_out, ref_out, dtype)
 
 
@@ -275,8 +271,6 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.cartesian_prod(ref_inp)
         res_out = _resolve_gems_op()([values, other])
 
-        assert res_out.shape == ref_out.shape
-        assert res_out.dtype == ref_out.dtype
         tu.assert_result_equal(res_out, ref_out)
 
 

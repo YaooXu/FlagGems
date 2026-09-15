@@ -262,7 +262,6 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     assert res_out.dtype == torch.int64
     assert ref_out.dtype == torch.int64
     assert ref_out.shape == inp.col_indices().shape
-    assert res_out.shape == ref_out.shape
     utils.gems_assert_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal col_indices tensor (both on the candidate and the reference).

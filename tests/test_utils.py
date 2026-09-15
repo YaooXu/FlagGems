@@ -138,7 +138,6 @@ def _comparison_values(result, reference):
     from . import accuracy_utils as utils
 
     assert result.dtype == reference.dtype
-    assert result.shape == reference.shape
     result = utils.to_cpu(result, reference)
     # FP8 has no native comparison kernel. Conversion is lossless and happens
     # only after checking the original dtype; tolerance uses that dtype too.

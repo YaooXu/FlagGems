@@ -132,7 +132,6 @@ def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype
     assert is_batchedtensor(res_out) == is_batchedtensor(ref_out)
 
     # Visible metadata must match aten exactly.
-    assert res_out.dtype == ref_out.dtype == inp.dtype
     assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()

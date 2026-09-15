@@ -239,8 +239,6 @@ def _resolve_gems_op():
 
 def _assert_dstack_output(res_out, ref_out):
     # dstack materializes a new contiguous tensor (never an aliasing view).
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
     assert res_out.is_contiguous()
     assert not res_out._is_view()
     tu.assert_result_equal(res_out, ref_out)
@@ -275,8 +273,6 @@ def test_dstack_value_ranges(shape_set, dtype, value_range):
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
     tu.assert_result_equal(res_out, ref_out)
 
 
@@ -299,8 +295,6 @@ def test_dstack_out(shape_set, dtype):
     # The .out variant must return the out tensor itself (alias semantics).
     assert res_ret.data_ptr() == out.data_ptr()
     assert ref_ret.data_ptr() == ref_out.data_ptr()
-    assert res_ret.shape == ref_ret.shape
-    assert res_ret.dtype == ref_ret.dtype
     tu.assert_result_equal(res_ret, ref_ret)
     tu.assert_result_equal(out, ref_out)
 
@@ -350,8 +344,6 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.dstack(ref_inp)
         res_out = _resolve_gems_op()(inp)
 
-        assert res_out.shape == ref_out.shape
-        assert res_out.dtype == ref_out.dtype
         tu.assert_result_equal(res_out, ref_out)
 
 

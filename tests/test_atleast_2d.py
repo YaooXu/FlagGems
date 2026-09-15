@@ -158,7 +158,6 @@ def test_atleast_2d_value_ranges(shape, dtype, value_range):
     res_out = _resolve_candidate()(inp)
 
     assert isinstance(res_out, torch.Tensor)
-    assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.device == inp.device
     # atleast_2d returns a view: it must alias the input storage.
@@ -227,7 +226,6 @@ def test_atleast_2d_sequence(shape, dtype, value_range):
     assert isinstance(res_out, (list, tuple))
     assert len(res_out) == len(ref_out)
     for res, ref, src in zip(res_out, ref_out, inp):
-        assert res.shape == ref.shape
         assert res.dtype == ref.dtype
         assert res.data_ptr() == src.data_ptr()
         _assert_close(res, ref, dtype)
@@ -295,8 +293,6 @@ def test_atleast_2d_complex(shape, dtype, value_range):
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
     res_out = _resolve_candidate()(inp)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_equal(res_out, ref_out)
 

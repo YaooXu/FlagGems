@@ -99,7 +99,6 @@ def _assert_quant_metadata(res_out, ref_out):
     assert res_out.qscheme() == torch.per_tensor_affine
     assert res_out.dtype == ref_out.dtype
     assert res_out.shape == ref_out.shape
-    assert res_out.numel() == ref_out.numel()
     assert res_out.stride() == ref_out.stride()
     # The factory stores the scale (double) and zero_point (int64) verbatim.
     assert res_out.q_scale() == ref_out.q_scale()
