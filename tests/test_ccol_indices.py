@@ -200,7 +200,7 @@ def test_ccol_indices_layouts(case, dtype):
     # must match the reference exactly and alias the input's ccol storage.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -217,7 +217,7 @@ def test_ccol_indices_shape_levels(case, dtype):
     # returned ccol keeps those batch dims and has shape batch + (ncols + 1,).
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -235,7 +235,7 @@ def test_ccol_indices_value_ranges(case, value_range, dtype):
     # ccol_indices reads only layout metadata, not the values payload.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -253,7 +253,7 @@ def test_ccol_indices_empty(dtype):
     rows = torch.empty(0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -271,7 +271,7 @@ def test_ccol_indices_empty_batched(dtype):
     rows = torch.empty(2, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(2, 0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -286,7 +286,7 @@ def test_ccol_indices_single_column(dtype):
     # ccol[0] == 0 and ccol[1] == nnz.
     shape, nnz = (7, 1), 5
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -308,7 +308,7 @@ def test_ccol_indices_uncoalesced(dtype):
     assert rows[0].item() == rows[1].item()
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -327,7 +327,7 @@ def test_ccol_indices_full_storage(dtype):
     values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csc_tensor(ccol, rows, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -351,7 +351,7 @@ def test_ccol_indices_nan_inf_values_ignored(dtype):
         device=flag_gems.device,
     )
     inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)

@@ -340,7 +340,7 @@ def test_dstack_backward(shape_set, dtype):
     # analytic value, then check the candidate forward and - only when the
     # candidate output is differentiable - its gradient against the reference.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
-    ref_inp = [tu.to_reference(t.detach().clone()).requires_grad_() for t in inp]
+    ref_inp = [tu.to_reference(t.detach()).requires_grad_() for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)

@@ -170,7 +170,7 @@ def test_data_mutation(shape, dtype):
     # must be visible in the original tensor. The reference runs on an
     # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten.data(ref_inp)

@@ -256,7 +256,7 @@ def test__coalesce(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -278,7 +278,7 @@ def test__coalesce_value_ranges(value_range, dtype, case):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range=value_range)
     assert not inp.is_coalesced()
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -307,7 +307,7 @@ def test__coalesce_nan_inf(case, dtype):
         device=flag_gems.device,
     )
     assert not inp.is_coalesced()
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -330,7 +330,7 @@ def test__coalesce_out(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
     out = _make_empty_out(shape, dtype, flag_gems.device)
     ref_out = _make_empty_out(shape, dtype, ref_inp.device)
 

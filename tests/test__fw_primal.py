@@ -167,7 +167,7 @@ def test__fw_primal_mutation(shape, dtype):
     # must behave identically. The reference runs on an independent clone so the
     # two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -195,7 +195,7 @@ def test__fw_primal_special_values(dtype):
     values = torch.tensor(
         _FW_PRIMAL_SPECIAL_VALUES, dtype=dtype, device=flag_gems.device
     )
-    ref_inp = tu.to_reference(values.clone())
+    ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(values, 0)
@@ -229,7 +229,7 @@ def test__fw_primal_backward(shape, dtype):
     # A view is transparent to autograd: the gradient of a loss built on the
     # result must match the reference gradient (the view contributes identity).
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
-    ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_(True)
+    ref_inp = tu.to_reference(inp.detach()).requires_grad_(True)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)

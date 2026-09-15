@@ -84,12 +84,6 @@ _REMOVE_BATCH_DIM_DTYPES = (
     + _SPECIAL_VALUE_DTYPES
 )
 
-# float8 comparison is upcast losslessly to float32 first (flag_gems'
-# assert_close keys its tolerance table on the dtype and expects a supported
-# floating dtype); the view is bit-exact so the upcast changes nothing.
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
-
 # (shape, out_dim, batch_size) grid. Every combination is a valid expand:
 # inserting batch_size at out_dim and aligning self to the trailing dims keeps
 # all non-broadcast dims equal and never expands a size-1 dim to a different
@@ -152,12 +146,6 @@ def _expected_shape(shape, out_dim, batch_size):
     sizes = list(shape)
     sizes.insert(out_dim, batch_size)
     return tuple(sizes)
-
-
-def _as_comparable(t):
-    if t.dtype in _FP8_DTYPES:
-        return t.to(torch.float32)
-    return t
 
 
 def _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype):

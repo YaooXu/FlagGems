@@ -158,7 +158,7 @@ def test_sparse_mask_value_ranges(shape, value_range, dtype):
     numel = math.prod(shape)
     keep_threshold = 0.5 if numel <= 4096 else 0.9
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
     mask = _make_mask(shape, density=keep_threshold)
     ref_mask = tu.to_reference(mask)
 

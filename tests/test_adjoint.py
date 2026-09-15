@@ -234,7 +234,7 @@ def test_adjoint_mutation(shape, dtype):
     # the candidate-side input. The reference runs on an independent clone so
     # the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten.adjoint(ref_inp)

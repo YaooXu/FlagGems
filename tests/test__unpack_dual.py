@@ -269,7 +269,7 @@ def test__unpack_dual_mutation(shape, dtype):
     # clone so the two aliases are validated separately. The op itself never
     # mutates anything.
     primal = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_primal = tu.to_reference(primal.clone())
+    ref_primal = tu.to_reference(primal)
     tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
 

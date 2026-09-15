@@ -121,11 +121,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_match(res_out, ref_out, dtype):
-    assert res_out.dtype == ref_out.dtype == dtype
-    tu.assert_result_equal(res_out, ref_out)
-
-
 def _expected_combination_grad(n, r, with_replacement, grad_output):
     # Each output row is one r-combination of input indices, so the analytic
     # gradient scatters grad_output back to the input positions. index_add_
@@ -157,7 +152,7 @@ def test_combinations_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
     res_out = _resolve_gems_op()(inp, 2, False)
 
-    _assert_match(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -175,7 +170,7 @@ def test_combinations_shapes_r_replacement(shape, r, with_replacement, dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _resolve_gems_op()(inp, r, with_replacement)
 
-    _assert_match(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -192,7 +187,7 @@ def test_combinations_empty_input(r, with_replacement, dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _resolve_gems_op()(inp, r, with_replacement)
 
-    _assert_match(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -209,7 +204,7 @@ def test_combinations_r_boundaries(r, with_replacement, dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _resolve_gems_op()(inp, r, with_replacement)
 
-    _assert_match(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -226,7 +221,7 @@ def test_combinations_non_contiguous(dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
     res_out = _resolve_gems_op()(inp, 2, False)
 
-    _assert_match(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -267,7 +262,7 @@ def test_combinations_does_not_mutate_input(dtype):
 
     _resolve_gems_op()(inp, 2, False)
 
-    _assert_match(inp, before, dtype)
+    tu.assert_result_equal(inp, before)
 
 
 @pytest.mark.combinations
@@ -285,7 +280,7 @@ def test_combinations_backward(r, with_replacement, dtype):
     rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
     inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, (rows, r), ["-1", "1"])
-    ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_()
+    ref_inp = tu.to_reference(inp.detach()).requires_grad_()
     ref_grad = tu.to_reference(grad)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)

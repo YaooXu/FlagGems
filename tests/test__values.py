@@ -189,7 +189,7 @@ def test__values_layouts(case, dtype):
     # set). The returned view must preserve them verbatim for every layout.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -207,7 +207,7 @@ def test__values_value_ranges(case, value_range, dtype):
     # still aliased to the input's values storage.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -226,7 +226,7 @@ def test__values_empty(dtype):
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == 0
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -244,7 +244,7 @@ def test__values_empty_hybrid(dtype):
     values = torch.empty(0, 6, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == 0
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -266,7 +266,7 @@ def test__values_full_storage(dtype):
     values = tu.make_input(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == nnz
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -287,7 +287,7 @@ def test__values_uncoalesced(dtype):
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -308,7 +308,7 @@ def test__values_nan_inf(dtype):
     )
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
     inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)

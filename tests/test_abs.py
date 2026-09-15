@@ -182,7 +182,7 @@ def test_abs_backward(shape, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs__value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs_(ref_inp)
     res_out = _resolve_gems_op_inplace()(inp)

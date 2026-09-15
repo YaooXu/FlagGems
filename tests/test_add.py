@@ -439,7 +439,7 @@ def test_add_backward_broadcast(dtype):
 def test_add__value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add_(ref_inp, ref_other)
@@ -458,7 +458,7 @@ def test_add__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.add_(ref_inp, scalar, alpha=alpha)
     res_out = _resolve_gems_op_inplace()(inp, scalar, alpha=alpha)
@@ -475,7 +475,7 @@ def test_add__broadcast(broadcast_pair, dtype):
     shape_a, shape_b = broadcast_pair
     inp = tu.make_input(dtype, shape_a, ["-1", "1"])
     other = tu.make_input(dtype, shape_b, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add_(ref_inp, ref_other)

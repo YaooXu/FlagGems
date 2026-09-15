@@ -100,9 +100,8 @@ def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _DETACH_COPY_DTYPES)
 def test_detach_copy(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    # Clone so the post-call equality check can detect any mutation of the input
-    # even when the reference runs on the same device.
-    ref_inp = tu.to_reference(inp.clone())
+    # to_reference creates an independent snapshot for the input mutation check.
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -119,7 +118,7 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     # halves, dtype extremes and degenerate constant ranges. A pure copy must be
     # exact over all of them.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -148,7 +147,7 @@ def test_detach_copy_special_values(dtype):
         dtype=dtype,
         device=flag_gems.device,
     )
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -164,7 +163,7 @@ def test_detach_copy_special_values(dtype):
 @pytest.mark.parametrize("dtype", _DETACH_COPY_DTYPES)
 def test_detach_copy_out(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
@@ -187,7 +186,7 @@ def test_detach_copy_out_value_ranges(shape, value_range, dtype):
     # The .out path must reproduce the same values over every spec range while
     # writing into the caller's buffer (overwriting its previous value).
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
@@ -208,7 +207,7 @@ def test_detach_copy_non_contiguous(shape, dtype):
     # fresh contiguous tensor honoring the non-unit strides. Slice the base
     # tensor symmetrically on both devices so the layouts match.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = tu.to_reference(base.clone())
+    ref_base = tu.to_reference(base)
     inp = base.transpose(-1, -2)
     ref_inp = ref_base.transpose(-1, -2)
     assert not inp.is_contiguous()
@@ -226,7 +225,7 @@ def test_detach_copy_empty(shape, dtype):
     # Zero-element tensors must be handled without out-of-bounds accesses and
     # still yield an empty contiguous tensor of the right dtype.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -241,7 +240,7 @@ def test_detach_copy_independent_storage(shape, dtype):
     # Storage independence: mutating the copied output must leave the input
     # completely unaffected.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -289,7 +288,7 @@ def test_detach_copy_out_rejects_wrong_dtype():
     # The .out overload validates the caller's buffer dtype and must raise for a
     # mismatched buffer instead of silently casting.
     inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
     ref_out_bad = torch.empty(8, dtype=torch.int32, device=flag_gems.device)
     res_out_bad = torch.empty(8, dtype=torch.int32, device=flag_gems.device)
 

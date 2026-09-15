@@ -321,8 +321,8 @@ def _call_reference(indices, values, size, dtype):
     # ``indices`` overload, a list selects the explicit ``indices_size``
     # overload; the component tensors are cloned and moved to the reference
     # device so a mutating candidate cannot hide behind shared storage.
-    ref_indices = tu.to_reference(indices.clone())
-    ref_values = tu.to_reference(values.clone())
+    ref_indices = tu.to_reference(indices)
+    ref_values = tu.to_reference(values)
     if size is None:
         return torch.ops.aten.sparse_coo_tensor(
             ref_indices, ref_values, dtype=dtype, device=ref_indices.device
@@ -494,8 +494,8 @@ def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
     nnz = 3
     indices_t = _make_index_tensor(indices)
     values = _make_values(nnz, (), dtype)
-    ref_indices = tu.to_reference(indices_t.clone())
-    ref_values = tu.to_reference(values.clone())
+    ref_indices = tu.to_reference(indices_t)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_coo_tensor(
         ref_indices,
@@ -599,8 +599,8 @@ def test_sparse_coo_tensor_inputs_not_mutated(case):
     # Snapshot through the reference-device helper: under ``--ref cpu`` the
     # snapshots live on the CPU, which is the convention the accuracy helpers
     # expect for the reference operand.
-    indices_before = tu.to_reference(indices_t.clone())
-    values_before = tu.to_reference(values.clone())
+    indices_before = tu.to_reference(indices_t)
+    values_before = tu.to_reference(values)
 
     out = _call_candidate(
         indices_t, values, size if variant == "indices_size" else None, dtype
@@ -751,8 +751,8 @@ def test_sparse_coo_tensor_negative_layout():
     # rejected even though the components are otherwise valid.
     indices_t = _make_index_tensor([[0, 1], [2, 0]])
     values = _make_values(2, (), torch.float32)
-    ref_indices = tu.to_reference(indices_t.clone())
-    ref_values = tu.to_reference(values.clone())
+    ref_indices = tu.to_reference(indices_t)
+    ref_values = tu.to_reference(values)
 
     _assert_rejected(
         lambda: torch.ops.aten.sparse_coo_tensor(

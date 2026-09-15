@@ -277,7 +277,7 @@ def test__neg_view_mutation(shape, dtype):
     # be observable on the candidate-side input. The reference runs on an
     # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten._neg_view(ref_inp)

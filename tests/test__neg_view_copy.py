@@ -120,7 +120,7 @@ def _make_out(shape, dtype, device):
     return torch.full(shape, 7, dtype=dtype, device=device)
 
 
-def _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype):
+def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
     # _neg_view_copy returns a fresh contiguous copy: same shape/dtype, no
     # aliasing of the input, no neg bit, and the input is never mutated.
     assert res_out.is_contiguous()
@@ -129,11 +129,8 @@ def _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype):
     # no-alias check is only meaningful for non-empty inputs.
     if inp.numel() > 0:
         assert res_out.data_ptr() != inp.data_ptr()
-    utils.gems_assert_equal(inp, ref_inp)
-    if dtype.is_floating_point:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._neg_view_copy
@@ -143,14 +140,13 @@ def test__neg_view_copy(shape, dtype):
     # Shape levels x every supported dtype over a non-degenerate representative
     # value range.
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    # Clone so the post-call equality check below can detect any mutation of
-    # the input even when the reference runs on the same device.
-    ref_inp = tu.to_reference(inp.clone())
+    # to_reference creates an independent snapshot for the input mutation check.
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy
@@ -162,13 +158,12 @@ def test__neg_view_copy_value_ranges(shape, dtype, value_range):
     # integers the reference wraps at INT_MIN (two's complement); the candidate
     # is held to the same behavior by comparing against the reference.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
-    tu.assert_result_equal(res_out, ref_out)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy_out
@@ -176,19 +171,17 @@ def test__neg_view_copy_value_ranges(shape, dtype, value_range):
 @pytest.mark.parametrize("dtype", _NEG_VIEW_COPY_DTYPES)
 def test__neg_view_copy_out(shape, dtype):
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = _make_out(shape, ref_inp.dtype, ref_inp.device)
     out = _make_out(shape, dtype, flag_gems.device)
 
-    ref_ret = torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out variant must write into and return the caller's buffer itself.
-    assert ref_ret is ref_out
     assert res_ret is out
-    _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp, dtype)
-    utils.gems_assert_equal(out, ref_out)
+    _assert_copy_semantics(res_ret, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy_out
@@ -198,18 +191,16 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
     # The .out path must reproduce the same sign-flip over every spec range
     # while overwriting the caller's buffer.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = _make_out(shape, ref_inp.dtype, ref_inp.device)
     out = _make_out(shape, dtype, flag_gems.device)
 
-    ref_ret = torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
-    assert ref_ret is ref_out
     assert res_ret is out
-    _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp, dtype)
-    tu.assert_result_equal(out, ref_out)
+    _assert_copy_semantics(res_ret, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy
@@ -222,7 +213,7 @@ def test__neg_view_copy_special_values(dtype):
         dtype=dtype,
         device=flag_gems.device,
     )
-    ref_inp = tu.to_reference(values.clone())
+    ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(values)
@@ -248,7 +239,7 @@ def test__neg_view_copy_non_contiguous(shape, dtype):
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy
@@ -257,12 +248,12 @@ def test__neg_view_copy_non_contiguous(shape, dtype):
 def test__neg_view_copy_empty(shape, dtype):
     # Zero-element tensors must be handled without out-of-bounds accesses.
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._neg_view_copy
@@ -284,7 +275,7 @@ def test__neg_view_copy_backward(shape, dtype):
 
     # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
     # ...and, if the candidate advertises autograd support, its gradient must
     # match the analytic value too.

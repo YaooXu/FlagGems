@@ -248,7 +248,7 @@ def test_col_indices_layouts(case, dtype):
     # storage.
     layout, shape, nnz, blocks = case
     inp = _build_input(layout, shape, nnz, blocks, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -266,7 +266,7 @@ def test_col_indices_value_ranges(case, value_range, dtype):
     # because col_indices reads only layout metadata, not the values payload.
     layout, shape, nnz, blocks = case
     inp = _build_input(layout, shape, nnz, blocks, dtype, value_range)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -282,7 +282,7 @@ def test_col_indices_empty(dtype):
     # has a null data pointer on both sides, so the alias check degenerates to
     # 0 == 0.
     inp = _build_input("csr", (4, 5), 0, None, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -296,7 +296,7 @@ def test_col_indices_empty_batched(dtype):
     # nnz == 0 with batch dims: the returned col_indices preserves the batch
     # dims and has shape batch_dims + (0,).
     inp = _build_input("csr", (2, 4, 5), 0, None, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -310,7 +310,7 @@ def test_col_indices_empty_bsr(dtype):
     # nnz == 0 for BSR: col and values are empty, but col_indices must still
     # return a (0,) contiguous int64 view.
     inp = _build_input("bsr", (4, 6), 0, (2, 2), dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -324,7 +324,7 @@ def test_col_indices_single_row(dtype):
     # nrows == 1: crow has the degenerate shape (2,) with crow[0] == 0 and
     # crow[1] == nnz, and col_indices has shape (nnz,).
     inp = _build_input("csr", (1, 7), 5, None, dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -346,7 +346,7 @@ def test_col_indices_uncoalesced(dtype):
     assert cols[0].item() == cols[1].item()
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -366,7 +366,7 @@ def test_col_indices_full_storage(dtype):
     values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -381,7 +381,7 @@ def test_col_indices_bsr_ragged_blocks(dtype):
     # use ceil and torch pads the logical size internally. col_indices returns
     # the stored block-column indices, one per stored block.
     inp = _build_input("bsr", (10, 10), 6, (3, 4), dtype, ["-1", "1"])
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -404,7 +404,7 @@ def test_col_indices_nan_inf_values_ignored(dtype):
         device=flag_gems.device,
     )
     inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-    ref_inp = tu.to_reference(inp.clone())
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
