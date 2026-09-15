@@ -19,43 +19,12 @@ import flag_gems
 
 from . import accuracy_utils as utils
 from . import test_utils as tu
-from .conftest import QUICK_MODE
 
-# aten::slow_conv_dilated2d(Tensor self, Tensor weight, SymInt[2] kernel_size,
-# Tensor? bias=None, SymInt[2] stride=[1, 1], SymInt[2] padding=[0, 0],
-# SymInt[2] dilation=[1, 1]) -> Tensor is the im2col based "slow" conv2d with
-# dilation support (groups always 1). ``self`` is (N, C_in, H, W), ``weight`` is
-# (C_out, C_in, kH, kW) and ``kernel_size`` must match the weight spatial dims.
-# The output is (N, C_out, H_out, W_out) with
-#   H_out = (H + 2*pH - dil_h*(kH - 1) - 1) // sH + 1
-# and likewise for W. Each (input, weight, kernel_size, stride, padding,
-# dilation) tuple below is one distinct parametrized workload: they cover
-# 1x1/2x2/2x3/3x3/3x5/5x5 kernels, stride 1/2/3 and asymmetric strides, padding
-# 0/1/2 and asymmetric padding, dilation 1/2 and asymmetric dilation, with and
-# without bias. The canonical tu.selected_shapes() set is pointwise-shaped and
-# cannot describe a conv (whose input must be 4-D), so these local tuples play
-# the role of the shape levels. Element counts stay well below 1M so the
-# correctness run stays fast.
-#
-# Dtype coverage (常规算子测试用例): a direct ATen call on the active device
-# (the same probe the negative dtype test below relies on) shows the CUDA
-# kernel only implements the floating types -- int8 / uint8 /
-# float8_e4m3fn / float8_e5m2 / int32 / int64 all raise
-# RuntimeError("slow_conv_dilated<>" not implemented for ...). The required
-# int8/uint8/fp8 grid therefore does not apply to this operator; the file covers
-# every supported float dtype via utils.ALL_FLOAT_DTYPES (fp16 / fp32 / bf16,
-# plus fp64 where the backend supports it), and the unsupported dtypes are
-# asserted to raise in test_slow_conv_dilated2d_rejects_unsupported_dtype.
-# Broadcasting is not a meaningful dimension for a convolution (input and weight
-# shapes are independent), so it is intentionally omitted.
-if QUICK_MODE:
-    SLOW_CONV_DILATED2D_CASES = [
-        ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    BIASES = [True]
-else:
-    SLOW_CONV_DILATED2D_CASES = [
+# Test slow conv2d across kernel, stride, padding and dilation configurations.
+# Extreme ranges retain their bounds and use the original reference dtype to preserve overflow.
+# Cases: (input shape, weight shape, kernel size, stride, padding, dilation).
+SLOW_CONV_DILATED2D_CASES = tu.selected_cases(
+    [
         ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
         ((2, 3, 9, 9), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0), (1, 1)),
         ((2, 3, 8, 8), (5, 3, 3, 3), (3, 3), (2, 2), (1, 1), (1, 1)),
@@ -70,56 +39,45 @@ else:
         ((2, 3, 10, 10), (4, 3, 2, 3), (2, 3), (1, 1), (0, 0), (1, 1)),
         # stride 3 with asymmetric dilation (2, 1)
         ((1, 2, 9, 9), (3, 2, 3, 3), (3, 3), (3, 3), (0, 0), (2, 1)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
-    BIASES = [True, False]
+    ],
+    quick=[
+        ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
+    ],
+)
 
-# Regular-operator value-range coverage (常规算子测试用例): inputs are drawn from
-# tu.make_input over the shared ranges, scaled by _INPUT_SCALE. The reference is
-# an fp64 upcast of the exact same values, so the comparison isolates real
-# indexing/formula bugs. A modest scale keeps the fp16/bf16 im2col-GEMM
-# reduction noise (which grows with data magnitude) well inside the calibrated
-# _assert_close tolerances. Constant fills are added as extra exact-value
-# workloads on top of the five spec ranges returned by tu.selected_ranges().
+BIASES = tu.selected_cases([True, False], quick=[True])
+
+# Scale finite random inputs to limit low-precision reduction noise.
 _INPUT_SCALE = 0.1
-_SLOW_CONV_DILATED2D_VALUE_RANGES = tu.selected_ranges()
-if QUICK_MODE:
-    _SLOW_CONV_DILATED2D_VALUE_RANGES_CASES = [
-        ((1, 2, 5, 5), (2, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
-    ]
-else:
-    _SLOW_CONV_DILATED2D_VALUE_RANGES_CASES = [
+
+_SLOW_CONV_DILATED2D_VALUE_RANGES_CASES = tu.selected_cases(
+    [
         ((1, 2, 5, 5), (2, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
         ((2, 3, 8, 8), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0), (1, 1)),
         ((2, 4, 6, 6), (4, 4, 3, 3), (3, 3), (2, 2), (1, 1), (1, 1)),
         ((2, 3, 8, 8), (4, 3, 3, 3), (3, 3), (1, 1), (1, 1), (2, 2)),
         ((2, 2, 6, 6), (3, 2, 1, 1), (1, 1), (1, 1), (0, 0), (1, 1)),
-    ]
+    ],
+    quick=[
+        ((1, 2, 5, 5), (2, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
+    ],
+)
 
-# Backward coverage: the aten op carries autograd, so the fp64 reference
-# gradients come from torch.autograd.grad over the native op. fp16/bf16 are
-# included: the native op accumulates its gradients in the input dtype and the
-# dtype-scaled _assert_close tolerances (fp16 1e-2, bf16 5e-2 on the forward;
-# the gradient comparisons use reduce_dim-scaled atol with the per-dtype rtol)
-# cover that rounding.
-if QUICK_MODE:
-    _SLOW_CONV_DILATED2D_BACKWARD_CASES = [
-        ((1, 2, 5, 5), (3, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
-    ]
-    _BACKWARD_DTYPES = [torch.float32]
-else:
-    _SLOW_CONV_DILATED2D_BACKWARD_CASES = [
+_SLOW_CONV_DILATED2D_BACKWARD_CASES = tu.selected_cases(
+    [
         ((1, 2, 5, 5), (3, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
         ((2, 3, 6, 6), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0), (1, 1)),
-    ]
-    _BACKWARD_DTYPES = [torch.float16, torch.float32, torch.bfloat16, torch.float64]
+    ],
+    quick=[
+        ((1, 2, 5, 5), (3, 2, 3, 3), (3, 3), (1, 1), (1, 1), (1, 1)),
+    ],
+)
 
-# Invalid configurations for the negative tests, as
-# (inp_shape, weight_shape, kernel_size, stride, padding, dilation): channel
-# mismatches (C_in/C_out), kernel_size disagreeing with the weight spatial dims,
-# non-4-D inputs, zero stride and dilation so large the kernel cannot fit.
-# Negative padding is deliberately NOT here: the native op accepts it (it is a
-# valid, degenerate configuration).
+_BACKWARD_DTYPES = tu.selected_cases(
+    [torch.float16, torch.float32, torch.bfloat16, torch.float64], quick=[torch.float32]
+)
+
+# Negative padding is accepted by the reference, so it is not a negative case.
 _INVALID_SLOW_CONV_DILATED2D_CASES = [
     # weight C_in disagrees with input C_in
     ((2, 3, 5, 5), (4, 5, 3, 3), (3, 3), (1, 1), (0, 0), (1, 1)),
@@ -139,9 +97,6 @@ _INVALID_SLOW_CONV_DILATED2D_CASES = [
     ((2, 3, 5, 5), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0), (10, 10)),
 ]
 
-# The CUDA kernel only implements floating dtypes (probe result); these must be
-# rejected. Tensors are built with torch.ones because make_input cannot produce
-# negative values for the unsigned dtypes.
 _UNSUPPORTED_DTYPES = [
     torch.int8,
     torch.uint8,
@@ -161,10 +116,6 @@ def _resolve_gems_op():
 def _make_conv_inputs(
     inp_shape, weight_shape, with_bias, dtype, value_range=("-1", "1")
 ):
-    """Build (input, weight, bias) from the value-range framework (tu.make_input),
-    scaled so the fp16/bf16 im2col-GEMM reduction noise stays inside the
-    _assert_close tolerance (the fp64 reference is exact for the rounded
-    values)."""
     inp = _INPUT_SCALE * tu.make_input(dtype, inp_shape, value_range)
     weight = _INPUT_SCALE * tu.make_input(dtype, weight_shape, value_range)
     if with_bias:
@@ -175,8 +126,7 @@ def _make_conv_inputs(
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # Finite random workloads use an fp64 reference. These absolute bounds
-    # supplement the shared relative tolerance for the original dtype.
+    # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
         atol = 5e-2
     elif dtype == torch.float16:
@@ -191,14 +141,12 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     SLOW_CONV_DILATED2D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated2d(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    # The reference op runs cuBLAS/baddbmm for the im2col GEMM; keep TF32 off so
-    # the fp32 comparison stays at the standard 1e-4 tolerance (with TF32 on the
-    # native op itself deviates from the fp64 reference by ~1.6e-2).
+    # Disable TF32 when comparing native fp32 results with the fp64 reference.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -223,7 +171,7 @@ def test_slow_conv_dilated2d(
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     SLOW_CONV_DILATED2D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated2d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
@@ -268,8 +216,8 @@ def test_slow_conv_dilated2d_out(
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     _SLOW_CONV_DILATED2D_VALUE_RANGES_CASES,
 )
-@pytest.mark.parametrize("value_range", _SLOW_CONV_DILATED2D_VALUE_RANGES)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated2d_value_ranges(
     inp_shape,
@@ -282,10 +230,6 @@ def test_slow_conv_dilated2d_value_ranges(
     dtype,
     bias,
 ):
-    # Value-range coverage: the same configuration must produce the same output
-    # for every value range the op can see (positive-only, negative-only, mixed,
-    # and constant 0/1/-1 fills). This replaces the plain-randn value tests with
-    # a deterministic, per-dtype value-range framework.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -316,11 +260,6 @@ def test_slow_conv_dilated2d_value_ranges(
 def test_slow_conv_dilated2d_backward(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
 ):
-    # Backward coverage (常规算子测试用例): the fp64 reference gradients come from
-    # torch.autograd.grad over the native op; the candidate forward must match
-    # the reference output, and, when the candidate kernel advertises autograd
-    # support, its gradients must match the reference gradients too (with atol
-    # scaled by the contraction size of each gradient).
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -369,11 +308,10 @@ def test_slow_conv_dilated2d_backward(
 
 @pytest.mark.slow_conv_dilated2d_nan_inf
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_dilated2d_nan_inf(dtype, scenario, special_arg):
-    # Exact finite backgrounds isolate special-value propagation in each operand.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -424,8 +362,6 @@ def test_slow_conv_dilated2d_negative(case):
 @pytest.mark.slow_conv_dilated2d_negative
 @pytest.mark.parametrize("dtype", _UNSUPPORTED_DTYPES)
 def test_slow_conv_dilated2d_rejects_unsupported_dtype(dtype):
-    # The CUDA kernel only implements floating dtypes; int8 / uint8 / fp8 /
-    # int32 / int64 must be rejected by both the reference and the candidate.
     inp = torch.ones((2, 3, 5, 5), dtype=dtype, device=flag_gems.device)
     weight = torch.ones((4, 3, 3, 3), dtype=dtype, device=flag_gems.device)
     bias = torch.ones((4,), dtype=dtype, device=flag_gems.device)

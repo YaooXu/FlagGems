@@ -19,55 +19,12 @@ import flag_gems
 
 from . import accuracy_utils as utils
 from . import test_utils as tu
-from .conftest import QUICK_MODE
 
-# aten::slow_conv_dilated3d(Tensor self, Tensor weight, SymInt[3] kernel_size,
-# Tensor? bias=None, SymInt[3] stride=[1, 1, 1], SymInt[3] padding=[0, 0, 0],
-# SymInt[3] dilation=[1, 1, 1]) -> Tensor is the im2col based "slow" conv3d with
-# dilation support (groups always 1). ``self`` is (N, C_in, D, H, W), ``weight``
-# is (C_out, C_in, kD, kH, kW) and ``kernel_size`` must match the weight spatial
-# dims. The output is (N, C_out, D_out, H_out, W_out) with
-#   D_out = (D + 2*pD - dil_d*(kD - 1) - 1) // sD + 1
-# and likewise for H and W.
-#
-# Dtype coverage: the CUDA kernel implements the floating dtypes fp16 / fp32 /
-# bf16 / fp64 -- int8, uint8, float8_e4m3fn, float8_e5m2, int32 and int64 all
-# raise `"slow_conv_dilated<>" not implemented for '<Int/Float8...>'`. The
-# correctness grid therefore uses utils.ALL_FLOAT_DTYPES; integer/fp8 rejection
-# is covered by the negative dtype test below instead of being silently
-# dropped.
-#
-# Rank probe: the schema accepts both a batched 5-D input (N, C_in, D, H, W)
-# and an unbatched 4-D one (C_in, D, H, W), so the 4-D rank IS exercised (see
-# test_slow_conv_dilated3d_unbatched). aten does not support the unbatched 4-D
-# route together with a bias on this build -- measured, some configurations
-# raise
-#   IndexError: select(): index 4 out of range for tensor of size [4, 4, 4]
-# and the rest return non-deterministic results (repeated identical calls
-# disagree by up to 1.1e38, incl. inf/NaN) that differ from F.conv3d by O(1).
-# The 4-D rank is therefore covered without a bias: there the op is
-# deterministic (0.0 across repeated calls) and matches F.conv3d to 0.0 in
-# fp64. The bias path is covered by the batched grid, and the 6-D rejection
-# test covers the rank check's negative side.
-#
-# Shape coverage: the operator is rank-fixed and structurally constrained
-# (C_in must agree between input and weight, kernel_size must agree with the
-# weight), so the generic tu.selected_shapes() set cannot be applied directly.
-# The explicit (input, weight, kernel_size, stride, padding, dilation) tuples
-# below play the role of the shape levels: they span 1x1x1/2x2x2/3x3x3 kernels,
-# stride 1/2, padding 0/1/2, dilation 1/2, asymmetric strides/paddings, and
-# with/without bias. Element counts stay well below 1M so the correctness run
-# stays fast. Inputs are generated through the value-range framework
-# (tu.make_input) instead of torch.randn so the ranges are explicit and
-# per-dtype.
-if QUICK_MODE:
-    SLOW_CONV_DILATED3D_CASES = [
-        ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    BIASES = [True]
-else:
-    SLOW_CONV_DILATED3D_CASES = [
+# Test batched and unbatched slow conv3d with dilation.
+# Extreme ranges retain their bounds and use the original reference dtype to preserve overflow.
+# Cases: (input shape, weight shape, kernel size, stride, padding, dilation).
+SLOW_CONV_DILATED3D_CASES = tu.selected_cases(
+    [
         ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
         ((2, 3, 6, 6, 6), (4, 3, 3, 3, 3), (3, 3, 3), (1, 1, 1), (0, 0, 0), (1, 1, 1)),
         ((1, 3, 8, 8, 8), (4, 3, 3, 3, 3), (3, 3, 3), (2, 2, 2), (1, 1, 1), (1, 1, 1)),
@@ -80,58 +37,32 @@ else:
         ((1, 3, 9, 9, 9), (2, 3, 3, 3, 3), (3, 3, 3), (2, 2, 2), (2, 2, 2), (1, 1, 1)),
         ((2, 2, 6, 5, 7), (3, 2, 3, 3, 3), (3, 3, 3), (1, 2, 1), (1, 1, 2), (1, 1, 1)),
         ((1, 2, 6, 6, 6), (4, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
-    BIASES = [True, False]
+    ],
+    quick=[
+        ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
+    ],
+)
 
+BIASES = tu.selected_cases([True, False], quick=[True])
 
-def _unbatched(case):
-    # (N, C_in, D, H, W) -> the unbatched (C_in, D, H, W) form of the same
-    # operator configuration; everything else is unchanged.
-    inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
-    return (inp_shape[1:], weight_shape, kernel_size, stride, padding, dilation)
+# Drop the leading batch dimension. Bias is excluded: the reference is unreliable for 4-D + bias.
+_UNBATCHED_CASES = []
+for i in tu.selected_cases([0, 5, 4], quick=[0]):
+    shape, *params = SLOW_CONV_DILATED3D_CASES[i]
+    _UNBATCHED_CASES.append((shape[1:], *params))
 
-
-# The 4-D unbatched route, on the same three representative configurations the
-# value-range test uses (3x3x3/pad1, 1x1x1 pure-GEMM, pad2) so the rank is
-# covered without duplicating the whole batched grid. Bias is deliberately
-# excluded: aten does not support 4-D + bias (see the rank-probe note above),
-# so it cannot serve as the oracle.
-_UNBATCHED_CASES = [
-    _unbatched(SLOW_CONV_DILATED3D_CASES[i]) for i in ([0] if QUICK_MODE else [0, 5, 4])
+# 3x3x3, pointwise 1x1x1 and dilation-2 paths.
+_VALUE_RANGE_CASES = [
+    SLOW_CONV_DILATED3D_CASES[i] for i in tu.selected_cases([0, 5, 3], quick=[0])
 ]
 
-# Extreme workloads retain their declared bounds. Their oracle uses the original
-# dtype because upcasting changes intermediate overflow and NaN propagation.
-_VALUE_RANGE_CASES = (
-    SLOW_CONV_DILATED3D_CASES[:1]
-    if QUICK_MODE
-    else [
-        SLOW_CONV_DILATED3D_CASES[0],  # 3x3x3 kernel, padding 1, dilation 1
-        SLOW_CONV_DILATED3D_CASES[5],  # 1x1x1 kernel (pure GEMM path)
-        SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
-    ]
-)
-_VALUE_RANGES = tu.selected_ranges()
+# Padding 1, no padding and dilation 2.
+_BACKWARD_CASES = [
+    SLOW_CONV_DILATED3D_CASES[i] for i in tu.selected_cases([0, 1, 3], quick=[0])
+]
 
-# The aten op carries its own autograd (SlowConvDilated3DBackward0), so
-# backward is exercised directly. fp16/bf16 are included: the native op
-# accumulates its gradients in the input dtype and the dtype-scaled _assert_close
-# tolerances below (fp16 2e-2, bf16 2e-1, plus the per-dtype rtol) cover that
-# rounding, as they do for the forward.
-_BACKWARD_CASES = (
-    SLOW_CONV_DILATED3D_CASES[:1]
-    if QUICK_MODE
-    else [
-        SLOW_CONV_DILATED3D_CASES[0],  # padding 1, dilation 1
-        SLOW_CONV_DILATED3D_CASES[1],  # no padding
-        SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
-    ]
-)
-_BACKWARD_DTYPES = (
-    [torch.float32]
-    if QUICK_MODE
-    else [torch.float16, torch.float32, torch.bfloat16, torch.float64]
+_BACKWARD_DTYPES = tu.selected_cases(
+    [torch.float16, torch.float32, torch.bfloat16, torch.float64], quick=[torch.float32]
 )
 
 
@@ -142,10 +73,6 @@ def _resolve_gems_op():
 
 
 def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
-    """Batched (N, C_in, D, H, W) or unbatched (C_in, D, H, W) input x
-    (C_out, C_in, kD, kH, kW) weight -> the matching (N, C_out, ...) or
-    (C_out, ...) output shape."""
-
     def _out_size(in_size, k, s, p, d):
         return (in_size + 2 * p - d * (k - 1) - 1) // s + 1
 
@@ -172,7 +99,6 @@ def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
 def _make_conv_inputs(
     inp_shape, weight_shape, with_bias, dtype, value_range=("-1", "1")
 ):
-    # Value-range framework instead of torch.randn: per-dtype explicit ranges.
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     if with_bias:
@@ -184,8 +110,7 @@ def _make_conv_inputs(
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # Finite random workloads use an fp64 reference. These absolute bounds
-    # supplement the shared relative tolerance for the original dtype.
+    # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
         atol = 2e-1
     elif dtype == torch.float16:
@@ -200,14 +125,12 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     SLOW_CONV_DILATED3D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated3d(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    # The reference op runs cuBLAS/baddbmm for the im2col GEMM; keep TF32 off so
-    # the fp32 comparison stays at the standard 1e-4 tolerance (with TF32 on the
-    # native op itself deviates from the fp64 reference by ~1.6e-2).
+    # Disable TF32 when comparing native fp32 results with the fp64 reference.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -231,14 +154,10 @@ def test_slow_conv_dilated3d(
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     _UNBATCHED_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_slow_conv_dilated3d_unbatched(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
 ):
-    # The unbatched 4-D route (C_in, D, H, W) must produce the same result as
-    # the batched one -- the operator's rank dimension is part of the spec's
-    # shape coverage, so it is checked rather than skipped. No bias: aten does
-    # not support 4-D + bias, so it cannot be used as the oracle there.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -263,8 +182,8 @@ def test_slow_conv_dilated3d_unbatched(
 
 @pytest.mark.slow_conv_dilated3d
 @pytest.mark.parametrize("case", _VALUE_RANGE_CASES)
-@pytest.mark.parametrize("value_range", _VALUE_RANGES)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
     torch.backends.cudnn.allow_tf32 = False
@@ -294,7 +213,7 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
     "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
     SLOW_CONV_DILATED3D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated3d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
@@ -379,11 +298,10 @@ def test_slow_conv_dilated3d_backward(case, dtype):
 
 @pytest.mark.slow_conv_dilated3d_nan_inf
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_dilated3d_nan_inf(dtype, scenario, special_arg):
-    # Exact finite backgrounds isolate special-value propagation in each operand.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -412,7 +330,6 @@ def test_slow_conv_dilated3d_nan_inf(dtype, scenario, special_arg):
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_wrong_kernel_size():
-    # kernel_size must match the weight spatial dims exactly.
     inp, weight, _ = _make_conv_inputs(
         (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
     )
@@ -428,7 +345,6 @@ def test_slow_conv_dilated3d_rejects_wrong_kernel_size():
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_channel_mismatch():
-    # input.size(1) (C_in) must equal weight.size(1).
     inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 3, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -443,8 +359,6 @@ def test_slow_conv_dilated3d_rejects_channel_mismatch():
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_int_dtype():
-    # Only floating dtypes are implemented for the conv3d; int8/uint8/fp8/int32
-    # all raise on the native path.
     for bad_dtype in (torch.int8, torch.uint8, torch.float8_e4m3fn, torch.int32):
         inp = tu.make_input(bad_dtype, (1, 2, 5, 5, 5), ["-1", "1"])
         weight = tu.make_input(bad_dtype, (1, 2, 3, 3, 3), ["-1", "1"])
@@ -460,7 +374,6 @@ def test_slow_conv_dilated3d_rejects_int_dtype():
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_6d_input():
-    # self must be a 5-D (N, C_in, D, H, W) tensor; a 6-D input is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -475,7 +388,6 @@ def test_slow_conv_dilated3d_rejects_6d_input():
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_wrong_weight_rank():
-    # weight must be 5-D (C_out, C_in, kD, kH, kW); a 4-D weight is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -520,7 +432,6 @@ def test_slow_conv_dilated3d_rejects_negative_dilation():
 
 @pytest.mark.slow_conv_dilated3d_negative
 def test_slow_conv_dilated3d_rejects_output_size_too_small():
-    # Dilation so large that the computed output size becomes negative.
     inp, weight, _ = _make_conv_inputs(
         (1, 2, 5, 5, 5), (1, 2, 3, 3, 3), False, torch.float32
     )

@@ -19,46 +19,12 @@ import flag_gems
 
 from . import accuracy_utils as utils
 from . import test_utils as tu
-from .conftest import QUICK_MODE
 
-# aten::slow_conv_transpose3d(Tensor self, Tensor weight, SymInt[3] kernel_size,
-# Tensor? bias=None, SymInt[3] stride=[1, 1, 1], SymInt[3] padding=[0, 0, 0],
-# SymInt[3] output_padding=[0, 0, 0], SymInt[3] dilation=[1, 1, 1]) -> Tensor is
-# the im2col based "slow" transposed conv3d (groups always 1). ``self`` is
-# (N, C_in, D, H, W) and ``weight`` is (C_in, C_out, kD, kH, kW) -- note the
-# transposed layout: C_in first (for a 4D unbatched ``self`` the batch dim is
-# dropped and the output is (C_out, D_out, H_out, W_out)). The output is
-# (N, C_out, D_out, H_out, W_out) with
-#   D_out = (D - 1)*sD - 2*pD + dil_d*(kD - 1) + output_pad_d + 1
-# and likewise for H and W. ``output_padding`` must be smaller than either
-# ``stride`` or ``dilation`` along every dim. Each (input, weight, kernel_size,
-# stride, padding, output_padding, dilation) tuple below is one distinct
-# parametrized workload: they cover 1x1x1/2x2x2/3x3x3 kernels, stride 1/2 and
-# asymmetric strides, padding 0/1/2 and asymmetric padding, output_padding 0/1,
-# dilation 1/2, batched 5D and unbatched 4D inputs, with and without bias.
-# Element counts stay well below 1M so the correctness run stays fast.
-#
-# The operator is a fixed-rank (5D / 4D) spatial op, so the shared
-# ``tu.selected_shapes()`` 0-D..5-D grid is not applicable; the local case list
-# below plays the role of the shape levels instead. Inputs are generated through
-# the value-range framework (``tu.make_input``) rather than ``torch.randn`` so
-# the ranges are explicit and per-dtype.
-
-if QUICK_MODE:
-    SLOW_CONV_TRANSPOSE3D_CASES = [
-        (
-            (1, 2, 5, 5, 5),
-            (2, 1, 3, 3, 3),
-            (3, 3, 3),
-            (1, 1, 1),
-            (1, 1, 1),
-            (0, 0, 0),
-            (1, 1, 1),
-        ),
-    ]
-    BIASES = [True]
-else:
-    SLOW_CONV_TRANSPOSE3D_CASES = [
+# Test transposed conv3d; weight dimensions are (C_in, C_out, kD, kH, kW).
+# Extreme ranges retain their bounds and use the original reference dtype to preserve overflow.
+# Cases: (input shape, weight shape, kernel size, stride, padding, output padding, dilation).
+SLOW_CONV_TRANSPOSE3D_CASES = tu.selected_cases(
+    [
         # 3x3x3 kernel, stride 1, padding 1 (the canonical transposed conv).
         (
             (1, 2, 5, 5, 5),
@@ -199,55 +165,37 @@ else:
             (0, 0, 0),
             (1, 1, 1),
         ),
-    ]
-    BIASES = [True, False]
+    ],
+    quick=[
+        (
+            (1, 2, 5, 5, 5),
+            (2, 1, 3, 3, 3),
+            (3, 3, 3),
+            (1, 1, 1),
+            (1, 1, 1),
+            (0, 0, 0),
+            (1, 1, 1),
+        ),
+    ],
+)
 
+BIASES = tu.selected_cases([True, False], quick=[True])
 
 SUPPORTED_DTYPES = [torch.float32, torch.bfloat16, torch.float16, torch.float64]
 
-
-FLOAT_DTYPES = list(SUPPORTED_DTYPES)
-
-# Value-range coverage: the transpose-conv output accumulates up to
-# C_in*kD*kH*kW products, so the shared ``tu.selected_ranges()`` extremes
-# (["0", "max"] / ["min", "0"]) overflow the fp16/bf16 output to +-inf. The
-# ATen kernel itself behaves the same way against the fp64-upcast reference
-# (both sides saturate to the same sign of inf), and the required five ranges
-# are still exercised in full for every supported dtype. Small cases keep the
-# fp64 reference cheap.
-_VALUE_RANGE_CASES = (
-    SLOW_CONV_TRANSPOSE3D_CASES[:1]
-    if QUICK_MODE
-    else [
-        SLOW_CONV_TRANSPOSE3D_CASES[0],  # 3x3x3 kernel, padding 1, dilation 1
-        SLOW_CONV_TRANSPOSE3D_CASES[5],  # 1x1x1 kernel (pure GEMM path)
-        SLOW_CONV_TRANSPOSE3D_CASES[7],  # 2x2x2 kernel, dilation 2
-    ]
-)
-
-# The aten op carries its own autograd (registered at the nn module level), so
-# backward is exercised directly. fp16/bf16 are included: the native op
-# accumulates its gradients in the input dtype and the dtype-scaled _assert_close
-# tolerances below (fp16 2e-2, bf16 2e-1, plus the per-dtype rtol) cover that
-# rounding, as they do for the forward.
-_BACKWARD_CASES = (
-    SLOW_CONV_TRANSPOSE3D_CASES[:1]
-    if QUICK_MODE
-    else [
-        SLOW_CONV_TRANSPOSE3D_CASES[0],  # padding 1, dilation 1
-        SLOW_CONV_TRANSPOSE3D_CASES[1],  # stride 2
-        SLOW_CONV_TRANSPOSE3D_CASES[3],  # dilation 2
-    ]
-)
-_BACKWARD_DTYPES = [
-    d
-    for d in (
-        [torch.float32]
-        if QUICK_MODE
-        else [torch.float16, torch.float32, torch.bfloat16, torch.float64]
-    )
-    if d in SUPPORTED_DTYPES
+# 3x3x3, pointwise 1x1x1 and 2x2x2 with dilation 2.
+_VALUE_RANGE_CASES = [
+    SLOW_CONV_TRANSPOSE3D_CASES[i] for i in tu.selected_cases([0, 5, 7], quick=[0])
 ]
+
+# Padding 1, stride 2 and dilation 2.
+_BACKWARD_CASES = [
+    SLOW_CONV_TRANSPOSE3D_CASES[i] for i in tu.selected_cases([0, 1, 3], quick=[0])
+]
+
+_BACKWARD_DTYPES = tu.selected_cases(
+    [torch.float16, torch.float32, torch.bfloat16, torch.float64], quick=[torch.float32]
+)
 
 
 def _resolve_gems_op():
@@ -259,8 +207,6 @@ def _resolve_gems_op():
 def _conv_transpose_output_shape(
     inp_shape, weight_shape, stride, padding, output_padding, dilation
 ):
-    """self (N, C_in, D, H, W) or (C_in, D, H, W) x weight (C_in, C_out, kD, kH, kW)."""
-
     def _out_size(in_size, k, s, p, op, d):
         return (in_size - 1) * s - 2 * p + d * (k - 1) + op + 1
 
@@ -284,7 +230,6 @@ def _conv_transpose_output_shape(
 def _make_conv_inputs(
     inp_shape, weight_shape, with_bias, dtype, value_range=("-1", "1")
 ):
-    # Value-range framework instead of torch.randn: per-dtype explicit ranges.
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     if with_bias:
@@ -297,8 +242,7 @@ def _make_conv_inputs(
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # Finite random workloads use an fp64 reference. These absolute bounds
-    # supplement the shared relative tolerance for the original dtype.
+    # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
         atol = 2e-1
     elif dtype == torch.float16:
@@ -309,9 +253,7 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
 
 
 def _disable_tf32():
-    # The reference op runs cuBLAS/baddbmm for the im2col GEMM; keep TF32 off so
-    # the fp32 comparison stays at the standard 1e-4 tolerance (with TF32 on the
-    # native op itself deviates from the fp64 reference by ~1.6e-2).
+    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -321,7 +263,7 @@ def _disable_tf32():
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     SLOW_CONV_TRANSPOSE3D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", SUPPORTED_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose3d(
     inp_shape,
@@ -363,7 +305,7 @@ def test_slow_conv_transpose3d(
 @pytest.mark.slow_conv_transpose3d
 @pytest.mark.parametrize("case", _VALUE_RANGE_CASES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", SUPPORTED_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
     _disable_tf32()
@@ -410,7 +352,7 @@ def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     SLOW_CONV_TRANSPOSE3D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", SUPPORTED_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose3d_out(
     inp_shape,
@@ -539,11 +481,10 @@ def test_slow_conv_transpose3d_backward(case, dtype):
 
 @pytest.mark.slow_conv_transpose3d_nan_inf
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(SUPPORTED_DTYPES))
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_transpose3d_nan_inf(dtype, scenario, special_arg):
-    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
     inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
@@ -578,8 +519,6 @@ def test_slow_conv_transpose3d_nan_inf(dtype, scenario, special_arg):
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_output_padding_not_less_than_stride():
-    # output_padding must be smaller than either stride or dilation along every
-    # dim; here output_padding == stride along all three dims.
     inp, weight, _ = _make_conv_inputs(
         (1, 2, 5, 5, 5), (2, 1, 3, 3, 3), False, torch.float32
     )
@@ -625,7 +564,6 @@ def test_slow_conv_transpose3d_rejects_negative_dilation():
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_int_dtype():
-    # Only floating dtypes are implemented for the transposed conv3d.
     inp = tu.make_input(torch.int32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.int32, (2, 1, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -640,8 +578,6 @@ def test_slow_conv_transpose3d_rejects_int_dtype():
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_6d_input():
-    # self must be (N, C_in, D, H, W) (5D batch mode) or (C_in, D, H, W) (4D);
-    # a 6D input is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 1, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -656,7 +592,6 @@ def test_slow_conv_transpose3d_rejects_6d_input():
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_4d_weight():
-    # weight must be 5D (C_in, C_out, kD, kH, kW); a 4D weight is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 1, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -671,7 +606,6 @@ def test_slow_conv_transpose3d_rejects_4d_weight():
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_channel_mismatch():
-    # self.size(1) (C_in) must equal weight.size(0) (C_in).
     inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (3, 1, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
@@ -686,7 +620,6 @@ def test_slow_conv_transpose3d_rejects_channel_mismatch():
 
 @pytest.mark.slow_conv_transpose3d_negative
 def test_slow_conv_transpose3d_rejects_bias_size_mismatch():
-    # bias must have exactly C_out = weight.size(1) elements.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 1, 3, 3, 3), ["-1", "1"])
     bias = tu.make_input(torch.float32, (5,), ["-1", "1"])

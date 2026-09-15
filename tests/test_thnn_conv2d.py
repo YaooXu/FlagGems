@@ -20,14 +20,11 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-if tu.QUICK_MODE:
-    THNN_CONV2D_CASES = [
-        ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    BIASES = [True]
-else:
-    THNN_CONV2D_CASES = [
+# Test THNN conv2d with matching input/weight channels and kernel dimensions.
+# Extreme ranges retain their bounds and use the original reference dtype to preserve overflow.
+# Cases: (input shape, weight shape, kernel size, stride, padding).
+THNN_CONV2D_CASES = tu.selected_cases(
+    [
         ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
         ((2, 3, 9, 9), (4, 3, 3, 3), (3, 3), (1, 1), (0, 0)),
         ((2, 3, 8, 8), (5, 3, 3, 3), (3, 3), (2, 2), (1, 1)),
@@ -36,30 +33,21 @@ else:
         ((4, 16, 32, 32), (8, 16, 3, 3), (3, 3), (1, 1), (1, 1)),
         ((1, 4, 12, 12), (4, 4, 5, 5), (5, 5), (1, 1), (2, 2)),
         ((2, 3, 4, 4), (5, 3, 3, 3), (3, 3), (1, 1), (0, 0)),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
-    BIASES = [True, False]
+    ],
+    quick=[
+        ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
+    ],
+)
 
-# Extreme workloads retain their declared bounds. Their oracle uses the original
-# dtype because upcasting changes intermediate overflow and NaN propagation.
-_CONV_VALUE_RANGES = tu.selected_ranges()
+BIASES = tu.selected_cases([True, False], quick=[True])
 
-# Backward cases stay small (autograd graph + forward/backward on two devices).
 _BACKWARD_CASES = THNN_CONV2D_CASES[:3]
 
-# Inputs are scaled down before the fp64 upcast reference is computed. The
-# gradients are reduction-heavy, so fp16/bf16 backward accumulates rounding
-# noise proportional to the data magnitude; 0.1 keeps that noise well inside
-# the gems_assert_close tolerance (same convention as
-# test__slow_conv2d_backward.py).
+# Scale finite random inputs to limit low-precision reduction noise.
 _INPUT_SCALE = 0.1
 
-# The candidate may legitimately raise a different exception family than the
-# native op for invalid arguments; accept any of them so long as it raises.
 _GEMS_ERRORS = (TypeError, ValueError, RuntimeError, AttributeError)
 
-# Dtypes the CUDA slow_conv2d kernel does not register (probed): the reference
-# raises and a correct candidate must raise as well.
 _UNSUPPORTED_DTYPES = [
     torch.int8,
     torch.uint8,
@@ -86,9 +74,7 @@ def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
 
 
 def _disable_tf32():
-    # The reference op runs the native im2col GEMM; keep TF32 off so the fp32
-    # comparison stays at the standard 1e-4 tolerance (with TF32 on the native
-    # op itself deviates from the fp64 reference by ~1.6e-2).
+    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
@@ -104,8 +90,7 @@ def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # Finite random workloads use an fp64 reference. These absolute bounds
-    # supplement the shared relative tolerance for the original dtype.
+    # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
         atol = 5e-2
     elif dtype == torch.float16:
@@ -126,6 +111,7 @@ def _reduction_dims(inp_shape, weight_shape, out_shape):
 
 
 def _assert_grads_close(res_grads, ref_grads, in_reduce_dim, out_reduce_dim, dtype):
+    # Masked gradients must remain None; compare computed gradients using their reduction sizes.
     for res_g, ref_g, reduce_dim in zip(
         res_grads, ref_grads, (in_reduce_dim, out_reduce_dim, out_reduce_dim)
     ):
@@ -137,16 +123,11 @@ def _assert_grads_close(res_grads, ref_grads, in_reduce_dim, out_reduce_dim, dty
             )
 
 
-# ---------------------------------------------------------------------------
-# Forward coverage
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding", THNN_CONV2D_CASES
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_thnn_conv2d(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
@@ -176,14 +157,11 @@ def test_thnn_conv2d(
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding", THNN_CONV2D_CASES[:2]
 )
-@pytest.mark.parametrize("value_range", _CONV_VALUE_RANGES)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_thnn_conv2d_value_ranges(
     inp_shape, weight_shape, kernel_size, stride, padding, value_range, dtype
 ):
-    # The spec value-range sweep (tu.selected_ranges() minus the overflowing
-    # extremes) for every supported dtype. Bias is kept on so the value ranges
-    # also exercise the bias-add path.
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(
@@ -202,25 +180,15 @@ def test_thnn_conv2d_value_ranges(
     tu.assert_result_close(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Backward
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding", _BACKWARD_CASES
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", tu.selected_cases(BIASES))
 def test_thnn_conv2d_backward(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    # aten::thnn_conv2d is differentiable (the autograd engine routes its
-    # backward to _slow_conv2d_backward). The reference gradient is computed on
-    # the fp64 upcast graph with a random grad_output; the candidate forward
-    # must match, and - if the candidate kernel advertises autograd support -
-    # its own gradient must match the fp64 reference too.
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(
@@ -276,18 +244,12 @@ def test_thnn_conv2d_backward(
     )
 
 
-# ---------------------------------------------------------------------------
-# nan / inf propagation
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
-    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
     inp_shape, weight_shape, kernel_size, stride, padding = (
@@ -317,25 +279,15 @@ def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
     tu.assert_result_close(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# .out overload
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.thnn_conv2d_out
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding", THNN_CONV2D_CASES
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_thnn_conv2d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    # The .out overload writes into the caller's buffer and returns the same
-    # tensor object (alias semantics). The buffers are garbage-prefilled so the
-    # overload must overwrite them. The native .out overload is callable on this
-    # backend (probed), so call it directly -- never simulate it with
-    # default()+copy_.
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(
@@ -364,14 +316,8 @@ def test_thnn_conv2d_out(
     _assert_close(res_out, ref_out.to(dtype), dtype)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d_rejects_kernel_size_mismatch():
-    # kernel_size must match the weight spatial dims; aten validates it.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     args = (inp, weight, (2, 2), None, (1, 1), (0, 0))
@@ -383,7 +329,6 @@ def test_thnn_conv2d_rejects_kernel_size_mismatch():
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d_rejects_channel_mismatch():
-    # Conv has no broadcast: C_in of the input must equal C_in of the weight.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
@@ -396,7 +341,6 @@ def test_thnn_conv2d_rejects_channel_mismatch():
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize("bad_shape", [(2, 5, 5), (2, 5, 5, 5, 5)])
 def test_thnn_conv2d_rejects_non_4d_input(bad_shape):
-    # self must be (N, C_in, H, W); any other rank is rejected.
     inp = tu.make_input(torch.float32, bad_shape, ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
@@ -408,7 +352,6 @@ def test_thnn_conv2d_rejects_non_4d_input(bad_shape):
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d_rejects_non_4d_weight():
-    # weight must be (C_out, C_in, kH, kW); a 3-D weight is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
@@ -420,7 +363,6 @@ def test_thnn_conv2d_rejects_non_4d_weight():
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d_rejects_bias_length_mismatch():
-    # bias length must equal C_out.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     for bad_len in (2, 0):
@@ -435,7 +377,6 @@ def test_thnn_conv2d_rejects_bias_length_mismatch():
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize("stride", [(0, 0), (-1, 1), (1, -1)])
 def test_thnn_conv2d_rejects_nonpositive_stride(stride):
-    # stride must be greater than zero in both dims.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, stride, (0, 0))
@@ -447,7 +388,6 @@ def test_thnn_conv2d_rejects_nonpositive_stride(stride):
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d_rejects_kernel_larger_than_input():
-    # The padded input must be at least as large as the kernel in every dim.
     inp = tu.make_input(torch.float32, (1, 2, 2, 2), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
@@ -460,8 +400,6 @@ def test_thnn_conv2d_rejects_kernel_larger_than_input():
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize("scalar_param", ["kernel_size", "stride", "padding"])
 def test_thnn_conv2d_rejects_scalar_params(scalar_param):
-    # kernel_size/stride/padding are SymInt[2]: passing a bare scalar int does
-    # not match the schema and raises.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     kwargs = {"kernel_size": (3, 3), "stride": (1, 1), "padding": (0, 0)}
@@ -475,10 +413,6 @@ def test_thnn_conv2d_rejects_scalar_params(scalar_param):
 @pytest.mark.thnn_conv2d
 @pytest.mark.parametrize("dtype", _UNSUPPORTED_DTYPES)
 def test_thnn_conv2d_rejects_unsupported_dtype(dtype):
-    # The CUDA slow_conv2d kernel only registers the float family (dtype probe:
-    # "slow_conv2d_cuda not implemented for 'Int'/'Char'/'Byte'/'Bool'/
-    # 'Float8E4M3FN'/'Float8E5M2'"). The reference raises and the candidate must
-    # raise as well.
     inp = tu.make_input(dtype, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(dtype, (1, 2, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (1, 1))

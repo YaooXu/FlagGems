@@ -20,22 +20,11 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-if tu.QUICK_MODE:
-    SLOW_CONV_TRANSPOSE2D_CASES = [
-        (
-            (1, 2, 5, 5),
-            (2, 3, 3, 3),
-            (3, 3),
-            (1, 1),
-            (0, 0),
-            (0, 0),
-            (1, 1),
-        ),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    BIASES = [True]
-else:
-    SLOW_CONV_TRANSPOSE2D_CASES = [
+# Test transposed conv2d; weight dimensions are (C_in, C_out, kH, kW).
+# Extreme ranges retain their bounds and use the original reference dtype to preserve overflow.
+# Cases: (input shape, weight shape, kernel size, stride, padding, output padding, dilation).
+SLOW_CONV_TRANSPOSE2D_CASES = tu.selected_cases(
+    [
         (
             (1, 2, 5, 5),
             (2, 3, 3, 3),
@@ -144,27 +133,27 @@ else:
             (1, 0),
             (1, 1),
         ),
-    ]
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
-    BIASES = [True, False]
+    ],
+    quick=[
+        (
+            (1, 2, 5, 5),
+            (2, 3, 3, 3),
+            (3, 3),
+            (1, 1),
+            (0, 0),
+            (0, 0),
+            (1, 1),
+        ),
+    ],
+)
 
-# Extreme workloads retain their declared bounds. Their oracle uses the original
-# dtype because upcasting changes intermediate overflow and NaN propagation.
-_CONV_VALUE_RANGES = tu.selected_ranges()
+BIASES = tu.selected_cases([True, False], quick=[True])
 
-# The reference is an fp64 upcast of the rounded inputs, and the native op (like
-# any candidate) accumulates the transposed conv in the input dtype. Scale the
-# inputs by 0.1 so fp16/bf16 reductions stay well inside their dynamic range
-# while still exercising both signs (the value-range test covers magnitudes).
+# Scale finite random inputs to limit low-precision reduction noise.
 _INPUT_SCALE = 0.1
 
-# The backward test needs every overload to be differentiable; the first three
-# cases cover stride 1/2, padding, output_padding and asymmetric dilation with
-# small reductions.
 _BACKWARD_CASES = SLOW_CONV_TRANSPOSE2D_CASES[:3]
 
-# The candidate may legitimately raise a different exception family than the
-# native op for invalid arguments; accept any of them so long as it raises.
 _GEMS_ERRORS = (TypeError, ValueError, RuntimeError, AttributeError)
 
 
@@ -178,7 +167,6 @@ def _resolve_gems_op():
 def _conv_output_shape(
     inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation
 ):
-    """Output shape of the transposed conv (matches aten's size computation)."""
     h_in = inp_shape[-2]
     w_in = inp_shape[-1]
     out_c = weight_shape[1]
@@ -214,15 +202,13 @@ def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
 
 
 def _disable_tf32():
-    # The reference op runs the native path; keep TF32 off so the fp32
-    # comparison stays at the standard 1e-4 tolerance.
+    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # Finite random workloads use an fp64 reference. These absolute bounds
-    # supplement the shared relative tolerance for the original dtype.
+    # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
         atol = 4e-1
     elif dtype == torch.float16:
@@ -232,17 +218,12 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     utils.gems_assert_close(res_out, ref_out, dtype, atol=atol, equal_nan=equal_nan)
 
 
-# ---------------------------------------------------------------------------
-# Forward coverage
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     SLOW_CONV_TRANSPOSE2D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose2d(
     inp_shape,
@@ -291,8 +272,8 @@ def test_slow_conv_transpose2d(
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     SLOW_CONV_TRANSPOSE2D_CASES[:2],
 )
-@pytest.mark.parametrize("value_range", _CONV_VALUE_RANGES)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_slow_conv_transpose2d_value_ranges(
     inp_shape,
     weight_shape,
@@ -331,17 +312,12 @@ def test_slow_conv_transpose2d_value_ranges(
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
-# ---------------------------------------------------------------------------
-# Backward
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     _BACKWARD_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", tu.selected_cases(BIASES))
 def test_slow_conv_transpose2d_backward(
     inp_shape,
@@ -430,18 +406,12 @@ def test_slow_conv_transpose2d_backward(
             )
 
 
-# ---------------------------------------------------------------------------
-# nan / inf propagation
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_transpose2d_nan_inf(dtype, scenario, special_arg):
-    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
     (
@@ -481,20 +451,13 @@ def test_slow_conv_transpose2d_nan_inf(dtype, scenario, special_arg):
 
     tu.assert_result_close(res_out, ref_out)
 
-    # Sanity check that the injected values actually reached the output.
-
-
-# ---------------------------------------------------------------------------
-# .out overload
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.slow_conv_transpose2d_out
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
     SLOW_CONV_TRANSPOSE2D_CASES,
 )
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose2d_out(
     inp_shape,
@@ -557,15 +520,8 @@ def test_slow_conv_transpose2d_out(
     _assert_close(res_ret, ref_ret, dtype)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow_conv_transpose2d
 def test_slow_conv_transpose2d_rejects_channel_mismatch():
-    # Weight's C_in (dim 0) must match the input channels; the reference raises
-    # and the candidate must raise as well.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (3, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
@@ -578,7 +534,6 @@ def test_slow_conv_transpose2d_rejects_channel_mismatch():
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize("bad_shape", [(2, 5), (1, 2, 5, 5, 5)])
 def test_slow_conv_transpose2d_rejects_invalid_input_rank(bad_shape):
-    # Only (N, C, H, W) or (C, H, W) inputs are accepted.
     inp = tu.make_input(torch.float32, bad_shape, ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
@@ -590,7 +545,6 @@ def test_slow_conv_transpose2d_rejects_invalid_input_rank(bad_shape):
 
 @pytest.mark.slow_conv_transpose2d
 def test_slow_conv_transpose2d_rejects_invalid_weight_rank():
-    # Weight must be (C_in, C_out, kH, kW); a 3D weight is rejected.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
@@ -609,7 +563,6 @@ def test_slow_conv_transpose2d_rejects_invalid_weight_rank():
     ],
 )
 def test_slow_conv_transpose2d_rejects_invalid_output_padding(stride, output_padding):
-    # output_padding must be smaller than either stride or dilation per dim.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3, 3), ["-1", "1"])
     args = (
@@ -631,7 +584,6 @@ def test_slow_conv_transpose2d_rejects_invalid_output_padding(stride, output_pad
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize("stride", [(0, 0), (-1, 1)])
 def test_slow_conv_transpose2d_rejects_nonpositive_stride(stride):
-    # stride must be greater than zero in both dims.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, stride, (0, 0), (0, 0), (1, 1))
@@ -644,7 +596,6 @@ def test_slow_conv_transpose2d_rejects_nonpositive_stride(stride):
 @pytest.mark.slow_conv_transpose2d
 @pytest.mark.parametrize("dilation", [(0, 0), (-1, -1), (1, -2)])
 def test_slow_conv_transpose2d_rejects_nonpositive_dilation(dilation):
-    # dilation must be greater than zero in both dims.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), dilation)
@@ -666,8 +617,6 @@ def test_slow_conv_transpose2d_rejects_nonpositive_dilation(dilation):
     ],
 )
 def test_slow_conv_transpose2d_rejects_scalar_params(scalar_param, scalar_value):
-    # kernel_size/stride/padding/output_padding/dilation are SymInt[2]: passing
-    # a bare scalar int does not match the schema and raises.
     inp = tu.make_input(torch.float32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.float32, (2, 3, 3, 3), ["-1", "1"])
     args = [inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1)]
@@ -687,10 +636,6 @@ def test_slow_conv_transpose2d_rejects_scalar_params(scalar_param, scalar_value)
 
 @pytest.mark.slow_conv_transpose2d
 def test_slow_conv_transpose2d_rejects_non_float_dtype():
-    # The slow im2col path only supports floating point inputs (groups=1, GEMM
-    # accumulation); the CUDA aten implementation raises for integer inputs
-    # ("slow_conv_transpose2d_out_cuda not implemented for 'Int'") and the
-    # candidate must raise as well.
     inp = tu.make_input(torch.int32, (1, 2, 5, 5), ["-1", "1"])
     weight = tu.make_input(torch.int32, (2, 3, 3, 3), ["-1", "1"])
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
