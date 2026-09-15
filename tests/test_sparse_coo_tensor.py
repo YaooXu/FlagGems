@@ -39,8 +39,7 @@ from . import test_utils as tu
 # is a real, separately dispatched overload (verified callable on the active
 # device): it writes the empty tensor into a caller-provided sparse COO buffer
 # whose logical shape already matches and returns that same buffer. It is
-# resolved through its own public name ``sparse_coo_tensor.size_out`` (default
-# callable ``flag_gems.sparse_coo_tensor_size_out``).
+# resolved through the same public name ``sparse_coo_tensor`` with ``out=``.
 #
 # The candidate is the same public callable for the first three schemas --
 # resolved inside every test through ``flag_gems.testing.resolve_gems_op`` (never
@@ -61,8 +60,8 @@ from . import test_utils as tu
 # Regular-operator spec adaptation (sparse / metadata operator):
 #   * value ranges -- the five spec ranges feed ``tu.make_input`` for every
 #     supported dtype (float and exact), one pytest case per
-#     (range, layout, dtype) combination; ranges a dtype cannot represent are
-#     filtered at collection time (uint8 has no [-1, 0] range);
+#     (range, layout, dtype) combination; the shared generator clamps bounds
+#     to each dtype's representable interval;
 #   * shapes -- sparse COO indexing has no sensible 0-dim / 5-dim analogue and
 #     the shared dense ``tu.selected_shapes()`` set does not map onto
 #     (indices, values), so a dedicated sparse grid replaces it: 1..4 logical
@@ -263,36 +262,6 @@ def _assert_coo_structure(
     )
 
 
-# torch.isclose -- which ``torch.testing.assert_close`` uses internally -- has
-# no fp8 CUDA kernel ("mul_cuda" not implemented for 'Float8_e4m3fn'), so fp8
-# storages are upcast to float32 before the tolerance comparison. Both sides
-# receive the identical input tensor, so the upcast faithfully represents the
-# stored bytes.
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
-
-def _comparable(tensor, dtype):
-    return tensor.float() if dtype in _FP8_DTYPES else tensor
-
-
-def _compare_dtype(dtype):
-    return torch.float32 if dtype in _FP8_DTYPES else dtype
-
-
-def _assert_coo_values(res_out, ref_out, dtype, equal_nan=False):
-    # The factory performs no arithmetic: float storages compare with the usual
-    # tolerance, exact storages must match bit-for-bit.
-    if dtype.is_floating_point:
-        utils.gems_assert_close(
-            _comparable(res_out, dtype),
-            _comparable(ref_out, dtype),
-            _compare_dtype(dtype),
-            equal_nan=equal_nan,
-        )
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
-
-
 def _resolve_gems_op():
     """Resolve the single candidate entrypoint for this OPERATOR.
 
@@ -371,7 +340,7 @@ def test_sparse_coo_tensor_size(case, dtype):
     res_out = _call_candidate_size_only(size, dtype)
 
     _assert_coo_structure(res_out, ref_out, size, 0, dtype, len(size), 0)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor_size_out
@@ -390,7 +359,7 @@ def test_sparse_coo_tensor_size_out(case, dtype):
 
     assert res_ret is out
     _assert_coo_structure(res_ret, ref_ret, size, 0, dtype, len(size), 0)
-    _assert_coo_values(res_ret, ref_ret, dtype)
+    tu.assert_result_equal(res_ret._values(), ref_ret._values())
     # The returned tensor aliases the caller buffer (asserted above), so the
     # buffer itself already carries the reference structure.
     assert tuple(out.shape) == tuple(size)
@@ -412,7 +381,7 @@ def test_sparse_coo_tensor_indices_size(case, dtype):
     res_out = _call_candidate(indices_t, values, size, dtype)
 
     _assert_coo_structure(res_out, ref_out, size, nnz, dtype, 2, 0)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -432,7 +401,7 @@ def test_sparse_coo_tensor_indices_size_nd(case, dtype):
     res_out = _call_candidate(indices_t, values, size, dtype)
 
     _assert_coo_structure(res_out, ref_out, size, nnz, dtype, sparse_dim, dense_dim)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -452,7 +421,7 @@ def test_sparse_coo_tensor_indices(case, dtype):
     res_out = _call_candidate(indices_t, values, None, dtype)
 
     _assert_coo_structure(res_out, ref_out, size, nnz, dtype, sparse_dim, dense_dim)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -472,7 +441,7 @@ def test_sparse_coo_tensor_indices_size_empty(case, dtype):
     _assert_coo_structure(
         res_out, ref_out, size, 0, dtype, sparse_dim, len(dense_shape)
     )
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -500,7 +469,7 @@ def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
     res_out = _call_candidate(indices_t, values, size, dtype, is_coalesced=True)
 
     _assert_coo_structure(res_out, ref_out, size, nnz, dtype, 2, 0, is_coalesced=True)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -508,8 +477,7 @@ def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
 def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
     # Value-range sweep over the full dtype contract: construction copies the
     # stored values verbatim, so every range (including the dtype-extreme
-    # [0, max] / [min, 0] ranges) must round-trip exactly. Float storages use
-    # the tolerance policy, exact storages are compared bit-for-bit.
+    # [0, max] / [min, 0] ranges) must round-trip exactly for every dtype.
     variant, size, indices, dense_shape = case
     sparse_dim = len(indices)
     dense_dim = len(dense_shape)
@@ -525,11 +493,7 @@ def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
     )
 
     _assert_coo_structure(res_out, ref_out, size, nnz, dtype, sparse_dim, dense_dim)
-    _assert_coo_values(res_out, ref_out, dtype)
-    # The shared helper does its own cpu-side comparison; fp8 is already covered
-    # by ``_assert_coo_values`` above and cannot go through torch.isclose.
-    if dtype not in _FP8_DTYPES:
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -553,13 +517,7 @@ def test_sparse_coo_tensor_nan_inf(case, dtype):
     _assert_coo_structure(
         res_out, ref_out, size, nnz, dtype, sparse_dim, len(dense_shape)
     )
-    _assert_coo_values(res_out, ref_out, dtype, equal_nan=True)
-    utils.gems_assert_close(
-        _comparable(torch.ops.aten._values(res_out), dtype),
-        _comparable(torch.ops.aten._values(ref_out), dtype),
-        _compare_dtype(dtype),
-        equal_nan=True,
-    )
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -575,7 +533,7 @@ def test_sparse_coo_tensor_zero_extent(dtype):
     res_out = _call_candidate(indices_t, values, size, dtype)
 
     _assert_coo_structure(res_out, ref_out, size, 0, dtype, 2, 0)
-    _assert_coo_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out._values(), ref_out._values())
 
 
 @pytest.mark.sparse_coo_tensor
@@ -600,7 +558,7 @@ def test_sparse_coo_tensor_inputs_not_mutated(case):
 
     assert out is not indices_t
     utils.gems_assert_equal(indices_t, indices_before)
-    utils.gems_assert_close(values, values_before, dtype)
+    tu.assert_result_equal(values, values_before)
 
 
 # ---------------------------------------------------------------------------

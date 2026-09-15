@@ -397,3 +397,51 @@ def test_sparse_copy_rejects_changed_coalesced_flag():
     with testing.override_gems_op("copy_sparse_to_sparse_", corrupted):
         with pytest.raises(AssertionError):
             cases.test_copy_sparse_to_sparse_(((4, 5), 2, 3), torch.float32, False)
+
+
+@pytest.mark.parametrize("layout", ["coo", "csc", "bsc"])
+def test_sparse_constructors_reject_small_storage_changes(layout):
+    from . import test_sparse_bsc_tensor as bsc
+    from . import test_sparse_coo_tensor as coo
+    from . import test_sparse_csc_tensor as csc
+
+    operator = f"sparse_{layout}_tensor"
+
+    def corrupted(*args, **kwargs):
+        result = getattr(torch.ops.aten, operator)(*args, **kwargs).clone()
+        values = result._values() if layout == "coo" else result.values()
+        values.add_(1e-6)
+        return result
+
+    checks = {
+        "coo": lambda: coo.test_sparse_coo_tensor_indices_size(
+            coo._COO_2D_CASES[0], torch.float32
+        ),
+        "csc": lambda: csc.test_sparse_csc_tensor(
+            (4, 4), 4, torch.float32, torch.int64, ["0", "1"]
+        ),
+        "bsc": lambda: bsc.test_sparse_bsc_tensor(
+            bsc._BSC_CASES[0], torch.float32, torch.int64
+        ),
+    }
+    with testing.override_gems_op(operator, corrupted):
+        with pytest.raises(AssertionError):
+            checks[layout]()
+
+
+@pytest.mark.parametrize("component", ["values", "rows"])
+def test_csc_candidate_cannot_change_reference_through_shared_inputs(component):
+    from . import test_sparse_csc_tensor as cases
+
+    def corrupted(ccol, row, values, *args, **kwargs):
+        if component == "values":
+            values.add_(1)
+        else:
+            row.copy_((row + 1) % 4)
+        return torch.ops.aten.sparse_csc_tensor(ccol, row, values, *args, **kwargs)
+
+    with testing.override_gems_op("sparse_csc_tensor", corrupted):
+        with pytest.raises(AssertionError):
+            cases.test_sparse_csc_tensor(
+                (4, 4), 4, torch.float32, torch.int64, ["0", "1"]
+            )

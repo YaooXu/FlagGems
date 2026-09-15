@@ -77,10 +77,8 @@ from . import test_utils as tu
 # Dtype coverage (spec REQUIRED_DTYPES): int8, uint8, float8_e4m3fn,
 # float8_e5m2, float32, bfloat16, float16, int32 and int64 are all supported by
 # this aten constructor on CUDA and are included. float64, int16 and bool are
-# added on top (probed via _CSC_DTYPES). fp8 needs a dedicated comparison path:
-# torch.testing's tolerance path is not implemented for fp8 sparse tensors and
-# ``to_dense()`` (index_add) has no fp8 kernel, so fp8 is compared bit-exactly
-# on the stored values.
+# added on top. All stored values are compared exactly through the shared
+# helper, including FP8, without densifying or accumulating duplicate entries.
 
 # ---------------------------------------------------------------------------
 # Shared cases and dtype sets
@@ -122,8 +120,7 @@ _FP8_CSC_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
 _SMALL_INT_CSC_DTYPES = [torch.int8, torch.uint8]
 _EXACT_CSC_DTYPES = _SMALL_INT_CSC_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
 _CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES + _EXACT_CSC_DTYPES
-# Dtypes whose values live on the floating path (close comparison when the
-# backend supports it, exact for the fp8 fallback).
+# Floating storage dtypes used by the shape and special-value grids.
 _FLOATISH_CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
@@ -202,7 +199,7 @@ def _resolve_gems_op():
     )
 
 
-def _assert_result(res_out, ref_out, dtype, index_dtype, equal_nan=False):
+def _assert_result(res_out, ref_out, dtype, index_dtype):
     """Structural and value comparison of a CSC tensor against the reference."""
     assert res_out.layout == torch.sparse_csc
     assert res_out.dtype == dtype
@@ -216,12 +213,7 @@ def _assert_result(res_out, ref_out, dtype, index_dtype, equal_nan=False):
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
     # Metadata and index arrays above, stored values here: no densification
     # is needed to validate the constructor.
-    if dtype in _FP8_CSC_DTYPES or dtype in _EXACT_CSC_DTYPES:
-        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
-    else:
-        utils.gems_assert_close(
-            res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
-        )
+    tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +231,17 @@ def test_sparse_csc_tensor(shape, nnz, dtype, index_dtype, value_range):
         shape, nnz, dtype, index_dtype=index_dtype, value_range=value_range
     )
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         list(shape),
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -260,6 +255,9 @@ def test_sparse_csc_tensor(shape, nnz, dtype, index_dtype, value_range):
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
 
 
 @pytest.mark.sparse_csc_tensor
@@ -272,14 +270,17 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
         shape, nnz, dtype, seed=1, index_dtype=index_dtype, value_range=value_range
     )
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         list(shape),
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -293,6 +294,9 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +316,16 @@ def test_sparse_csc_tensor_no_size(
     row = torch.tensor(row_list, dtype=index_dtype, device=flag_gems.device)
     values = _make_values(len(row_list), dtype, value_range=value_range)
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -331,6 +338,9 @@ def test_sparse_csc_tensor_no_size(
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
     assert tuple(res_out.shape) == tuple(ref_out.shape)
 
 
@@ -346,13 +356,16 @@ def test_sparse_csc_tensor_no_size_exact(
     row = torch.tensor(row_list, dtype=index_dtype, device=flag_gems.device)
     values = _make_values(len(row_list), dtype, value_range=value_range)
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -365,6 +378,9 @@ def test_sparse_csc_tensor_no_size_exact(
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
     assert tuple(res_out.shape) == tuple(ref_out.shape)
 
 
@@ -383,14 +399,17 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
     row = torch.tensor([0, 0, 0], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         [2, 2],
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -404,6 +423,9 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
     assert torch.ops.aten._nnz(res_out) == 3
 
 
@@ -417,14 +439,17 @@ def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
     row = torch.tensor([1, 0, 2], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         [3, 1],
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -438,6 +463,9 @@ def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +497,17 @@ def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_ra
         shape, nnz, dtype, seed=2, index_dtype=index_dtype, value_range=value_range
     )
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         list(shape),
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -490,6 +521,9 @@ def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_ra
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
     assert tuple(res_out.shape) == tuple(shape)
 
 
@@ -516,14 +550,17 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
         (4, 4), 4, dtype, index_dtype=torch.int64, value_range=value_range
     )
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         [4, 4],
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -537,13 +574,16 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
     )
 
     _assert_result(res_out, ref_out, dtype, torch.int64)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
 
 
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("dtype", tu.selected_cases(_FLOATISH_CSC_DTYPES))
 def test_sparse_csc_tensor_nan_inf_values(dtype):
     # Non-finite values are stored verbatim; comparison uses equal_nan=True so
-    # nan == nan, inf == inf and the sign of zero are all matched. For
+    # matching NaNs and infinities are accepted. For
     # float8_e4m3fn the +/-inf inputs saturate to nan, which the equal_nan
     # comparison still matches.
     values = torch.tensor(
@@ -554,14 +594,17 @@ def test_sparse_csc_tensor_nan_inf_values(dtype):
     ccol = torch.tensor([0, 2, 5], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 1, 0, 1, 0], dtype=torch.int64, device=flag_gems.device)
 
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     ref_out = torch.ops.aten.sparse_csc_tensor(
-        ccol,
-        row,
-        values,
+        ref_ccol,
+        ref_row,
+        ref_values,
         [2, 2],
         dtype=dtype,
         layout=torch.sparse_csc,
-        device=flag_gems.device,
+        device=ref_ccol.device,
     )
     gems_op = _resolve_gems_op()
     res_out = gems_op(
@@ -574,7 +617,10 @@ def test_sparse_csc_tensor_nan_inf_values(dtype):
         device=flag_gems.device,
     )
 
-    _assert_result(res_out, ref_out, dtype, torch.int64, equal_nan=True)
+    _assert_result(res_out, ref_out, dtype, torch.int64)
+    tu.assert_result_equal(ccol, ref_ccol)
+    tu.assert_result_equal(row, ref_row)
+    tu.assert_result_equal(values, ref_values)
 
 
 # ---------------------------------------------------------------------------

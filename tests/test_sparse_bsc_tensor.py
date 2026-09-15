@@ -56,22 +56,9 @@ _BSC_DTYPES = list(
     )
 )
 
-# fp8 storage is validated with the exact (bit-for-bit) comparison paths only:
-# torch.testing's tolerance-based comparison needs a CPU multiply that fp8 has
-# no kernel for (RuntimeError "mul_cpu_reduced_float" not implemented for
-# 'Float8_e5m2' -- it fails even for two identical fp8 tensors), and the sparse
-# densification path has no fp8 kernel either (RuntimeError "index_add" not
-# implemented for 'Float8_e4m3fn'). The factory copies the stored entries
-# verbatim, so exact equality is the right check. Both fp8 dtypes do carry the
-# special values (e5m2 stores +/-inf and nan bit-for-bit, e4m3fn preserves nan),
-# so they are included in the nan/inf workload with equal_nan threaded through
-# the exact comparisons below.
-_BSC_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
-
-
+# Construction preserves stored values. The shared exact comparison handles
+# FP8 and matching NaNs without densifying or accumulating duplicate entries.
 _BSC_FLOAT_DTYPES = [dtype for dtype in _BSC_DTYPES if dtype.is_floating_point]
-# nan/inf/-inf are representable in every float family here, fp8 included (see
-# the fp8 note above); the comparisons carry equal_nan where needed.
 _BSC_NAN_INF_DTYPES = list(_BSC_FLOAT_DTYPES)
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
@@ -210,7 +197,7 @@ def _call_candidate(ccol, row, values, size, dtype):
     )
 
 
-def _assert_result(res_out, ref_out, dtype, *, equal_nan=False):
+def _assert_result(res_out, ref_out, dtype):
     # Compare logical metadata and stored arrays once. The legacy 1-D values
     # layout has a different dense-dimension count, which must also match aten.
     assert res_out.layout == torch.sparse_bsc
@@ -220,12 +207,7 @@ def _assert_result(res_out, ref_out, dtype, *, equal_nan=False):
     assert res_out.shape == ref_out.shape
     utils.gems_assert_equal(res_out.ccol_indices(), ref_out.ccol_indices())
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
-    if dtype.is_floating_point and dtype not in _BSC_FP8_DTYPES:
-        utils.gems_assert_close(
-            res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
-        )
-    else:
-        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
+    tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsc_tensor
@@ -318,7 +300,7 @@ def test_sparse_bsc_tensor_nan_inf(dtype):
     ref_out = _call_reference(ccol, row, values, [6, 6], dtype)
     res_out = _call_candidate(ccol, row, values, [6, 6], dtype)
 
-    _assert_result(res_out, ref_out, dtype, equal_nan=True)
+    _assert_result(res_out, ref_out, dtype)
 
 
 @pytest.mark.sparse_bsc_tensor
