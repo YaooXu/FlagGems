@@ -175,14 +175,8 @@ def _make_conv_inputs(
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # The reference is computed with an fp64 upcast, so it is exact for the
-    # rounded inputs. The torch native op (and any good candidate) accumulates
-    # the im2col GEMM in the input dtype: fp16/bf16 tensor cores keep at most
-    # fp16/bf16 precision per add, so the native op itself deviates from the
-    # fp64 reference by up to ~2e-3 (fp16) on the larger reductions. Measure
-    # the deviation over multiple seeds and shapes: fp16 -> 1e-2 and bf16 ->
-    # 5e-2 give a wide margin; fp32 with TF32 disabled (set at the top of each
-    # test) stays at ~2e-5, comfortably inside the default 1e-4.
+    # Finite random workloads use an fp64 reference. These absolute bounds
+    # supplement the shared relative tolerance for the original dtype.
     if dtype == torch.bfloat16:
         atol = 5e-2
     elif dtype == torch.float16:
@@ -374,23 +368,22 @@ def test_slow_conv_dilated2d_backward(
 
 
 @pytest.mark.slow_conv_dilated2d_nan_inf
-@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
-def test_slow_conv_dilated2d_nan_inf(dtype):
-    # nan/inf/-inf propagate deterministically through a unit 1x1 kernel: each
-    # output element is exactly inp[0, 0, i, j] + inp[0, 1, i, j] + 1, so the
-    # nan/inf/-inf land at exactly the same output positions on both paths and
-    # no inf + (-inf) cancellation can occur. equal_nan=True tolerates the nan
-    # entries while inf must still match (an inf-vs-nan mismatch fails the
-    # compare).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+)
+@pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
+def test_slow_conv_dilated2d_nan_inf(dtype, scenario, special_arg):
+    # Exact finite backgrounds isolate special-value propagation in each operand.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp = torch.ones((1, 2, 4, 4), dtype=dtype, device=flag_gems.device)
-    weight = torch.ones((1, 2, 1, 1), dtype=dtype, device=flag_gems.device)
-    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
-    inp[0, 0, 1, 1] = float("nan")
-    inp[0, 1, 2, 2] = float("inf")
-    inp[0, 0, 3, 3] = float("-inf")
+    weight = torch.ones((5, 2, 1, 1), dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((5,), dtype=dtype, device=flag_gems.device)
+
+    specials = tu.make_special_input(dtype, scenario)
+    target = {"inp": inp, "weight": weight, "bias": bias}[special_arg]
+    target.flatten()[: specials.numel()] = specials
 
     kernel_size = (1, 1)
     stride = (1, 1)
@@ -408,7 +401,7 @@ def test_slow_conv_dilated2d_nan_inf(dtype):
         inp, weight, kernel_size, bias, stride, padding, dilation
     )
 
-    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
+    tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.slow_conv_dilated2d_negative

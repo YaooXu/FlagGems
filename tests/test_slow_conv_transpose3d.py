@@ -297,15 +297,8 @@ def _make_conv_inputs(
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # The reference is computed with an fp64 upcast, so it is exact for the
-    # rounded inputs. The torch native op (and any good candidate) accumulates
-    # the transpose-conv computation in the input dtype: fp16/bf16 keep at most
-    # fp16/bf16 precision per add, so the native op itself deviates from the
-    # fp64 reference by up to ~7.8e-3 (fp16) and ~6.25e-2 (bf16) on the larger
-    # 3-D reductions (up to C_in*kD*kH*kW accumulation terms). Measured over the
-    # case list above the worst deviations are ~4e-3 (fp16) and ~3e-2 (bf16);
-    # fp16 -> 2e-2 and bf16 -> 2e-1 give a comfortable margin. fp32 with TF32
-    # disabled (set at the top of each test) stays at ~1e-6, well inside 1e-4.
+    # Finite random workloads use an fp64 reference. These absolute bounds
+    # supplement the shared relative tolerance for the original dtype.
     if dtype == torch.bfloat16:
         atol = 2e-1
     elif dtype == torch.float16:
@@ -563,20 +556,21 @@ def test_slow_conv_transpose3d_backward(case, dtype):
 
 
 @pytest.mark.slow_conv_transpose3d_nan_inf
-@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
-def test_slow_conv_transpose3d_nan_inf(dtype):
-    # A single nan and a single inf in the input, with a positive unit 1x1x1
-    # kernel and a unit bias: each output element is the sum of exactly one
-    # input element and one bias term, so the nan/inf land at exactly the same
-    # output positions in the reference and any faithful candidate (no
-    # inf/-inf cancellation).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+)
+@pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
+def test_slow_conv_transpose3d_nan_inf(dtype, scenario, special_arg):
+    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
     inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
-    inp[0, 0, 1, 1, 1] = float("nan")
-    inp[0, 0, 2, 2, 2] = float("inf")
-    weight = torch.ones((1, 1, 1, 1, 1), dtype=dtype, device=flag_gems.device)
-    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
+    weight = torch.ones((1, 5, 1, 1, 1), dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((5,), dtype=dtype, device=flag_gems.device)
+
+    specials = tu.make_special_input(dtype, scenario)
+    target = {"inp": inp, "weight": weight, "bias": bias}[special_arg]
+    target.flatten()[: specials.numel()] = specials
     kernel_size = (1, 1, 1)
 
     ref_inp = tu.to_reference(inp, True)
@@ -597,7 +591,7 @@ def test_slow_conv_transpose3d_nan_inf(dtype):
         inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (0, 0, 0), (1, 1, 1)
     )
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+    tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.slow_conv_transpose3d_negative

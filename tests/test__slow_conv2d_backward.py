@@ -585,24 +585,22 @@ def test__slow_conv2d_backward_backward(case, dtype):
 
 
 @pytest.mark._slow_conv2d_backward
-@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
-def test__slow_conv2d_backward_nan_inf(dtype):
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+)
+@pytest.mark.parametrize("special_arg", ["inp", "weight", "grad_output"])
+def test__slow_conv2d_backward_nan_inf(dtype, scenario, special_arg):
+    # Exact finite backgrounds isolate special-value propagation in each operand.
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
-    inp = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 5, 5), ["-1", "1"])
-    weight = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 3, 3), ["-1", "1"])
-    grad_output = _INPUT_SCALE * tu.make_input(dtype, (2, 2, 5, 5), ["-1", "1"])
+    inp = torch.ones((2, 3, 5, 5), dtype=dtype, device=flag_gems.device)
+    weight = torch.ones((2, 3, 3, 3), dtype=dtype, device=flag_gems.device)
+    grad_output = torch.ones((2, 2, 5, 5), dtype=dtype, device=flag_gems.device)
 
-    # Poison a few entries with nan / inf / -inf. The fp64-upcast reference sees
-    # exactly the same values, so the special values propagate identically
-    # through the im2col products on both paths; equal_nan tolerates the nan
-    # entries produced by nan products and inf + (-inf) accumulation.
-    inp[0, 0, 2, 2] = float("nan")
-    inp[1, 2, 1, 4] = float("inf")
-    weight[1, 1, 0, 0] = float("-inf")
-    grad_output[0, 1, 3, 3] = float("nan")
-    grad_output[1, 0, 0, 0] = float("inf")
+    specials = tu.make_special_input(dtype, scenario)
+    target = {"inp": inp, "weight": weight, "grad_output": grad_output}[special_arg]
+    target.flatten()[: specials.numel()] = specials
 
     kernel_size = (3, 3)
     stride = (1, 1)

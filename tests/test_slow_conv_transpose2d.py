@@ -221,14 +221,8 @@ def _disable_tf32():
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # The reference is computed with an fp64 upcast, so it is exact for the
-    # rounded inputs. The native op (and any good candidate) accumulates the
-    # transposed conv in the input dtype: fp16/bf16 keep at most fp16/bf16
-    # precision per add, so the native op itself deviates from the fp64
-    # reference by up to ~1.7e-2 (fp16) and ~1.2e-1 (bf16) on the larger 2D
-    # reductions (up to C_in*kH*kW = 100 terms). Measured over multiple seeds
-    # and shapes: fp16 -> 4e-2 and bf16 -> 4e-1 give a ~2x margin; fp32 with
-    # TF32 disabled stays at ~2e-6, comfortably inside the default 1e-4.
+    # Finite random workloads use an fp64 reference. These absolute bounds
+    # supplement the shared relative tolerance for the original dtype.
     if dtype == torch.bfloat16:
         atol = 4e-1
     elif dtype == torch.float16:
@@ -442,12 +436,12 @@ def test_slow_conv_transpose2d_backward(
 
 
 @pytest.mark.slow_conv_transpose2d
-@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
-def test_slow_conv_transpose2d_nan_inf(dtype):
-    # nan/inf in the input must propagate deterministically through the
-    # scatter-add of the transposed conv. Weights are strictly positive and no
-    # -inf is injected, so an inf output can never be cancelled into nan and
-    # the nan/inf positions are stable (equal_nan=True compares them exactly).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+)
+@pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
+def test_slow_conv_transpose2d_nan_inf(dtype, scenario, special_arg):
+    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
     (
@@ -458,12 +452,14 @@ def test_slow_conv_transpose2d_nan_inf(dtype):
         padding,
         output_padding,
         dilation,
-    ) = SLOW_CONV_TRANSPOSE2D_CASES[0]
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    inp[0, 0, 1, 1] = float("nan")
-    inp[0, 1, 3, 3] = float("inf")
-    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-    bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
+    ) = ((1, 2, 5, 5), (2, 5, 3, 3), (3, 3), (1, 1), (0, 0), (0, 0), (1, 1))
+    inp = torch.ones(inp_shape, dtype=dtype, device=flag_gems.device)
+    weight = torch.ones(weight_shape, dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((weight_shape[1],), dtype=dtype, device=flag_gems.device)
+
+    specials = tu.make_special_input(dtype, scenario)
+    target = {"inp": inp, "weight": weight, "bias": bias}[special_arg]
+    target.flatten()[: specials.numel()] = specials
 
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -483,7 +479,8 @@ def test_slow_conv_transpose2d_nan_inf(dtype):
         inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
     )
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+    tu.assert_result_close(res_out, ref_out)
+
     # Sanity check that the injected values actually reached the output.
 
 

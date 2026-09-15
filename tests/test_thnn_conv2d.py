@@ -104,14 +104,8 @@ def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
 
 
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
-    # The reference is computed with an fp64 upcast, so it is exact for the
-    # rounded inputs. The native op (and any good candidate) accumulates the
-    # im2col GEMM in the input dtype: fp16/bf16 keep at most fp16/bf16
-    # precision per add, so the native op itself deviates from the fp64
-    # reference by up to ~3e-2 (fp16) / ~2.5e-1 (bf16) on the larger
-    # reductions. Measured over 100 seeds per shape: fp16 -> 1e-2 and bf16 ->
-    # 5e-2 give 5x/3.3x margin; fp32 with TF32 disabled stays at ~3e-5,
-    # comfortably inside the default 1e-4.
+    # Finite random workloads use an fp64 reference. These absolute bounds
+    # supplement the shared relative tolerance for the original dtype.
     if dtype == torch.bfloat16:
         atol = 5e-2
     elif dtype == torch.float16:
@@ -288,23 +282,28 @@ def test_thnn_conv2d_backward(
 
 
 @pytest.mark.thnn_conv2d
-@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
-def test_thnn_conv2d_nan_inf(dtype):
-    # nan/inf must propagate through the im2col GEMM. A single nan in the input
-    # makes every overlapping output nan, and a single +inf with a strictly
-    # positive weight makes every overlapping output +inf (no inf + (-inf)
-    # cancellation, so the propagation is deterministic for any accumulation
-    # order). equal_nan=True compares the special values exactly.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(FLOAT_DTYPES))
+)
+@pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
+def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
+    # Exact finite backgrounds isolate special-value propagation in each operand.
     _disable_tf32()
 
-    inp_shape, weight_shape, kernel_size, stride, padding = THNN_CONV2D_CASES[0]
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    inp[0, 0, 1, 1] = float("nan")
-    inp[0, 1, 3, 3] = float("inf")
-    # Strictly positive finite weights: inf * positive = inf (never nan), and no
-    # term is zero so nan/inf never get swallowed by a 0 * inf product.
-    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
+    inp_shape, weight_shape, kernel_size, stride, padding = (
+        (1, 2, 5, 5),
+        (5, 2, 3, 3),
+        (3, 3),
+        (1, 1),
+        (1, 1),
+    )
+    inp = torch.ones(inp_shape, dtype=dtype, device=flag_gems.device)
+    weight = torch.ones(weight_shape, dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((weight_shape[0],), dtype=dtype, device=flag_gems.device)
+
+    specials = tu.make_special_input(dtype, scenario)
+    target = {"inp": inp, "weight": weight, "bias": bias}[special_arg]
+    target.flatten()[: specials.numel()] = specials
 
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -315,9 +314,7 @@ def test_thnn_conv2d_nan_inf(dtype):
 
     res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
-    # The special values must actually appear in the output (sanity check that
-    # the workload really exercises the nan/inf path).
+    tu.assert_result_close(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------
