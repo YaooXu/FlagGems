@@ -321,27 +321,25 @@ def test__values_uncoalesced(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._values
+@pytest.mark.parametrize("dtype", tu.selected_cases(_VALUES_FLOAT_DTYPES))
+def test__values_nan_inf(dtype):
+    # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
+    # verbatim (equal_nan=True), never sanitized. fp8-e4m3fn has no infinity
+    # encoding, so inf/-inf collapse to nan there (still returned verbatim).
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark._values
-    @pytest.mark.parametrize("dtype", _VALUES_FLOAT_DTYPES)
-    def test__values_nan_inf(dtype):
-        # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
-        # verbatim (equal_nan=True), never sanitized. fp8-e4m3fn has no infinity
-        # encoding, so inf/-inf collapse to nan there (still returned verbatim).
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten._values(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._values(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, inp, ref_inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 # ---------------------------------------------------------------------------

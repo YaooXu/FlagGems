@@ -305,45 +305,41 @@ def test__empty_per_channel_affine_quantized_out(
     _assert_per_channel_metadata(act_out_buf, ref_out_buf, axis, scales, zero_points)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._empty_per_channel_affine_quantized
+@pytest.mark.parametrize("shape", tu.selected_cases([(3, 4)]))
+def test__empty_per_channel_affine_quantized_nan_inf_scales(shape):
+    # The factory copies scale values verbatim, so nan/inf/-inf metadata must
+    # survive both the reference and the candidate unchanged. ``equal_nan`` is
+    # required because the exact-equality helpers compare nan != nan by default.
+    scales = torch.tensor(
+        [float("nan"), float("inf"), -float("inf")],
+        dtype=torch.float64,
+        device=flag_gems.device,
+    )
+    zero_points = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
+    ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
-    @pytest.mark._empty_per_channel_affine_quantized
-    def test__empty_per_channel_affine_quantized_nan_inf_scales():
-        # The factory copies scale values verbatim, so nan/inf/-inf metadata must
-        # survive both the reference and the candidate unchanged. ``equal_nan`` is
-        # required because the exact-equality helpers compare nan != nan by default.
-        shape = (3, 4)
-        scales = torch.tensor(
-            [float("nan"), float("inf"), -float("inf")],
-            dtype=torch.float64,
-            device=flag_gems.device,
-        )
-        zero_points = torch.tensor(
-            [0, 1, 2], dtype=torch.int64, device=flag_gems.device
-        )
-        ref_device = "cpu" if utils.TO_CPU else flag_gems.device
+    ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
+        shape,
+        scales=tu.to_reference(scales),
+        zero_points=tu.to_reference(zero_points),
+        axis=0,
+        dtype=torch.quint8,
+        device=ref_device,
+    )
 
-        ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
-            shape,
-            scales=tu.to_reference(scales),
-            zero_points=tu.to_reference(zero_points),
-            axis=0,
-            dtype=torch.quint8,
-            device=ref_device,
-        )
+    res_out = _resolve("_empty_per_channel_affine_quantized")(
+        shape,
+        scales=scales,
+        zero_points=zero_points,
+        axis=0,
+        dtype=torch.quint8,
+        device=flag_gems.device,
+    )
 
-        res_out = _resolve("_empty_per_channel_affine_quantized")(
-            shape,
-            scales=scales,
-            zero_points=zero_points,
-            axis=0,
-            dtype=torch.quint8,
-            device=flag_gems.device,
-        )
-
-        _assert_per_channel_metadata(
-            res_out, ref_out, 0, scales, zero_points, equal_nan=True
-        )
+    _assert_per_channel_metadata(
+        res_out, ref_out, 0, scales, zero_points, equal_nan=True
+    )
 
 
 @pytest.mark._empty_per_channel_affine_quantized

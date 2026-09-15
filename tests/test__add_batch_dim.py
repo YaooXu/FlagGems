@@ -96,10 +96,7 @@ def _batch_dims(shape):
 
 
 def _add_batch_dim_cases():
-    if tu.QUICK_MODE:
-        shapes = [(2, 19, 7)]
-    else:
-        shapes = _view_shapes()
+    shapes = _view_shapes()
     return [(shape, batch_dim) for shape in shapes for batch_dim in _batch_dims(shape)]
 
 
@@ -185,21 +182,19 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._add_batch_dim
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_ADD_BATCH_DIM_DTYPES))
+)
+def test__add_batch_dim_nan_inf(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    ref_inp = tu.to_reference(inp)
+    batch_dim, level = 0, 0
 
-    @pytest.mark._add_batch_dim
-    @pytest.mark.parametrize(
-        "dtype, scenario", tu.special_value_cases(_ADD_BATCH_DIM_DTYPES)
-    )
-    def test__add_batch_dim_nan_inf(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        ref_inp = tu.to_reference(inp)
-        batch_dim, level = 0, 0
+    ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
+    res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-        ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
-        res_out = _resolve_gems_op()(inp, batch_dim, level)
-
-        _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
+    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim

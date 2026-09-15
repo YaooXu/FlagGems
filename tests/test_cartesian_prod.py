@@ -228,72 +228,67 @@ def test_cartesian_prod_non_contiguous(dtype):
     tu.assert_result_equal(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.cartesian_prod
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test_cartesian_prod_nan_inf(dtype):
+    # Pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
+    # (assert_result_close uses equal_nan=True on the float path).
+    values = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
+    ref_inp = [
+        tu.to_reference(values),
+        tu.to_reference(other),
+    ]
 
-    @pytest.mark.cartesian_prod
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test_cartesian_prod_nan_inf(dtype):
-        # Pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
-        # (assert_result_close uses equal_nan=True on the float path).
-        values = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
-        ref_inp = [
-            tu.to_reference(values),
-            tu.to_reference(other),
-        ]
+    ref_out = torch.ops.aten.cartesian_prod(ref_inp)
+    res_out = _resolve_gems_op()([values, other])
 
-        ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-        res_out = _resolve_gems_op()([values, other])
-
-        tu.assert_result_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.cartesian_prod
+@pytest.mark.parametrize("sizes", _BACKWARD_SIZES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
+def test_cartesian_prod_backward(sizes, dtype):
+    out_shape = (sizes[0],) if len(sizes) == 1 else (math.prod(sizes), len(sizes))
+    inp = [
+        tu.make_input(dtype, (size,), ["-1", "1"]).requires_grad_() for size in sizes
+    ]
+    grad = tu.make_input(dtype, out_shape, ["-1", "1"])
+    ref_inp = [tu.to_reference(t) for t in inp]
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.cartesian_prod
-    @pytest.mark.parametrize("sizes", _BACKWARD_SIZES)
-    @pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
-    def test_cartesian_prod_backward(sizes, dtype):
-        out_shape = (sizes[0],) if len(sizes) == 1 else (math.prod(sizes), len(sizes))
-        inp = [
-            tu.make_input(dtype, (size,), ["-1", "1"]).requires_grad_()
-            for size in sizes
-        ]
-        grad = tu.make_input(dtype, out_shape, ["-1", "1"])
-        ref_inp = [tu.to_reference(t) for t in inp]
-        ref_grad = tu.to_reference(grad)
+    # The analytic gradient must match autograd on the aten reference...
+    ref_out = torch.ops.aten.cartesian_prod(ref_inp)
+    ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
+    expected = _expected_grads(ref_grad, sizes)
+    for got, exp in zip(ref_in_grads, expected):
+        tu.assert_result_close(got, exp)
 
-        # The analytic gradient must match autograd on the aten reference...
-        ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-        ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
-        expected = _expected_grads(ref_grad, sizes)
-        for got, exp in zip(ref_in_grads, expected):
-            tu.assert_result_close(got, exp)
+    # ...the candidate forward output must match the reference...
+    res_out = _resolve_gems_op()(inp)
+    tu.assert_result_equal(res_out, ref_out)
 
-        # ...the candidate forward output must match the reference...
-        res_out = _resolve_gems_op()(inp)
-        tu.assert_result_equal(res_out, ref_out)
-
-        # ...and, if the candidate output is differentiable, its gradient must match
-        # the analytic value too.
-        assert res_out.requires_grad
-        res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
-        for got, exp in zip(res_in_grads, expected):
-            tu.assert_result_close(got, exp)
+    # ...and, if the candidate output is differentiable, its gradient must match
+    # the analytic value too.
+    assert res_out.requires_grad
+    res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
+    for got, exp in zip(res_in_grads, expected):
+        tu.assert_result_close(got, exp)
 
 
 @pytest.mark.cartesian_prod

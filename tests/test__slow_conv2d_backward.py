@@ -590,45 +590,41 @@ def test__slow_conv2d_backward_backward(case, dtype):
     _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._slow_conv2d_backward
+@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
+def test__slow_conv2d_backward_nan_inf(dtype):
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
 
-    @pytest.mark._slow_conv2d_backward
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    def test__slow_conv2d_backward_nan_inf(dtype):
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
+    inp = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 5, 5), ["-1", "1"])
+    weight = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 3, 3), ["-1", "1"])
+    grad_output = _INPUT_SCALE * tu.make_input(dtype, (2, 2, 5, 5), ["-1", "1"])
 
-        inp = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 5, 5), ["-1", "1"])
-        weight = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 3, 3), ["-1", "1"])
-        grad_output = _INPUT_SCALE * tu.make_input(dtype, (2, 2, 5, 5), ["-1", "1"])
+    # Poison a few entries with nan / inf / -inf. The fp64-upcast reference sees
+    # exactly the same values, so the special values propagate identically
+    # through the im2col products on both paths; equal_nan tolerates the nan
+    # entries produced by nan products and inf + (-inf) accumulation.
+    inp[0, 0, 2, 2] = float("nan")
+    inp[1, 2, 1, 4] = float("inf")
+    weight[1, 1, 0, 0] = float("-inf")
+    grad_output[0, 1, 3, 3] = float("nan")
+    grad_output[1, 0, 0, 0] = float("inf")
 
-        # Poison a few entries with nan / inf / -inf. The fp64-upcast reference sees
-        # exactly the same values, so the special values propagate identically
-        # through the im2col products on both paths; equal_nan tolerates the nan
-        # entries produced by nan products and inf + (-inf) accumulation.
-        inp[0, 0, 2, 2] = float("nan")
-        inp[1, 2, 1, 4] = float("inf")
-        weight[1, 1, 0, 0] = float("-inf")
-        grad_output[0, 1, 3, 3] = float("nan")
-        grad_output[1, 0, 0, 0] = float("inf")
+    kernel_size = (3, 3)
+    stride = (1, 1)
+    padding = (1, 1)
+    ref = _reference_output_mask(
+        inp, weight, grad_output, kernel_size, stride, padding, _FULL_MASK
+    )
 
-        kernel_size = (3, 3)
-        stride = (1, 1)
-        padding = (1, 1)
-        ref = _reference_output_mask(
-            inp, weight, grad_output, kernel_size, stride, padding, _FULL_MASK
-        )
+    res = _resolve_gems_op()(
+        grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
+    )
 
-        res = _resolve_gems_op()(
-            grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
-        )
-
-        in_reduce_dim, out_reduce_dim = _reduction_dims(
-            (2, 3, 5, 5), (2, 3, 3, 3), stride, padding
-        )
-        _assert_grads_close(
-            res, ref, in_reduce_dim, out_reduce_dim, dtype, equal_nan=True
-        )
+    in_reduce_dim, out_reduce_dim = _reduction_dims(
+        (2, 3, 5, 5), (2, 3, 3, 3), stride, padding
+    )
+    _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype, equal_nan=True)
 
 
 @pytest.mark._slow_conv2d_backward

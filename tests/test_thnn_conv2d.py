@@ -213,77 +213,73 @@ def test_thnn_conv2d_value_ranges(
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.thnn_conv2d
+@pytest.mark.parametrize(
+    "inp_shape, weight_shape, kernel_size, stride, padding", _BACKWARD_CASES
+)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("bias", tu.selected_cases(BIASES))
+def test_thnn_conv2d_backward(
+    inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
+):
+    # aten::thnn_conv2d is differentiable (the autograd engine routes its
+    # backward to _slow_conv2d_backward). The reference gradient is computed on
+    # the fp64 upcast graph with a random grad_output; the candidate forward
+    # must match, and - if the candidate kernel advertises autograd support -
+    # its own gradient must match the fp64 reference too.
+    _disable_tf32()
 
-    @pytest.mark.thnn_conv2d
-    @pytest.mark.parametrize(
-        "inp_shape, weight_shape, kernel_size, stride, padding", _BACKWARD_CASES
+    inp, weight, bias_t = _make_conv_inputs(
+        inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    @pytest.mark.parametrize("bias", BIASES)
-    def test_thnn_conv2d_backward(
-        inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
-    ):
-        # aten::thnn_conv2d is differentiable (the autograd engine routes its
-        # backward to _slow_conv2d_backward). The reference gradient is computed on
-        # the fp64 upcast graph with a random grad_output; the candidate forward
-        # must match, and - if the candidate kernel advertises autograd support -
-        # its own gradient must match the fp64 reference too.
-        _disable_tf32()
+    inp = (_INPUT_SCALE * inp).requires_grad_()
+    weight = (_INPUT_SCALE * weight).requires_grad_()
+    if bias_t is not None:
+        bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
 
-        inp, weight, bias_t = _make_conv_inputs(
-            inp_shape, weight_shape, bias, dtype, ["-1", "1"]
+    out_shape = _conv_output_shape(
+        inp_shape, weight_shape, kernel_size, stride, padding
+    )
+    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
+    ref_grad_out = tu.to_reference(grad_out, True)
+    ref_out = torch.ops.aten.thnn_conv2d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
+    )
+    if ref_bias is None:
+        ref_gi, ref_gw = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight), ref_grad_out
         )
-        inp = (_INPUT_SCALE * inp).requires_grad_()
-        weight = (_INPUT_SCALE * weight).requires_grad_()
-        if bias_t is not None:
-            bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
-
-        out_shape = _conv_output_shape(
-            inp_shape, weight_shape, kernel_size, stride, padding
+        ref_gb = None
+    else:
+        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
         )
-        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias_t, True)
-        ref_grad_out = tu.to_reference(grad_out, True)
-        ref_out = torch.ops.aten.thnn_conv2d(
-            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
+    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+
+    tu.assert_result_close(res_out, ref_out.to(dtype))
+
+    assert res_out.requires_grad, "candidate must preserve autograd"
+
+    in_reduce_dim, out_reduce_dim = _reduction_dims(inp_shape, weight_shape, out_shape)
+    if bias_t is None:
+        res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
+        res_gb = None
+    else:
+        res_gi, res_gw, res_gb = torch.autograd.grad(
+            res_out, (inp, weight, bias_t), grad_out
         )
-        if ref_bias is None:
-            ref_gi, ref_gw = torch.autograd.grad(
-                ref_out, (ref_inp, ref_weight), ref_grad_out
-            )
-            ref_gb = None
-        else:
-            ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-                ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
-            )
-
-        res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
-
-        tu.assert_result_close(res_out, ref_out.to(dtype))
-
-        assert res_out.requires_grad, "candidate must preserve autograd"
-
-        in_reduce_dim, out_reduce_dim = _reduction_dims(
-            inp_shape, weight_shape, out_shape
-        )
-        if bias_t is None:
-            res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
-            res_gb = None
-        else:
-            res_gi, res_gw, res_gb = torch.autograd.grad(
-                res_out, (inp, weight, bias_t), grad_out
-            )
-        _assert_grads_close(
-            (res_gi, res_gw, res_gb),
-            (ref_gi, ref_gw, ref_gb),
-            in_reduce_dim,
-            out_reduce_dim,
-            dtype,
-        )
+    _assert_grads_close(
+        (res_gi, res_gw, res_gb),
+        (ref_gi, ref_gw, ref_gb),
+        in_reduce_dim,
+        out_reduce_dim,
+        dtype,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -291,41 +287,39 @@ if not tu.QUICK_MODE:
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.thnn_conv2d
+@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
+def test_thnn_conv2d_nan_inf(dtype):
+    # nan/inf must propagate through the im2col GEMM. A single nan in the input
+    # makes every overlapping output nan, and a single +inf with a strictly
+    # positive weight makes every overlapping output +inf (no inf + (-inf)
+    # cancellation, so the propagation is deterministic for any accumulation
+    # order). equal_nan=True compares the special values exactly.
+    _disable_tf32()
 
-    @pytest.mark.thnn_conv2d
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    def test_thnn_conv2d_nan_inf(dtype):
-        # nan/inf must propagate through the im2col GEMM. A single nan in the input
-        # makes every overlapping output nan, and a single +inf with a strictly
-        # positive weight makes every overlapping output +inf (no inf + (-inf)
-        # cancellation, so the propagation is deterministic for any accumulation
-        # order). equal_nan=True compares the special values exactly.
-        _disable_tf32()
+    inp_shape, weight_shape, kernel_size, stride, padding = THNN_CONV2D_CASES[0]
+    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+    inp[0, 0, 1, 1] = float("nan")
+    inp[0, 1, 3, 3] = float("inf")
+    # Strictly positive finite weights: inf * positive = inf (never nan), and no
+    # term is zero so nan/inf never get swallowed by a 0 * inf product.
+    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
+    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
 
-        inp_shape, weight_shape, kernel_size, stride, padding = THNN_CONV2D_CASES[0]
-        inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-        inp[0, 0, 1, 1] = float("nan")
-        inp[0, 1, 3, 3] = float("inf")
-        # Strictly positive finite weights: inf * positive = inf (never nan), and no
-        # term is zero so nan/inf never get swallowed by a 0 * inf product.
-        weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-        bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias, True)
+    ref_out = torch.ops.aten.thnn_conv2d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
+    ).to(dtype)
 
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias, True)
-        ref_out = torch.ops.aten.thnn_conv2d(
-            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
-        ).to(dtype)
+    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
 
-        res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
-
-        _assert_close(res_out, ref_out, dtype, equal_nan=True)
-        # The special values must actually appear in the output (sanity check that
-        # the workload really exercises the nan/inf path).
-        assert torch.isnan(ref_out).any()
-        assert torch.isinf(ref_out).any()
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+    # The special values must actually appear in the output (sanity check that
+    # the workload really exercises the nan/inf path).
+    assert torch.isnan(ref_out).any()
+    assert torch.isinf(ref_out).any()
 
 
 # ---------------------------------------------------------------------------

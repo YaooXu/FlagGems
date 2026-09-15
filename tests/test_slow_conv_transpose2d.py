@@ -342,16 +342,35 @@ def test_slow_conv_transpose2d_value_ranges(
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.slow_conv_transpose2d
+@pytest.mark.parametrize(
+    "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
+    _BACKWARD_CASES,
+)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("bias", tu.selected_cases(BIASES))
+def test_slow_conv_transpose2d_backward(
+    inp_shape,
+    weight_shape,
+    kernel_size,
+    stride,
+    padding,
+    output_padding,
+    dilation,
+    dtype,
+    bias,
+):
+    _disable_tf32()
 
-    @pytest.mark.slow_conv_transpose2d
-    @pytest.mark.parametrize(
-        "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
-        _BACKWARD_CASES,
+    inp, weight, bias_t = _make_conv_inputs(
+        inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    @pytest.mark.parametrize("bias", BIASES)
-    def test_slow_conv_transpose2d_backward(
+    inp = (_INPUT_SCALE * inp).requires_grad_()
+    weight = (_INPUT_SCALE * weight).requires_grad_()
+    if bias_t is not None:
+        bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
+
+    out_shape = _conv_output_shape(
         inp_shape,
         weight_shape,
         kernel_size,
@@ -359,83 +378,62 @@ if not tu.QUICK_MODE:
         padding,
         output_padding,
         dilation,
-        dtype,
-        bias,
+    )
+    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
+    ref_grad_out = tu.to_reference(grad_out, True)
+    ref_out = torch.ops.aten.slow_conv_transpose2d(
+        ref_inp,
+        ref_weight,
+        kernel_size,
+        ref_bias,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    )
+    if ref_bias is None:
+        ref_gi, ref_gw = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight), ref_grad_out
+        )
+        ref_gb = None
+    else:
+        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
+        )
+
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
+    )
+    _assert_close(res_out, ref_out.to(dtype), dtype)
+
+    assert res_out.requires_grad, "candidate must preserve autograd"
+    if bias_t is None:
+        res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
+        res_gb = None
+    else:
+        res_gi, res_gw, res_gb = torch.autograd.grad(
+            res_out, (inp, weight, bias_t), grad_out
+        )
+    # grad_input reduces over C_out*kH*kW terms, grad_weight/grad_bias over
+    # N*H_out*W_out terms; the fp64 reference is exact for the scaled inputs, so
+    # the candidate only needs to match the native precision.
+    in_reduce_dim = weight_shape[1] * weight_shape[2] * weight_shape[3]
+    out_reduce_dim = inp_shape[0] * out_shape[2] * out_shape[3]
+    for res_g, ref_g, reduce_dim in zip(
+        (res_gi, res_gw, res_gb),
+        (ref_gi, ref_gw, ref_gb),
+        (in_reduce_dim, out_reduce_dim, out_reduce_dim),
     ):
-        _disable_tf32()
-
-        inp, weight, bias_t = _make_conv_inputs(
-            inp_shape, weight_shape, bias, dtype, ["-1", "1"]
-        )
-        inp = (_INPUT_SCALE * inp).requires_grad_()
-        weight = (_INPUT_SCALE * weight).requires_grad_()
-        if bias_t is not None:
-            bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
-
-        out_shape = _conv_output_shape(
-            inp_shape,
-            weight_shape,
-            kernel_size,
-            stride,
-            padding,
-            output_padding,
-            dilation,
-        )
-        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
-
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias_t, True)
-        ref_grad_out = tu.to_reference(grad_out, True)
-        ref_out = torch.ops.aten.slow_conv_transpose2d(
-            ref_inp,
-            ref_weight,
-            kernel_size,
-            ref_bias,
-            stride,
-            padding,
-            output_padding,
-            dilation,
-        )
-        if ref_bias is None:
-            ref_gi, ref_gw = torch.autograd.grad(
-                ref_out, (ref_inp, ref_weight), ref_grad_out
-            )
-            ref_gb = None
+        if ref_g is None:
+            assert res_g is None
         else:
-            ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-                ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
+            utils.gems_assert_close(
+                res_g, ref_g.to(dtype), dtype, reduce_dim=reduce_dim
             )
-
-        res_out = _resolve_gems_op()(
-            inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
-        )
-        _assert_close(res_out, ref_out.to(dtype), dtype)
-
-        assert res_out.requires_grad, "candidate must preserve autograd"
-        if bias_t is None:
-            res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
-            res_gb = None
-        else:
-            res_gi, res_gw, res_gb = torch.autograd.grad(
-                res_out, (inp, weight, bias_t), grad_out
-            )
-        # grad_input reduces over C_out*kH*kW terms, grad_weight/grad_bias over
-        # N*H_out*W_out terms; the fp64 reference is exact for the scaled inputs, so
-        # the candidate only needs to match the native precision.
-        in_reduce_dim = weight_shape[1] * weight_shape[2] * weight_shape[3]
-        out_reduce_dim = inp_shape[0] * out_shape[2] * out_shape[3]
-        for res_g, ref_g, reduce_dim in zip(
-            (res_gi, res_gw, res_gb),
-            (ref_gi, ref_gw, ref_gb),
-            (in_reduce_dim, out_reduce_dim, out_reduce_dim),
-        ):
-            if ref_g is None:
-                assert res_g is None
-            else:
-                utils.gems_assert_close(
-                    res_g, ref_g.to(dtype), dtype, reduce_dim=reduce_dim
-                )
 
 
 # ---------------------------------------------------------------------------
@@ -443,54 +441,52 @@ if not tu.QUICK_MODE:
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.slow_conv_transpose2d
+@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
+def test_slow_conv_transpose2d_nan_inf(dtype):
+    # nan/inf in the input must propagate deterministically through the
+    # scatter-add of the transposed conv. Weights are strictly positive and no
+    # -inf is injected, so an inf output can never be cancelled into nan and
+    # the nan/inf positions are stable (equal_nan=True compares them exactly).
+    _disable_tf32()
 
-    @pytest.mark.slow_conv_transpose2d
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    def test_slow_conv_transpose2d_nan_inf(dtype):
-        # nan/inf in the input must propagate deterministically through the
-        # scatter-add of the transposed conv. Weights are strictly positive and no
-        # -inf is injected, so an inf output can never be cancelled into nan and
-        # the nan/inf positions are stable (equal_nan=True compares them exactly).
-        _disable_tf32()
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = SLOW_CONV_TRANSPOSE2D_CASES[0]
+    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+    inp[0, 0, 1, 1] = float("nan")
+    inp[0, 1, 3, 3] = float("inf")
+    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
+    bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
 
-        (
-            inp_shape,
-            weight_shape,
-            kernel_size,
-            stride,
-            padding,
-            output_padding,
-            dilation,
-        ) = SLOW_CONV_TRANSPOSE2D_CASES[0]
-        inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-        inp[0, 0, 1, 1] = float("nan")
-        inp[0, 1, 3, 3] = float("inf")
-        weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-        bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias, True)
+    ref_out = torch.ops.aten.slow_conv_transpose2d(
+        ref_inp,
+        ref_weight,
+        kernel_size,
+        ref_bias,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ).to(dtype)
 
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias, True)
-        ref_out = torch.ops.aten.slow_conv_transpose2d(
-            ref_inp,
-            ref_weight,
-            kernel_size,
-            ref_bias,
-            stride,
-            padding,
-            output_padding,
-            dilation,
-        ).to(dtype)
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
+    )
 
-        res_out = _resolve_gems_op()(
-            inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
-        )
-
-        _assert_close(res_out, ref_out, dtype, equal_nan=True)
-        # Sanity check that the injected values actually reached the output.
-        assert torch.isnan(ref_out).any()
-        assert torch.isinf(ref_out).any()
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+    # Sanity check that the injected values actually reached the output.
+    assert torch.isnan(ref_out).any()
+    assert torch.isinf(ref_out).any()
 
 
 # ---------------------------------------------------------------------------

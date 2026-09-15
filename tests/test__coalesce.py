@@ -311,41 +311,38 @@ def test__coalesce_value_ranges(value_range, dtype, case):
     assert not ref_inp.is_coalesced()
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark._coalesce
-    @pytest.mark.parametrize("case", _coalesce_cases())
-    @pytest.mark.parametrize(
-        "dtype", [dtype for dtype in _COALESCE_DTYPES if dtype.is_floating_point]
+@pytest.mark._coalesce
+@pytest.mark.parametrize("case", _coalesce_cases())
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases([dtype for dtype in _COALESCE_DTYPES if dtype.is_floating_point]),
+)
+def test__coalesce_nan_inf(case, dtype):
+    shape, nnz = case
+    inp = _make_input(shape, nnz, dtype)
+    # Rebuild with the same duplicate indices but values drawn from the
+    # nan/inf/-inf pattern (the result pattern is deterministic).
+    inp = torch.sparse_coo_tensor(
+        inp._indices().clone(),
+        _make_nan_inf_values(nnz, dtype),
+        shape,
+        device=flag_gems.device,
     )
-    def test__coalesce_nan_inf(case, dtype):
-        shape, nnz = case
-        inp = _make_input(shape, nnz, dtype)
-        # Rebuild with the same duplicate indices but values drawn from the
-        # nan/inf/-inf pattern (the result pattern is deterministic).
-        inp = torch.sparse_coo_tensor(
-            inp._indices().clone(),
-            _make_nan_inf_values(nnz, dtype),
-            shape,
-            device=flag_gems.device,
-        )
-        assert not inp.is_coalesced()
-        ref_inp = tu.to_reference(inp.clone())
+    assert not inp.is_coalesced()
+    ref_inp = tu.to_reference(inp.clone())
 
-        ref_out = torch.ops.aten._coalesce(ref_inp)
-        res_out = _resolve_gems_op()(inp)
+    ref_out = torch.ops.aten._coalesce(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        # .indices() on an uncoalesced tensor raises, so this also proves the
-        # structure is right.
-        assert res_out.is_coalesced()
-        assert ref_out.is_coalesced()
-        utils.gems_assert_equal(res_out.indices(), ref_out.indices())
-        utils.gems_assert_close(
-            res_out.values(), ref_out.values(), dtype, equal_nan=True
-        )
-        assert res_out is not inp
-        assert not inp.is_coalesced()
-        assert not ref_inp.is_coalesced()
+    # .indices() on an uncoalesced tensor raises, so this also proves the
+    # structure is right.
+    assert res_out.is_coalesced()
+    assert ref_out.is_coalesced()
+    utils.gems_assert_equal(res_out.indices(), ref_out.indices())
+    utils.gems_assert_close(res_out.values(), ref_out.values(), dtype, equal_nan=True)
+    assert res_out is not inp
+    assert not inp.is_coalesced()
+    assert not ref_inp.is_coalesced()
 
 
 @pytest.mark._coalesce_out

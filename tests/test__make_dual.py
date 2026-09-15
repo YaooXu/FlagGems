@@ -281,32 +281,30 @@ def test__make_dual_mutation(shape, dtype):
         tu.assert_result_equal(tangent, ref_tangent)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._make_dual
+@pytest.mark.parametrize("dtype", tu.selected_cases(_SPECIAL_DTYPES))
+def test__make_dual_special_values(dtype):
+    # A pure alias must preserve every bit: signed zero, infinities and NaN
+    # (including the NaN payload) must round-trip exactly.
+    values = torch.tensor(
+        [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(values)
+    tangent = torch.ones_like(values)
+    ref_tangent = tu.to_reference(tangent)
 
-    @pytest.mark._make_dual
-    @pytest.mark.parametrize("dtype", _SPECIAL_DTYPES)
-    def test__make_dual_special_values(dtype):
-        # A pure alias must preserve every bit: signed zero, infinities and NaN
-        # (including the NaN payload) must round-trip exactly.
-        values = torch.tensor(
-            [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(values)
-        tangent = torch.ones_like(values)
-        ref_tangent = tu.to_reference(tangent)
+    with dual_level() as level:
+        ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
+        res_out = _resolve_gems_op()(values, tangent, level)
 
-        with dual_level() as level:
-            ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-            res_out = _resolve_gems_op()(values, tangent, level)
-
-            tu.assert_result_equal(res_out, ref_out)
-            # signbit has no fp8 kernel, so the sign check goes through float32.
-            res_f = res_out.to(torch.float32)
-            values_f = values.to(torch.float32)
-            assert torch.signbit(res_f[0]).item() == torch.signbit(values_f[0]).item()
-            assert torch.signbit(res_f[1]).item() == torch.signbit(values_f[1]).item()
+        tu.assert_result_equal(res_out, ref_out)
+        # signbit has no fp8 kernel, so the sign check goes through float32.
+        res_f = res_out.to(torch.float32)
+        values_f = values.to(torch.float32)
+        assert torch.signbit(res_f[0]).item() == torch.signbit(values_f[0]).item()
+        assert torch.signbit(res_f[1]).item() == torch.signbit(values_f[1]).item()
 
 
 @pytest.mark._make_dual
@@ -401,22 +399,22 @@ def test__make_dual_rejects_non_int_level():
             _resolve_gems_op()(inp, tangent, 1.5)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark._make_dual
-    @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))
-    def test__make_dual_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "_make_dual", getattr(flag_gems, "_make_dual", None)
-        )
-        tangent = tu.make_special_input(dtype, scenario)
-        ref_tangent = tu.to_reference(tangent)
-        with torch.autograd.forward_ad.dual_level() as level:
-            ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
-            result = candidate(inp, tangent, level)
-            actual = torch.ops.aten._unpack_dual(result, level)
-            expected = torch.ops.aten._unpack_dual(ref_dual, level)
-            for actual_part, expected_part in zip(actual, expected):
-                tu.assert_result_equal(actual_part, expected_part)
+@pytest.mark._make_dual
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(DUAL_DTYPES))
+)
+def test__make_dual_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "_make_dual", getattr(flag_gems, "_make_dual", None)
+    )
+    tangent = tu.make_special_input(dtype, scenario)
+    ref_tangent = tu.to_reference(tangent)
+    with torch.autograd.forward_ad.dual_level() as level:
+        ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
+        result = candidate(inp, tangent, level)
+        actual = torch.ops.aten._unpack_dual(result, level)
+        expected = torch.ops.aten._unpack_dual(ref_dual, level)
+        for actual_part, expected_part in zip(actual, expected):
+            tu.assert_result_equal(actual_part, expected_part)

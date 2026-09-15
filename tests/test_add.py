@@ -127,7 +127,7 @@ def test_add_tensor_tensor_bool_value_ranges(shape, value_range):
 
 @pytest.mark.add
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
+@pytest.mark.parametrize("alpha", tu.selected_cases([0, 1, *utils.SCALARS], quick=[1]))
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add_tensor_tensor_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -159,104 +159,94 @@ def test_add_tensor_tensor_int_alpha(shape, alpha, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("scalar", utils.SCALARS)
+@pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add_tensor_scalar(shape, scalar, alpha, dtype):
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("shape", tu.selected_shapes())
-    @pytest.mark.parametrize("scalar", utils.SCALARS)
-    @pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add_tensor_scalar(shape, scalar, alpha, dtype):
-        inp = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.add.Scalar(ref_inp, scalar, alpha=alpha)
+    res_out = _resolve_gems_op()(inp, scalar, alpha=alpha)
 
-        ref_out = torch.ops.aten.add.Scalar(ref_inp, scalar, alpha=alpha)
-        res_out = _resolve_gems_op()(inp, scalar, alpha=alpha)
-
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("scalar", utils.SCALARS)
+@pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add_scalar_tensor(shape, scalar, alpha, dtype):
+    other = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_other = tu.to_reference(other)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("shape", tu.selected_shapes())
-    @pytest.mark.parametrize("scalar", utils.SCALARS)
-    @pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add_scalar_tensor(shape, scalar, alpha, dtype):
-        other = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_other = tu.to_reference(other)
+    # Scalar-first ordering: aten's tensor-first .Scalar overload computes
+    # other + scalar*alpha, which differs from the scalar-first semantics when
+    # alpha != 1. Use the scalar-first form torch.ops.aten.add(scalar, tensor)
+    # so the reference matches the candidate's scalar + other*alpha.
+    ref_out = torch.ops.aten.add(scalar, ref_other, alpha=alpha)
+    res_out = _resolve_gems_op()(scalar, other, alpha=alpha)
 
-        # Scalar-first ordering: aten's tensor-first .Scalar overload computes
-        # other + scalar*alpha, which differs from the scalar-first semantics when
-        # alpha != 1. Use the scalar-first form torch.ops.aten.add(scalar, tensor)
-        # so the reference matches the candidate's scalar + other*alpha.
-        ref_out = torch.ops.aten.add(scalar, ref_other, alpha=alpha)
-        res_out = _resolve_gems_op()(scalar, other, alpha=alpha)
-
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("a,b,alpha,dtype", tu.selected_cases(_ADD_SCALAR_SCALAR_CASES))
+def test_add_scalar_scalar(a, b, alpha, dtype):
+    # Scalar-scalar add is a pure Python-level promotion: both sides produce a
+    # 0-dim tensor of the natural dtype.
+    ref_out = torch.ops.aten.add(a, b, alpha=alpha)
+    res_out = _resolve_gems_op()(a, b, alpha=alpha)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("a,b,alpha,dtype", _ADD_SCALAR_SCALAR_CASES)
-    def test_add_scalar_scalar(a, b, alpha, dtype):
-        # Scalar-scalar add is a pure Python-level promotion: both sides produce a
-        # 0-dim tensor of the natural dtype.
-        ref_out = torch.ops.aten.add(a, b, alpha=alpha)
-        res_out = _resolve_gems_op()(a, b, alpha=alpha)
-
-        assert res_out.dtype == ref_out.dtype == dtype
-        tu.assert_result_close(res_out, ref_out)
+    assert res_out.dtype == ref_out.dtype == dtype
+    tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("broadcast_pair", _ADD_BROADCAST_PAIRS)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES + [torch.int32]))
+def test_add_broadcast(broadcast_pair, dtype):
+    shape_a, shape_b = broadcast_pair
+    inp = tu.make_input(dtype, shape_a, ["-1", "1"])
+    other = tu.make_input(dtype, shape_b, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("broadcast_pair", _ADD_BROADCAST_PAIRS)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES + [torch.int32])
-    def test_add_broadcast(broadcast_pair, dtype):
-        shape_a, shape_b = broadcast_pair
-        inp = tu.make_input(dtype, shape_a, ["-1", "1"])
-        other = tu.make_input(dtype, shape_b, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_other = tu.to_reference(other)
+    ref_out = torch.ops.aten.add(ref_inp, ref_other)
+    res_out = _resolve_gems_op()(inp, other)
 
-        ref_out = torch.ops.aten.add(ref_inp, ref_other)
-        res_out = _resolve_gems_op()(inp, other)
-
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add_nan_inf(dtype):
+    # inf + (-inf) -> nan, inf + inf -> inf, 0.0 + -0.0 -> 0.0; 1e30 also
+    # covers the overflow-to-inf path in fp16 (1e30 remains finite in bf16). equal_nan=True tolerates
+    # the nan outputs.
+    vals = [
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        0.0,
+        -0.0,
+        1.5,
+        -2.5,
+        1e30,
+        -1e30,
+    ]
+    inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
+    other = torch.tensor(vals[::-1], dtype=dtype, device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add_nan_inf(dtype):
-        # inf + (-inf) -> nan, inf + inf -> inf, 0.0 + -0.0 -> 0.0; 1e30 also
-        # covers the overflow-to-inf path in fp16 (1e30 remains finite in bf16). equal_nan=True tolerates
-        # the nan outputs.
-        vals = [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ]
-        inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
-        other = torch.tensor(vals[::-1], dtype=dtype, device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
-        ref_other = tu.to_reference(other)
+    ref_out = torch.ops.aten.add(ref_inp, ref_other)
+    res_out = _resolve_gems_op()(inp, other)
 
-        ref_out = torch.ops.aten.add(ref_inp, ref_other)
-        res_out = _resolve_gems_op()(inp, other)
-
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.add
@@ -316,9 +306,9 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
 @pytest.mark.parametrize(
     "other_type",
     (
-        ["complex"]
-        if tu.QUICK_MODE
-        else ["complex", "float_tensor", "int_tensor", "int_scalar"]
+        tu.selected_cases(
+            ["complex", "float_tensor", "int_tensor", "int_scalar"], quick=["complex"]
+        )
     ),
 )
 def test_add_complex32(shape, complex_dtype, other_type):
@@ -376,74 +366,70 @@ def test_add_noncontiguous(shape, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("shape", _ADD_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add_backward(shape, dtype):
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    other = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("shape", _ADD_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add_backward(shape, dtype):
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        other = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_other = tu.to_reference(other)
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.add(ref_inp, ref_other)
+    ref_in_grad, ref_other_grad = torch.autograd.grad(
+        ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
+    )
 
-        ref_out = torch.ops.aten.add(ref_inp, ref_other)
-        ref_in_grad, ref_other_grad = torch.autograd.grad(
-            ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
-        )
+    # d(a + b)/da == d(a + b)/db == 1, so both gradients are the incoming
+    # grad; this validates the reference autograd path itself.
+    tu.assert_result_close(ref_in_grad, ref_grad)
+    tu.assert_result_close(ref_other_grad, ref_grad)
 
-        # d(a + b)/da == d(a + b)/db == 1, so both gradients are the incoming
-        # grad; this validates the reference autograd path itself.
-        tu.assert_result_close(ref_in_grad, ref_grad)
-        tu.assert_result_close(ref_other_grad, ref_grad)
+    # The candidate forward output must match the reference...
+    res_out = _resolve_gems_op()(inp, other)
+    tu.assert_result_close(res_out, ref_out)
 
-        # The candidate forward output must match the reference...
-        res_out = _resolve_gems_op()(inp, other)
-        tu.assert_result_close(res_out, ref_out)
-
-        assert res_out.requires_grad
-        res_in_grad, res_other_grad = torch.autograd.grad(
-            res_out, (inp, other), grad_outputs=grad
-        )
-        tu.assert_result_close(res_in_grad, ref_grad)
-        tu.assert_result_close(res_other_grad, ref_grad)
+    assert res_out.requires_grad
+    res_in_grad, res_other_grad = torch.autograd.grad(
+        res_out, (inp, other), grad_outputs=grad
+    )
+    tu.assert_result_close(res_in_grad, ref_grad)
+    tu.assert_result_close(res_other_grad, ref_grad)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add_backward_broadcast(dtype):
+    shape_a, shape_b = (2, 3, 5), (5,)
+    inp = tu.make_input(dtype, shape_a, ["-1", "1"]).requires_grad_()
+    other = tu.make_input(dtype, shape_b, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, shape_a, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.add
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add_backward_broadcast(dtype):
-        shape_a, shape_b = (2, 3, 5), (5,)
-        inp = tu.make_input(dtype, shape_a, ["-1", "1"]).requires_grad_()
-        other = tu.make_input(dtype, shape_b, ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, shape_a, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_other = tu.to_reference(other)
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.add(ref_inp, ref_other)
+    ref_in_grad, ref_other_grad = torch.autograd.grad(
+        ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
+    )
 
-        ref_out = torch.ops.aten.add(ref_inp, ref_other)
-        ref_in_grad, ref_other_grad = torch.autograd.grad(
-            ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
-        )
+    # The gradient w.r.t. the broadcast operand is reduced over the broadcast
+    # dims: for (2, 3, 5) vs (5,), g_b == sum(grad, dim=(0, 1)).
+    expected_other_grad = ref_grad.sum(dim=(0, 1))
+    tu.assert_result_close(ref_in_grad, ref_grad)
+    tu.assert_result_close(ref_other_grad, expected_other_grad)
 
-        # The gradient w.r.t. the broadcast operand is reduced over the broadcast
-        # dims: for (2, 3, 5) vs (5,), g_b == sum(grad, dim=(0, 1)).
-        expected_other_grad = ref_grad.sum(dim=(0, 1))
-        tu.assert_result_close(ref_in_grad, ref_grad)
-        tu.assert_result_close(ref_other_grad, expected_other_grad)
+    res_out = _resolve_gems_op()(inp, other)
+    tu.assert_result_close(res_out, ref_out)
 
-        res_out = _resolve_gems_op()(inp, other)
-        tu.assert_result_close(res_out, ref_out)
-
-        assert res_out.requires_grad
-        res_in_grad, res_other_grad = torch.autograd.grad(
-            res_out, (inp, other), grad_outputs=grad
-        )
-        tu.assert_result_close(res_in_grad, ref_grad)
-        tu.assert_result_close(res_other_grad, expected_other_grad)
+    assert res_out.requires_grad
+    res_in_grad, res_other_grad = torch.autograd.grad(
+        res_out, (inp, other), grad_outputs=grad
+    )
+    tu.assert_result_close(res_in_grad, ref_grad)
+    tu.assert_result_close(res_other_grad, expected_other_grad)
 
 
 @pytest.mark.add_
@@ -468,7 +454,7 @@ def test_add__value_ranges(shape, value_range, dtype):
 @pytest.mark.add_
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("scalar", utils.SCALARS)
-@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
+@pytest.mark.parametrize("alpha", tu.selected_cases([0, 1, *utils.SCALARS], quick=[1]))
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -482,24 +468,22 @@ def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     tu.assert_result_close(inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.add_
+@pytest.mark.parametrize("broadcast_pair", _ADD_INPLACE_BROADCAST_PAIRS)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_add__broadcast(broadcast_pair, dtype):
+    shape_a, shape_b = broadcast_pair
+    inp = tu.make_input(dtype, shape_a, ["-1", "1"])
+    other = tu.make_input(dtype, shape_b, ["-1", "1"])
+    ref_inp = tu.to_reference(inp.clone())
+    ref_other = tu.to_reference(other)
 
-    @pytest.mark.add_
-    @pytest.mark.parametrize("broadcast_pair", _ADD_INPLACE_BROADCAST_PAIRS)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_add__broadcast(broadcast_pair, dtype):
-        shape_a, shape_b = broadcast_pair
-        inp = tu.make_input(dtype, shape_a, ["-1", "1"])
-        other = tu.make_input(dtype, shape_b, ["-1", "1"])
-        ref_inp = tu.to_reference(inp.clone())
-        ref_other = tu.to_reference(other)
+    ref_out = torch.ops.aten.add_(ref_inp, ref_other)
+    res_out = _resolve_gems_op_inplace()(inp, other)
 
-        ref_out = torch.ops.aten.add_(ref_inp, ref_other)
-        res_out = _resolve_gems_op_inplace()(inp, other)
-
-        assert res_out is inp
-        tu.assert_result_close(res_out, ref_out)
-        tu.assert_result_close(inp, ref_inp)
+    assert res_out is inp
+    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(inp, ref_inp)
 
 
 @pytest.mark.add_out
@@ -527,7 +511,7 @@ def test_add_out(shape, value_range, dtype):
 
 @pytest.mark.add_out
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
+@pytest.mark.parametrize("alpha", tu.selected_cases([0, 1, *utils.SCALARS], quick=[1]))
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add_out_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])

@@ -310,34 +310,32 @@ def test__nested_tensor_storage_offsets_value_ranges(dtype, value_range):
     _assert_offsets(res_out, ref_out, num_tensors)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._nested_tensor_storage_offsets
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test__nested_tensor_storage_offsets_nan_inf(dtype):
+    # Regular-operator spec: nan/inf coverage. Components containing
+    # nan/inf/-inf must not perturb the storage-offset metadata (a candidate
+    # that derives offsets from the stored values would produce bogus offsets).
+    num_tensors = 4
+    gen = torch.Generator("cpu").manual_seed(0)
+    lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
+    components = []
+    for length in lengths:
+        comp = tu.make_input(dtype, (length, 4), _DEFAULT_VALUE_RANGE)
+        flat = comp.reshape(-1)
+        flat[0] = float("nan")
+        if flat.numel() > 1:
+            flat[1] = float("inf")
+        if flat.numel() > 2:
+            flat[2] = float("-inf")
+        components.append(comp)
+    inp = torch.nested.nested_tensor(components, device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._nested_tensor_storage_offsets
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test__nested_tensor_storage_offsets_nan_inf(dtype):
-        # Regular-operator spec: nan/inf coverage. Components containing
-        # nan/inf/-inf must not perturb the storage-offset metadata (a candidate
-        # that derives offsets from the stored values would produce bogus offsets).
-        num_tensors = 4
-        gen = torch.Generator("cpu").manual_seed(0)
-        lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
-        components = []
-        for length in lengths:
-            comp = tu.make_input(dtype, (length, 4), _DEFAULT_VALUE_RANGE)
-            flat = comp.reshape(-1)
-            flat[0] = float("nan")
-            if flat.numel() > 1:
-                flat[1] = float("inf")
-            if flat.numel() > 2:
-                flat[2] = float("-inf")
-            components.append(comp)
-        inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out, num_tensors)
 
 
 @pytest.mark._nested_tensor_storage_offsets

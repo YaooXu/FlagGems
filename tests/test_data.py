@@ -152,26 +152,24 @@ def test_data_non_contiguous(layout, shape, dtype):
     _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.data
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test_data_special_values(dtype):
+    # data is a pure alias: +inf/-inf/nan/±0.0 round-trip unchanged; the
+    # equal_nan comparison tolerates the nan value.
+    values = torch.tensor(
+        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(values)
 
-    @pytest.mark.data
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test_data_special_values(dtype):
-        # data is a pure alias: +inf/-inf/nan/±0.0 round-trip unchanged; the
-        # equal_nan comparison tolerates the nan value.
-        values = torch.tensor(
-            [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(values)
+    ref_out = torch.ops.aten.data(ref_inp)
+    res_out = _resolve_gems_op()(values)
 
-        ref_out = torch.ops.aten.data(ref_inp)
-        res_out = _resolve_gems_op()(values)
-
-        assert res_out.data_ptr() == values.data_ptr()
-        # nan must compare equal to nan (the op must not sanitize it).
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
+    assert res_out.data_ptr() == values.data_ptr()
+    # nan must compare equal to nan (the op must not sanitize it).
+    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
 
 
 @pytest.mark.data
@@ -242,16 +240,16 @@ def test_data_rejects_extra_arguments():
         _resolve_gems_op()(inp, inp)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.data
-    @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(_DATA_DTYPES))
-    def test_data_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "data", getattr(flag_gems, "data", None)
-        )
-        expected = torch.ops.aten.data(reference)
-        actual = candidate(inp)
-        tu.assert_result_equal(actual, expected)
+@pytest.mark.data
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_DATA_DTYPES))
+)
+def test_data_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "data", getattr(flag_gems, "data", None)
+    )
+    expected = torch.ops.aten.data(reference)
+    actual = candidate(inp)
+    tu.assert_result_equal(actual, expected)

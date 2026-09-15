@@ -338,30 +338,28 @@ def test_crow_indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.crow_indices
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test_crow_indices_nan_inf_values_ignored(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values: crow_indices must still
+    # return exactly the stored crow tensor, unchanged, for every one of them.
+    shape = (3, 4)
+    crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
+    cols = torch.tensor(
+        [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
+    )
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    inp = torch.sparse_csr_tensor(crow, cols, values, shape)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.crow_indices
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test_crow_indices_nan_inf_values_ignored(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values: crow_indices must still
-        # return exactly the stored crow tensor, unchanged, for every one of them.
-        shape = (3, 4)
-        crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
-        cols = torch.tensor(
-            [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
-        )
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.crow_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.crow_indices(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, inp, ref_inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.crow_indices

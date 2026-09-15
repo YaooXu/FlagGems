@@ -76,34 +76,32 @@ def test_abs_int_value_ranges(shape, value_range, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.abs
+@pytest.mark.parametrize("dtype", tu.selected_cases(_ABS_FLOAT_DTYPES))
+def test_abs_nan_inf(dtype):
+    # inf/-inf -> +inf, nan -> nan, -0.0 -> 0.0. 1e30/-1e30 also cover the
+    # overflow-to-inf path in fp16 (1e30 remains finite in bf16); equal_nan=True tolerates nan outputs.
+    inp = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.abs
-    @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
-    def test_abs_nan_inf(dtype):
-        # inf/-inf -> +inf, nan -> nan, -0.0 -> 0.0. 1e30/-1e30 also cover the
-        # overflow-to-inf path in fp16 (1e30 remains finite in bf16); equal_nan=True tolerates nan outputs.
-        inp = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.abs(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.abs(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.abs
@@ -151,33 +149,31 @@ def test_abs_noncontiguous(shape, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.abs
+@pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_abs_backward(shape, dtype):
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.abs
-    @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_abs_backward(shape, dtype):
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.abs(ref_inp)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-        ref_out = torch.ops.aten.abs(ref_inp)
-        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    # d|x|/dx == sign(x) (torch defines sign(0) == 0), so the reference
+    # gradient must match the analytic value; this validates the reference
+    # autograd path itself.
+    expected_in_grad = torch.sign(ref_inp) * ref_grad
+    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-        # d|x|/dx == sign(x) (torch defines sign(0) == 0), so the reference
-        # gradient must match the analytic value; this validates the reference
-        # autograd path itself.
-        expected_in_grad = torch.sign(ref_inp) * ref_grad
-        tu.assert_result_close(ref_in_grad, expected_in_grad)
+    # The candidate forward output must match the reference...
+    res_out = _resolve_gems_op()(inp)
+    tu.assert_result_close(res_out, ref_out)
 
-        # The candidate forward output must match the reference...
-        res_out = _resolve_gems_op()(inp)
-        tu.assert_result_close(res_out, ref_out)
-
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-        tu.assert_result_close(res_in_grad, expected_in_grad)
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_close(res_in_grad, expected_in_grad)
 
 
 @pytest.mark.abs_

@@ -320,35 +320,33 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     _assert_sparse_values_close(dst, src)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.copy_sparse_to_sparse_
+@pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_DTYPES))
+def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
+    shape, sparse_dim, nnz = layout
+    base = _make_sparse_input(shape, sparse_dim, nnz, dtype)
+    values_shape = (nnz,) + tuple(shape[sparse_dim:])
+    src = torch.sparse_coo_tensor(
+        base._indices().clone(),
+        _make_nan_inf_values(values_shape, dtype),
+        tuple(shape),
+        device=flag_gems.device,
+    )
+    dst = torch.zeros_like(src)
+    ref_src = tu.to_reference(src)
+    ref_dst = tu.to_reference(dst.clone())
 
-    @pytest.mark.copy_sparse_to_sparse_
-    @pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)
-    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
-    def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
-        shape, sparse_dim, nnz = layout
-        base = _make_sparse_input(shape, sparse_dim, nnz, dtype)
-        values_shape = (nnz,) + tuple(shape[sparse_dim:])
-        src = torch.sparse_coo_tensor(
-            base._indices().clone(),
-            _make_nan_inf_values(values_shape, dtype),
-            tuple(shape),
-            device=flag_gems.device,
-        )
-        dst = torch.zeros_like(src)
-        ref_src = tu.to_reference(src)
-        ref_dst = tu.to_reference(dst.clone())
+    ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
+    res_out = _resolve_gems_op()(dst, src, False)
 
-        ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-        res_out = _resolve_gems_op()(dst, src, False)
-
-        assert res_out is dst
-        assert ref_out is ref_dst
-        assert dst._nnz() == src._nnz()
-        # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
-        # uses equal_nan=True.
-        _assert_sparse_values_close(res_out, ref_out)
-        _assert_sparse_values_close(dst, src)
+    assert res_out is dst
+    assert ref_out is ref_dst
+    assert dst._nnz() == src._nnz()
+    # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
+    # uses equal_nan=True.
+    _assert_sparse_values_close(res_out, ref_out)
+    _assert_sparse_values_close(dst, src)
 
 
 # ---------------------------------------------------------------------------

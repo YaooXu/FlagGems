@@ -176,23 +176,21 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     _assert_result(res_out, ref_out, inp, expected)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._shape_as_tensor
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test__shape_as_tensor_nan_inf(dtype):
+    # nan/inf are ordinary storage values for this op and must be ignored: the
+    # result is still the deterministic shape tensor over the logical shape.
+    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
+    inp[0, :, 0] = float("inf")
+    inp[1, :, 1] = float("-inf")
+    inp[2, :, 2] = float("nan")
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._shape_as_tensor
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test__shape_as_tensor_nan_inf(dtype):
-        # nan/inf are ordinary storage values for this op and must be ignored: the
-        # result is still the deterministic shape tensor over the logical shape.
-        inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
-        inp[0, :, 0] = float("inf")
-        inp[1, :, 1] = float("-inf")
-        inp[2, :, 2] = float("nan")
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, inp, (4, 8, 6))
+    _assert_result(res_out, ref_out, inp, (4, 8, 6))
 
 
 @pytest.mark._shape_as_tensor

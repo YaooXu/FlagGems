@@ -340,25 +340,23 @@ def test__nnz_full_storage(dtype):
     _assert_result(res_out, ref_out, nnz)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._nnz
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NNZ_FLOAT_DTYPES))
+def test__nnz_nan_inf_values_ignored(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values: all six entries count.
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._nnz
-    @pytest.mark.parametrize("dtype", _NNZ_FLOAT_DTYPES)
-    def test__nnz_nan_inf_values_ignored(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values: all six entries count.
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._nnz(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._nnz(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, 6)
+    _assert_result(res_out, ref_out, 6)
 
 
 @pytest.mark._nnz

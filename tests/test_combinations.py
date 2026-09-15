@@ -245,35 +245,33 @@ def test_combinations_non_contiguous(dtype):
     _assert_match(res_out, ref_out, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.combinations
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_CLOSE_DTYPES))
+def test_combinations_nan_inf(dtype):
+    # combinations is a pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
+    # (equal_nan=True is active on the float path of assert_result_close; 1e30
+    # overflows to inf in fp16/bf16 on both paths identically).
+    values = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(values)
 
-    @pytest.mark.combinations
-    @pytest.mark.parametrize("dtype", _FLOAT_CLOSE_DTYPES)
-    def test_combinations_nan_inf(dtype):
-        # combinations is a pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
-        # (equal_nan=True is active on the float path of assert_result_close; 1e30
-        # overflows to inf in fp16/bf16 on both paths identically).
-        values = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(values)
+    ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
+    res_out = _combinations_op()(values, 2, False)
 
-        ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
-        res_out = _combinations_op()(values, 2, False)
-
-        tu.assert_result_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.combinations
@@ -288,39 +286,37 @@ def test_combinations_does_not_mutate_input(dtype):
     _assert_match(inp, before, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.combinations
+@pytest.mark.parametrize("r", _R_VALUES)
+@pytest.mark.parametrize("with_replacement", _REPLACEMENT_MODES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
+def test_combinations_backward(r, with_replacement, dtype):
+    # The forward op is an index gather, so its gradient scatters grad_output
+    # back to the input positions. Compute the reference gradient with
+    # autograd.grad() on the reference device, validate it against the analytic
+    # scatter (on fp32/fp64, where both algorithms round identically), then
+    # check the candidate forward output and - only when the candidate output
+    # is differentiable - its gradient against the reference gradient.
+    n = 8
+    rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
+    inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, (rows, r), ["-1", "1"])
+    ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_()
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.combinations
-    @pytest.mark.parametrize("r", _R_VALUES)
-    @pytest.mark.parametrize("with_replacement", _REPLACEMENT_MODES)
-    @pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
-    def test_combinations_backward(r, with_replacement, dtype):
-        # The forward op is an index gather, so its gradient scatters grad_output
-        # back to the input positions. Compute the reference gradient with
-        # autograd.grad() on the reference device, validate it against the analytic
-        # scatter (on fp32/fp64, where both algorithms round identically), then
-        # check the candidate forward output and - only when the candidate output
-        # is differentiable - its gradient against the reference gradient.
-        n = 8
-        rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
-        inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, (rows, r), ["-1", "1"])
-        ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_()
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-        ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
-        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    if dtype in (torch.float32, torch.float64):
+        expected = _expected_combination_grad(n, r, with_replacement, ref_grad)
+        tu.assert_result_close(ref_in_grad, expected)
 
-        if dtype in (torch.float32, torch.float64):
-            expected = _expected_combination_grad(n, r, with_replacement, ref_grad)
-            tu.assert_result_close(ref_in_grad, expected)
+    res_out = _combinations_op()(inp, r, with_replacement)
+    tu.assert_result_close(res_out, ref_out)
 
-        res_out = _combinations_op()(inp, r, with_replacement)
-        tu.assert_result_close(res_out, ref_out)
-
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-        tu.assert_result_close(res_in_grad, ref_in_grad)
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.combinations

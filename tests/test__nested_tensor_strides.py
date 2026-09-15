@@ -390,34 +390,32 @@ def test__nested_tensor_strides_transposed(dtype):
     assert bool(torch.all(res_cpu[:, -1] == 4))
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._nested_tensor_strides
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_COMPONENT_DTYPES))
+def test__nested_tensor_strides_nan_inf_values(dtype):
+    # nan/inf/-inf component values are ordinary storage: the strides metadata is
+    # derived only from component shapes, so every row still reports the true
+    # component strides (4, 1).
+    num_tensors, num_dims = 4, 2
+    gen = torch.Generator("cpu").manual_seed(3)
+    lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
+    # fp8 e4m3fn has nan but no inf representation (assigning inf overflows), so
+    # the inf/-inf writes are guarded; nan is always covered.
+    has_inf = _supports_inf(dtype)
+    components = []
+    for length in lengths:
+        values = tu.make_input(dtype, (length, 4), _VALUE_RANGE)
+        values[0, 0] = float("nan")
+        values[0, 1] = float("inf") if has_inf else float("nan")
+        values[-1, -1] = float("-inf") if has_inf else float("nan")
+        components.append(values)
+    inp = torch.nested.nested_tensor(components, device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._nested_tensor_strides
-    @pytest.mark.parametrize("dtype", _FLOAT_COMPONENT_DTYPES)
-    def test__nested_tensor_strides_nan_inf_values(dtype):
-        # nan/inf/-inf component values are ordinary storage: the strides metadata is
-        # derived only from component shapes, so every row still reports the true
-        # component strides (4, 1).
-        num_tensors, num_dims = 4, 2
-        gen = torch.Generator("cpu").manual_seed(3)
-        lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
-        # fp8 e4m3fn has nan but no inf representation (assigning inf overflows), so
-        # the inf/-inf writes are guarded; nan is always covered.
-        has_inf = _supports_inf(dtype)
-        components = []
-        for length in lengths:
-            values = tu.make_input(dtype, (length, 4), _VALUE_RANGE)
-            values[0, 0] = float("nan")
-            values[0, 1] = float("inf") if has_inf else float("nan")
-            values[-1, -1] = float("-inf") if has_inf else float("nan")
-            components.append(values)
-        inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
+    _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
 
 
 # A candidate may legitimately surface a "not supported" failure as a

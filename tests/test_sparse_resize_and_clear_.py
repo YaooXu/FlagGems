@@ -354,30 +354,28 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
     utils.gems_assert_equal(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_resize_and_clear_
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test_sparse_resize_and_clear_nan_inf(dtype):
+    # nan / inf / -inf stored values are discarded by the clear; the resized
+    # tensor is empty and exactly matches the reference.
+    values = _nan_inf_values(dtype, (6,), flag_gems.device)
+    indices = torch.tensor(
+        [[0, 1, 2, 3, 0, 1], [0, 1, 2, 3, 4, 4]],
+        dtype=torch.long,
+        device=flag_gems.device,
+    )
+    inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.sparse_resize_and_clear_
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test_sparse_resize_and_clear_nan_inf(dtype):
-        # nan / inf / -inf stored values are discarded by the clear; the resized
-        # tensor is empty and exactly matches the reference.
-        values = _nan_inf_values(dtype, (6,), flag_gems.device)
-        indices = torch.tensor(
-            [[0, 1, 2, 3, 0, 1], [0, 1, 2, 3, 4, 4]],
-            dtype=torch.long,
-            device=flag_gems.device,
-        )
-        inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
+    res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
 
-        ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
-        res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
-
-        assert res_out is inp
-        assert ref_out is ref_inp
-        _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
-        _assert_empty_resized(ref_inp, (6, 5), 2, 0, dtype)
-        utils.gems_assert_equal(res_out, ref_out)
+    assert res_out is inp
+    assert ref_out is ref_inp
+    _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
+    _assert_empty_resized(ref_inp, (6, 5), 2, 0, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_resize_and_clear_

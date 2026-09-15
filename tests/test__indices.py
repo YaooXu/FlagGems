@@ -356,26 +356,24 @@ def test__indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._indices
+@pytest.mark.parametrize("dtype", tu.selected_cases(_INDICES_FLOAT_DTYPES))
+def test__indices_nan_inf_values_ignored(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values: _indices must still return
+    # exactly the stored index tensor, unchanged, for every one of them.
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark._indices
-    @pytest.mark.parametrize("dtype", _INDICES_FLOAT_DTYPES)
-    def test__indices_nan_inf_values_ignored(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values: _indices must still return
-        # exactly the stored index tensor, unchanged, for every one of them.
-        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten._indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._indices(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, inp, ref_inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark._indices

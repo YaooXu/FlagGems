@@ -374,33 +374,31 @@ def test__dimV_uncoalesced(dtype):
     _assert_result(res_out, ref_out, dense_dim)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._dimV
+@pytest.mark.parametrize("dtype", tu.selected_cases(_DIMV_FLOAT_DTYPES))
+def test__dimV_nan_inf_values_ignored(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
+    # reports the dense dim of the layout, independent of the payload.
+    values = torch.tensor(
+        [
+            [float("nan"), float("inf")],
+            [float("inf"), float("-inf")],
+            [0.0, -0.0],
+            [1.5, 2.5],
+            [float("nan"), 1.0],
+            [float("-inf"), 0.0],
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    inp = torch.sparse_coo_tensor(indices, values, (6, 2), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._dimV
-    @pytest.mark.parametrize("dtype", _DIMV_FLOAT_DTYPES)
-    def test__dimV_nan_inf_values_ignored(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
-        # reports the dense dim of the layout, independent of the payload.
-        values = torch.tensor(
-            [
-                [float("nan"), float("inf")],
-                [float("inf"), float("-inf")],
-                [0.0, -0.0],
-                [1.5, 2.5],
-                [float("nan"), 1.0],
-                [float("-inf"), 0.0],
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-        inp = torch.sparse_coo_tensor(indices, values, (6, 2), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._dimV(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._dimV(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, 1)
+    _assert_result(res_out, ref_out, 1)
 
 
 # A candidate may legitimately surface the "no sparse layout" failure as a

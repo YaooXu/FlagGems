@@ -354,25 +354,23 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     _assert_zero_output(res_out, ref_out, self_t, other_t, 1)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._new_zeros_with_same_feature_meta
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
+    # nan/inf/-inf are ordinary payloads that the allocation helper ignores;
+    # the output is still an exact zero fill.
+    self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
+    other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
-    @pytest.mark._new_zeros_with_same_feature_meta
-    @pytest.mark.parametrize("shape", tu.selected_shapes())
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
-        # nan/inf/-inf are ordinary payloads that the allocation helper ignores;
-        # the output is still an exact zero fill.
-        self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-        other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
-        ref_self = tu.to_reference(self_t)
-        ref_other = tu.to_reference(other_t)
+    ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
+        ref_self, ref_other, self_num_batch_dims=0
+    )
+    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
 
-        ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
-            ref_self, ref_other, self_num_batch_dims=0
-        )
-        res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
-
-        _assert_zero_output(res_out, ref_out, self_t, other_t, 0)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, 0)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta

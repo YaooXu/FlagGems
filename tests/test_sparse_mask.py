@@ -275,92 +275,86 @@ def test_sparse_mask_out(shape, dtype):
     _assert_masked(res_ret, ref_ret, ref_mask, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_mask
+@pytest.mark.parametrize("shape", _SPARSE_MASK_NANINF_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test_sparse_mask_nan_inf(shape, dtype):
+    # Special values (nan/inf/-inf, -0.0, and 1e30/-1e30 which overflow to inf
+    # in fp16/bf16) at masked positions must propagate to the output untouched:
+    # the gather never combines values. equal_nan=True tolerates the nan
+    # entries.
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    specials = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    n = min(inp.numel(), specials.numel())
+    inp.flatten()[:n] = specials[:n]
 
-    @pytest.mark.sparse_mask
-    @pytest.mark.parametrize("shape", _SPARSE_MASK_NANINF_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test_sparse_mask_nan_inf(shape, dtype):
-        # Special values (nan/inf/-inf, -0.0, and 1e30/-1e30 which overflow to inf
-        # in fp16/bf16) at masked positions must propagate to the output untouched:
-        # the gather never combines values. equal_nan=True tolerates the nan
-        # entries.
-        inp = tu.make_input(dtype, shape, ["-1", "1"])
-        specials = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        n = min(inp.numel(), specials.numel())
-        inp.flatten()[:n] = specials[:n]
+    # Mask every position holding a special value (plus random extras) so the
+    # nan/inf entries are guaranteed to flow into the result.
+    mask_dense = torch.rand(shape, device=flag_gems.device) > 0.7
+    mask_dense.flatten()[:n] = True
+    mask = mask_dense.to_sparse()
 
-        # Mask every position holding a special value (plus random extras) so the
-        # nan/inf entries are guaranteed to flow into the result.
-        mask_dense = torch.rand(shape, device=flag_gems.device) > 0.7
-        mask_dense.flatten()[:n] = True
-        mask = mask_dense.to_sparse()
+    ref_inp = tu.to_reference(inp)
+    ref_mask = tu.to_reference(mask)
 
-        ref_inp = tu.to_reference(inp)
-        ref_mask = tu.to_reference(mask)
+    ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
+    res_out = _resolve_gems_op()(inp, mask)
 
-        ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
-        res_out = _resolve_gems_op()(inp, mask)
-
-        _assert_masked(res_out, ref_out, ref_mask, dtype, equal_nan=True)
+    _assert_masked(res_out, ref_out, ref_mask, dtype, equal_nan=True)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_mask
+@pytest.mark.parametrize("shape", _SPARSE_MASK_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_sparse_mask_backward(shape, dtype):
+    # sparse_mask is differentiable w.r.t. self: the gradient is dense, nonzero
+    # exactly at the mask's positions (the backward gathers the grad_output at
+    # the mask indices). Validate the reference gradient analytically, then
+    # compare the candidate's gradient when it advertises autograd support.
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    mask = _make_mask(shape)
+    dense_grad = tu.make_input(dtype, shape, ["-1", "1"])
+    # grad_output for the sparse result: sparse COO with the mask's indices and
+    # values zero outside the mask.
+    grad_out = (dense_grad * mask.to_dense()).to_sparse()
 
-    @pytest.mark.sparse_mask
-    @pytest.mark.parametrize("shape", _SPARSE_MASK_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_sparse_mask_backward(shape, dtype):
-        # sparse_mask is differentiable w.r.t. self: the gradient is dense, nonzero
-        # exactly at the mask's positions (the backward gathers the grad_output at
-        # the mask indices). Validate the reference gradient analytically, then
-        # compare the candidate's gradient when it advertises autograd support.
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        mask = _make_mask(shape)
-        dense_grad = tu.make_input(dtype, shape, ["-1", "1"])
-        # grad_output for the sparse result: sparse COO with the mask's indices and
-        # values zero outside the mask.
-        grad_out = (dense_grad * mask.to_dense()).to_sparse()
+    ref_inp = tu.to_reference(inp)
+    ref_mask = tu.to_reference(mask)
+    ref_grad_out = tu.to_reference(grad_out)
 
-        ref_inp = tu.to_reference(inp)
-        ref_mask = tu.to_reference(mask)
-        ref_grad_out = tu.to_reference(grad_out)
+    ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad_out)[0]
 
-        ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
-        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad_out)[
-            0
-        ]
+    # d(out)/d(self) gathers grad_out at the mask positions; grad_out is zero
+    # outside the mask by construction, so the dense gradient equals
+    # grad_out.to_dense(). This validates the reference autograd path itself.
+    expected_in_grad = ref_grad_out.to_dense()
+    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-        # d(out)/d(self) gathers grad_out at the mask positions; grad_out is zero
-        # outside the mask by construction, so the dense gradient equals
-        # grad_out.to_dense(). This validates the reference autograd path itself.
-        expected_in_grad = ref_grad_out.to_dense()
-        tu.assert_result_close(ref_in_grad, expected_in_grad)
+    # The candidate forward must match the reference...
+    res_out = _resolve_gems_op()(inp, mask)
+    _assert_masked(res_out, ref_out, ref_mask, dtype)
 
-        # The candidate forward must match the reference...
-        res_out = _resolve_gems_op()(inp, mask)
-        _assert_masked(res_out, ref_out, ref_mask, dtype)
-
-        # ...and, if the candidate advertises autograd support (the current direct
-        # kernel returns a leaf sparse tensor, so res_out.requires_grad is False and
-        # this branch is skipped), its gradient must match the reference gradient.
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad_out)[0]
-        tu.assert_result_close(res_in_grad, ref_in_grad)
+    # ...and, if the candidate advertises autograd support (the current direct
+    # kernel returns a leaf sparse tensor, so res_out.requires_grad is False and
+    # this branch is skipped), its gradient must match the reference gradient.
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad_out)[0]
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.sparse_mask_negative

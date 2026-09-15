@@ -238,23 +238,21 @@ _NAN_INF_VALUES = [
 ]
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.atleast_2d_nan_inf
+@pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_atleast_2d_nan_inf(shape, dtype):
+    # A pure view must preserve inf / -inf / nan and signed zeros unchanged
+    # (tu.assert_result_close compares with equal_nan=True on the float path).
+    values = _NAN_INF_VALUES[: 1 if shape == () else len(_NAN_INF_VALUES)]
+    inp = torch.tensor(values, dtype=dtype, device=flag_gems.device).reshape(shape)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.atleast_2d_nan_inf
-    @pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_atleast_2d_nan_inf(shape, dtype):
-        # A pure view must preserve inf / -inf / nan and signed zeros unchanged
-        # (tu.assert_result_close compares with equal_nan=True on the float path).
-        values = _NAN_INF_VALUES[: 1 if shape == () else len(_NAN_INF_VALUES)]
-        inp = torch.tensor(values, dtype=dtype, device=flag_gems.device).reshape(shape)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.atleast_2d(ref_inp)
+    res_out = _resolve_candidate()(inp)
 
-        ref_out = torch.ops.aten.atleast_2d(ref_inp)
-        res_out = _resolve_candidate()(inp)
-
-        assert res_out.data_ptr() == inp.data_ptr()
-        tu.assert_result_equal(res_out, ref_out)
+    assert res_out.data_ptr() == inp.data_ptr()
+    tu.assert_result_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------
@@ -284,29 +282,27 @@ def test_atleast_2d_complex(shape, dtype, value_range):
 _BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.atleast_2d_backward
+@pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_atleast_2d_backward(shape, dtype):
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.atleast_2d_backward
-    @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_atleast_2d_backward(shape, dtype):
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        ref_inp = tu.to_reference(inp)
+    # atleast_2d is a view: d(sum(atleast_2d(x)))/dx is all ones in x's shape,
+    # both on the shape-promoting (0-dim/1-dim) and identity paths.
+    ref_out = torch.ops.aten.atleast_2d(ref_inp)
+    ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
+    tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
 
-        # atleast_2d is a view: d(sum(atleast_2d(x)))/dx is all ones in x's shape,
-        # both on the shape-promoting (0-dim/1-dim) and identity paths.
-        ref_out = torch.ops.aten.atleast_2d(ref_inp)
-        ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-        tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
+    res_out = _resolve_candidate()(inp)
+    tu.assert_result_close(res_out, ref_out)
 
-        res_out = _resolve_candidate()(inp)
-        tu.assert_result_close(res_out, ref_out)
-
-        # A candidate that returns a plain (non-autograd-aware) tensor cannot be
-        # differentiated; only check the gradient when the graph exists.
-        assert res_out.requires_grad
-        res_grad = torch.autograd.grad(res_out.sum(), inp)[0]
-        tu.assert_result_close(res_grad, torch.ones_like(inp))
+    # A candidate that returns a plain (non-autograd-aware) tensor cannot be
+    # differentiated; only check the gradient when the graph exists.
+    assert res_out.requires_grad
+    res_grad = torch.autograd.grad(res_out.sum(), inp)[0]
+    tu.assert_result_close(res_grad, torch.ones_like(inp))
 
 
 # ---------------------------------------------------------------------------
@@ -332,18 +328,16 @@ def test_atleast_2d_rejects_non_tensor():
         candidate([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.atleast_2d
-    @pytest.mark.parametrize(
-        "dtype, scenario", tu.special_value_cases(_SUPPORTED_DTYPES)
+@pytest.mark.atleast_2d
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_SUPPORTED_DTYPES))
+)
+def test_atleast_2d_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
     )
-    def test_atleast_2d_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "atleast_2d", getattr(flag_gems, "atleast_2d", None)
-        )
-        expected = torch.ops.aten.atleast_2d(reference)
-        actual = candidate(inp)
-        tu.assert_result_equal(actual, expected)
+    expected = torch.ops.aten.atleast_2d(reference)
+    actual = candidate(inp)
+    tu.assert_result_equal(actual, expected)

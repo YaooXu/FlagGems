@@ -314,111 +314,102 @@ def test_slow_conv_dilated2d_value_ranges(
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.slow_conv_dilated2d_backward
+@pytest.mark.parametrize(
+    "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
+    _SLOW_CONV_DILATED2D_BACKWARD_CASES,
+)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
+def test_slow_conv_dilated2d_backward(
+    inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
+):
+    # Backward coverage (常规算子测试用例): the fp64 reference gradients come from
+    # torch.autograd.grad over the native op; the candidate forward must match
+    # the reference output, and, when the candidate kernel advertises autograd
+    # support, its gradients must match the reference gradients too (with atol
+    # scaled by the contraction size of each gradient).
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
 
-    @pytest.mark.slow_conv_dilated2d_backward
-    @pytest.mark.parametrize(
-        "inp_shape, weight_shape, kernel_size, stride, padding, dilation",
-        _SLOW_CONV_DILATED2D_BACKWARD_CASES,
+    inp = _INPUT_SCALE * tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
+    weight = (
+        _INPUT_SCALE * tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
     )
-    @pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
-    def test_slow_conv_dilated2d_backward(
-        inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
-    ):
-        # Backward coverage (常规算子测试用例): the fp64 reference gradients come from
-        # torch.autograd.grad over the native op; the candidate forward must match
-        # the reference output, and, when the candidate kernel advertises autograd
-        # support, its gradients must match the reference gradients too (with atol
-        # scaled by the contraction size of each gradient).
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
+    bias = (
+        _INPUT_SCALE
+        * tu.make_input(dtype, (weight_shape[0],), ["-1", "1"]).requires_grad_()
+    )
 
-        inp = (
-            _INPUT_SCALE * tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
-        )
-        weight = (
-            _INPUT_SCALE
-            * tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
-        )
-        bias = (
-            _INPUT_SCALE
-            * tu.make_input(dtype, (weight_shape[0],), ["-1", "1"]).requires_grad_()
-        )
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias, True)
 
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias, True)
+    ref_fwd = torch.ops.aten.slow_conv_dilated2d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
+    )
+    ref_in_grad, ref_weight_grad, ref_bias_grad = torch.autograd.grad(
+        ref_fwd.sum(), (ref_inp, ref_weight, ref_bias)
+    )
 
-        ref_fwd = torch.ops.aten.slow_conv_dilated2d(
-            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
-        )
-        ref_in_grad, ref_weight_grad, ref_bias_grad = torch.autograd.grad(
-            ref_fwd.sum(), (ref_inp, ref_weight, ref_bias)
-        )
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias, stride, padding, dilation
+    )
+    _assert_close(res_out, ref_fwd.to(dtype), dtype)
 
-        res_out = _resolve_gems_op()(
-            inp, weight, kernel_size, bias, stride, padding, dilation
-        )
-        _assert_close(res_out, ref_fwd.to(dtype), dtype)
+    # grad_input contracts over C_out x kH x kW; grad_weight/grad_bias contract
+    # over N x H_out x W_out. Scale atol by those counts.
+    in_reduce_dim = weight_shape[0] * weight_shape[2] * weight_shape[3]
+    out_reduce_dim = inp_shape[0] * ref_fwd.shape[2] * ref_fwd.shape[3]
 
-        # grad_input contracts over C_out x kH x kW; grad_weight/grad_bias contract
-        # over N x H_out x W_out. Scale atol by those counts.
-        in_reduce_dim = weight_shape[0] * weight_shape[2] * weight_shape[3]
-        out_reduce_dim = inp_shape[0] * ref_fwd.shape[2] * ref_fwd.shape[3]
-
-        assert res_out.requires_grad
-        res_in_grad, res_weight_grad, res_bias_grad = torch.autograd.grad(
-            res_out.sum(), (inp, weight, bias)
-        )
-        utils.gems_assert_close(
-            res_in_grad, ref_in_grad, dtype, reduce_dim=in_reduce_dim
-        )
-        utils.gems_assert_close(
-            res_weight_grad, ref_weight_grad, dtype, reduce_dim=out_reduce_dim
-        )
-        utils.gems_assert_close(
-            res_bias_grad, ref_bias_grad, dtype, reduce_dim=out_reduce_dim
-        )
+    assert res_out.requires_grad
+    res_in_grad, res_weight_grad, res_bias_grad = torch.autograd.grad(
+        res_out.sum(), (inp, weight, bias)
+    )
+    utils.gems_assert_close(res_in_grad, ref_in_grad, dtype, reduce_dim=in_reduce_dim)
+    utils.gems_assert_close(
+        res_weight_grad, ref_weight_grad, dtype, reduce_dim=out_reduce_dim
+    )
+    utils.gems_assert_close(
+        res_bias_grad, ref_bias_grad, dtype, reduce_dim=out_reduce_dim
+    )
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.slow_conv_dilated2d_nan_inf
+@pytest.mark.parametrize("dtype", tu.selected_cases(FLOAT_DTYPES))
+def test_slow_conv_dilated2d_nan_inf(dtype):
+    # nan/inf/-inf propagate deterministically through a unit 1x1 kernel: each
+    # output element is exactly inp[0, 0, i, j] + inp[0, 1, i, j] + 1, so the
+    # nan/inf/-inf land at exactly the same output positions on both paths and
+    # no inf + (-inf) cancellation can occur. equal_nan=True tolerates the nan
+    # entries while inf must still match (an inf-vs-nan mismatch fails the
+    # compare).
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
 
-    @pytest.mark.slow_conv_dilated2d_nan_inf
-    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-    def test_slow_conv_dilated2d_nan_inf(dtype):
-        # nan/inf/-inf propagate deterministically through a unit 1x1 kernel: each
-        # output element is exactly inp[0, 0, i, j] + inp[0, 1, i, j] + 1, so the
-        # nan/inf/-inf land at exactly the same output positions on both paths and
-        # no inf + (-inf) cancellation can occur. equal_nan=True tolerates the nan
-        # entries while inf must still match (an inf-vs-nan mismatch fails the
-        # compare).
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
+    inp = torch.ones((1, 2, 4, 4), dtype=dtype, device=flag_gems.device)
+    weight = torch.ones((1, 2, 1, 1), dtype=dtype, device=flag_gems.device)
+    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
+    inp[0, 0, 1, 1] = float("nan")
+    inp[0, 1, 2, 2] = float("inf")
+    inp[0, 0, 3, 3] = float("-inf")
 
-        inp = torch.ones((1, 2, 4, 4), dtype=dtype, device=flag_gems.device)
-        weight = torch.ones((1, 2, 1, 1), dtype=dtype, device=flag_gems.device)
-        bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
-        inp[0, 0, 1, 1] = float("nan")
-        inp[0, 1, 2, 2] = float("inf")
-        inp[0, 0, 3, 3] = float("-inf")
+    kernel_size = (1, 1)
+    stride = (1, 1)
+    padding = (0, 0)
+    dilation = (1, 1)
 
-        kernel_size = (1, 1)
-        stride = (1, 1)
-        padding = (0, 0)
-        dilation = (1, 1)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias, True)
+    ref_out = torch.ops.aten.slow_conv_dilated2d(
+        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
+    ).to(dtype)
 
-        ref_inp = tu.to_reference(inp, True)
-        ref_weight = tu.to_reference(weight, True)
-        ref_bias = tu.to_reference(bias, True)
-        ref_out = torch.ops.aten.slow_conv_dilated2d(
-            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
-        ).to(dtype)
+    res_out = _resolve_gems_op()(
+        inp, weight, kernel_size, bias, stride, padding, dilation
+    )
 
-        res_out = _resolve_gems_op()(
-            inp, weight, kernel_size, bias, stride, padding, dilation
-        )
-
-        utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
+    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.slow_conv_dilated2d_negative

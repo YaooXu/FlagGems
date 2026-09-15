@@ -316,42 +316,36 @@ def test__unpack_dual_mutation(shape, dtype):
         utils.gems_assert_equal(primal, ref_primal)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._unpack_dual
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test__unpack_dual_special_values(dtype):
+    # A pure alias must preserve every bit: signed zero, infinities and NaN
+    # (including the NaN payload) must round-trip exactly through both the
+    # primal and the tangent.
+    values = torch.tensor(
+        [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_primal = tu.to_reference(values)
+    tangent = torch.ones_like(values)
+    ref_tangent = tu.to_reference(tangent)
 
-    @pytest.mark._unpack_dual
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test__unpack_dual_special_values(dtype):
-        # A pure alias must preserve every bit: signed zero, infinities and NaN
-        # (including the NaN payload) must round-trip exactly through both the
-        # primal and the tangent.
-        values = torch.tensor(
-            [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
-            dtype=dtype,
-            device=flag_gems.device,
+    with dual_level() as level:
+        ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
+        ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_dual, level)
+
+        dual = torch.ops.aten._make_dual(values, tangent, level)
+        res_primal_out, res_tangent_out = _resolve_gems_op()(dual, level)
+
+        utils.gems_assert_equal(res_primal_out, ref_primal_out, equal_nan=True)
+        utils.gems_assert_equal(res_tangent_out, ref_tangent_out, equal_nan=True)
+        assert (
+            torch.signbit(res_primal_out[0]).item() == torch.signbit(values[0]).item()
         )
-        ref_primal = tu.to_reference(values)
-        tangent = torch.ones_like(values)
-        ref_tangent = tu.to_reference(tangent)
-
-        with dual_level() as level:
-            ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
-            ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(
-                ref_dual, level
-            )
-
-            dual = torch.ops.aten._make_dual(values, tangent, level)
-            res_primal_out, res_tangent_out = _resolve_gems_op()(dual, level)
-
-            utils.gems_assert_equal(res_primal_out, ref_primal_out, equal_nan=True)
-            utils.gems_assert_equal(res_tangent_out, ref_tangent_out, equal_nan=True)
-            assert (
-                torch.signbit(res_primal_out[0]).item()
-                == torch.signbit(values[0]).item()
-            )
-            assert (
-                torch.signbit(res_primal_out[1]).item()
-                == torch.signbit(values[1]).item()
-            )
+        assert (
+            torch.signbit(res_primal_out[1]).item() == torch.signbit(values[1]).item()
+        )
 
 
 @pytest.mark._unpack_dual
@@ -432,22 +426,22 @@ def test__unpack_dual_rejects_inactive_level(dtype, bad_level):
             _resolve_gems_op()(dual, inactive)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark._unpack_dual
-    @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))
-    def test__unpack_dual_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "_unpack_dual", getattr(flag_gems, "_unpack_dual", None)
-        )
-        tangent = tu.make_special_input(dtype, scenario)
-        ref_tangent = tu.to_reference(tangent)
-        with torch.autograd.forward_ad.dual_level() as level:
-            ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
-            dual = torch.ops.aten._make_dual(inp, tangent, level)
-            actual = candidate(dual, level)
-            expected = torch.ops.aten._unpack_dual(ref_dual, level)
-            for actual_part, expected_part in zip(actual, expected):
-                tu.assert_result_equal(actual_part, expected_part)
+@pytest.mark._unpack_dual
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(DUAL_DTYPES))
+)
+def test__unpack_dual_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "_unpack_dual", getattr(flag_gems, "_unpack_dual", None)
+    )
+    tangent = tu.make_special_input(dtype, scenario)
+    ref_tangent = tu.to_reference(tangent)
+    with torch.autograd.forward_ad.dual_level() as level:
+        ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
+        dual = torch.ops.aten._make_dual(inp, tangent, level)
+        actual = candidate(dual, level)
+        expected = torch.ops.aten._unpack_dual(ref_dual, level)
+        for actual_part, expected_part in zip(actual, expected):
+            tu.assert_result_equal(actual_part, expected_part)

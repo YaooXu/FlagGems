@@ -84,35 +84,33 @@ def test_atleast_1d_value_ranges(shape, value_range, dtype):
     tu.assert_result_equal(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.atleast_1d
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test_atleast_1d_nan_inf(dtype):
+    # atleast_1d is a view: nan/inf/-inf/+-0.0 must pass through bit-for-bit.
+    inp = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.atleast_1d
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test_atleast_1d_nan_inf(dtype):
-        # atleast_1d is a view: nan/inf/-inf/+-0.0 must pass through bit-for-bit.
-        inp = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.atleast_1d(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.atleast_1d(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        assert res_out.data_ptr() == inp.data_ptr()
-        # equal_nan=True is active on both comparison paths.
-        tu.assert_result_equal(res_out, ref_out)
+    assert res_out.data_ptr() == inp.data_ptr()
+    # equal_nan=True is active on both comparison paths.
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.atleast_1d_sequence
@@ -149,30 +147,28 @@ def test_atleast_1d_sequence_empty():
     assert len(res_out) == 0
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.atleast_1d_backward
+@pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test_atleast_1d_backward(shape, dtype):
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.atleast_1d_backward
-    @pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test_atleast_1d_backward(shape, dtype):
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        ref_inp = tu.to_reference(inp)
+    # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
+    # x's shape on both the shape-changing (0-dim) and identity paths.
+    ref_out = torch.ops.aten.atleast_1d(ref_inp)
+    ref_in_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
+    tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
 
-        # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
-        # x's shape on both the shape-changing (0-dim) and identity paths.
-        ref_out = torch.ops.aten.atleast_1d(ref_inp)
-        ref_in_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-        tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
+    # The candidate forward must match the reference...
+    res_out = _resolve_gems_op()(inp)
+    tu.assert_result_equal(res_out, ref_out)
 
-        # The candidate forward must match the reference...
-        res_out = _resolve_gems_op()(inp)
-        tu.assert_result_equal(res_out, ref_out)
-
-        # ...and, if the candidate view is autograd-aware (a compiled kernel that
-        # returns a plain tensor is not), its gradient must match too.
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out.sum(), inp)[0]
-        tu.assert_result_close(res_in_grad, torch.ones_like(inp))
+    # ...and, if the candidate view is autograd-aware (a compiled kernel that
+    # returns a plain tensor is not), its gradient must match too.
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out.sum(), inp)[0]
+    tu.assert_result_close(res_in_grad, torch.ones_like(inp))
 
 
 @pytest.mark.atleast_1d_negative
@@ -192,18 +188,16 @@ def test_atleast_1d_rejects_non_tensor():
         gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.atleast_1d
-    @pytest.mark.parametrize(
-        "dtype, scenario", tu.special_value_cases(_SUPPORTED_DTYPES)
+@pytest.mark.atleast_1d
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_SUPPORTED_DTYPES))
+)
+def test_atleast_1d_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "atleast_1d", getattr(flag_gems, "atleast_1d", None)
     )
-    def test_atleast_1d_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "atleast_1d", getattr(flag_gems, "atleast_1d", None)
-        )
-        expected = torch.ops.aten.atleast_1d(reference)
-        actual = candidate(inp)
-        tu.assert_result_equal(actual, expected)
+    expected = torch.ops.aten.atleast_1d(reference)
+    actual = candidate(inp)
+    tu.assert_result_equal(actual, expected)

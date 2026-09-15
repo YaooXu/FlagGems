@@ -216,38 +216,36 @@ def test_adjoint_toggle(shape, dtype):
     assert not ref_out.is_conj()
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.adjoint
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test_adjoint_special_values(dtype):
-        # adjoint is a pure view for real dtypes: +inf/-inf/nan/+-0.0 round-trip
-        # unchanged through the transposed materialization; equal_nan=True in
-        # assert_result_close tolerates the nan output.
-        values = torch.tensor(
+@pytest.mark.adjoint
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test_adjoint_special_values(dtype):
+    # adjoint is a pure view for real dtypes: +inf/-inf/nan/+-0.0 round-trip
+    # unchanged through the transposed materialization; equal_nan=True in
+    # assert_result_close tolerates the nan output.
+    values = torch.tensor(
+        [
             [
-                [
-                    float("inf"),
-                    float("-inf"),
-                    float("nan"),
-                    0.0,
-                    -0.0,
-                    1.5,
-                    -2.5,
-                    1e30,
-                    -1e30,
-                ]
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(values)
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ]
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(values)
 
-        ref_out = torch.ops.aten.adjoint(ref_inp)
-        res_out = _resolve_gems_op()(values)
+    ref_out = torch.ops.aten.adjoint(ref_inp)
+    res_out = _resolve_gems_op()(values)
 
-        _assert_view_semantics(res_out, ref_out, values)
-        tu.assert_result_equal(res_out, ref_out)
+    _assert_view_semantics(res_out, ref_out, values)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.adjoint
@@ -272,38 +270,38 @@ def test_adjoint_mutation(shape, dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.adjoint
+@pytest.mark.parametrize("shape", _ADJOINT_BACKWARD_SHAPES)
+@pytest.mark.parametrize(
+    "dtype", tu.selected_cases(utils.FLOAT_DTYPES + utils.COMPLEX_DTYPES)
+)
+def test_adjoint_backward(shape, dtype):
+    # adjoint is an involution (its own inverse), so d(adjoint(x))/dx ==
+    # adjoint(dy): the reference gradient must match the analytic value. The
+    # candidate is validated on the same contract when it advertises autograd
+    # support (a true view of a leaf carries requires_grad through the view
+    # machinery; a materializing kernel would not).
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, _transposed_shape(shape), ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark.adjoint
-    @pytest.mark.parametrize("shape", _ADJOINT_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES + utils.COMPLEX_DTYPES)
-    def test_adjoint_backward(shape, dtype):
-        # adjoint is an involution (its own inverse), so d(adjoint(x))/dx ==
-        # adjoint(dy): the reference gradient must match the analytic value. The
-        # candidate is validated on the same contract when it advertises autograd
-        # support (a true view of a leaf carries requires_grad through the view
-        # machinery; a materializing kernel would not).
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, _transposed_shape(shape), ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.adjoint(ref_inp)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    expected_in_grad = torch.ops.aten.adjoint(ref_grad)
+    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-        ref_out = torch.ops.aten.adjoint(ref_inp)
-        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-        expected_in_grad = torch.ops.aten.adjoint(ref_grad)
-        tu.assert_result_close(ref_in_grad, expected_in_grad)
+    # The candidate forward output must match the reference...
+    res_out = _resolve_gems_op()(inp)
+    tu.assert_result_equal(res_out, ref_out)
+    _assert_view_semantics(res_out, ref_out, inp)
 
-        # The candidate forward output must match the reference...
-        res_out = _resolve_gems_op()(inp)
-        tu.assert_result_equal(res_out, ref_out)
-        _assert_view_semantics(res_out, ref_out, inp)
-
-        # ...and, if the candidate advertises autograd support, its gradient must
-        # match the analytic value too (the input grad values are the same ones the
-        # reference gradient was computed from).
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-        tu.assert_result_close(res_in_grad, expected_in_grad)
+    # ...and, if the candidate advertises autograd support, its gradient must
+    # match the analytic value too (the input grad values are the same ones the
+    # reference gradient was computed from).
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_close(res_in_grad, expected_in_grad)
 
 
 @pytest.mark.adjoint
@@ -349,17 +347,17 @@ def test_adjoint_rejects_non_tensor():
         _resolve_gems_op()(3.14)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.adjoint
-    @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(_ADJOINT_DTYPES))
-    def test_adjoint_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        inp = inp.reshape(1, -1)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "adjoint", getattr(flag_gems, "adjoint", None)
-        )
-        expected = torch.ops.aten.adjoint(reference)
-        actual = candidate(inp)
-        tu.assert_result_equal(actual, expected)
+@pytest.mark.adjoint
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_ADJOINT_DTYPES))
+)
+def test_adjoint_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    inp = inp.reshape(1, -1)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "adjoint", getattr(flag_gems, "adjoint", None)
+    )
+    expected = torch.ops.aten.adjoint(reference)
+    actual = candidate(inp)
+    tu.assert_result_equal(actual, expected)

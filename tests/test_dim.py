@@ -292,7 +292,7 @@ def test_dim_dense_value_ranges(shape, value_range, dtype):
 @pytest.mark.dim
 @pytest.mark.parametrize(
     "shape",
-    [(16, 32), (8, 16, 32), (4, 8, 16, 32)] if not tu.QUICK_MODE else [(2, 19, 7)],
+    tu.selected_cases([(16, 32), (8, 16, 32), (4, 8, 16, 32)], quick=[(2, 19, 7)]),
 )
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
 def test_dim_noncontiguous_dense(shape, dtype):
@@ -435,71 +435,65 @@ def test_dim_uncoalesced_coo(dtype):
     _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.dim
+@pytest.mark.parametrize("dtype", tu.selected_cases(_DIM_FLOAT_DTYPES))
+def test_dim_nan_inf_dense(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
+    # strided path still reports len(shape).
+    inp = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    ).reshape(2, 3)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.dim
-    @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)
-    def test_dim_nan_inf_dense(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
-        # strided path still reports len(shape).
-        inp = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        ).reshape(2, 3)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.dim(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.dim(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, 2)
+    _assert_result(res_out, ref_out, 2)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.dim
+@pytest.mark.parametrize("dtype", tu.selected_cases(_DIM_FLOAT_DTYPES))
+def test_dim_nan_inf_coo(dtype):
+    # The same values stored sparsely: dim reports the full rank (1 for this
+    # 1-D layout) regardless of the nan/inf payload.
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.dim
-    @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)
-    def test_dim_nan_inf_coo(dtype):
-        # The same values stored sparsely: dim reports the full rank (1 for this
-        # 1-D layout) regardless of the nan/inf payload.
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.dim(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.dim(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, 1)
+    _assert_result(res_out, ref_out, 1)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.dim
+@pytest.mark.parametrize("dtype", tu.selected_cases(_DIM_FLOAT_DTYPES))
+def test_dim_nan_inf_csr(dtype):
+    # The same values stored in CSR form: dim reports the full logical rank of
+    # the layout (2) regardless of the nan/inf payload.
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
+    col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
+    inp = torch.sparse_csr_tensor(
+        crow_indices, col_indices, values, (3, 4), device=flag_gems.device
+    )
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark.dim
-    @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)
-    def test_dim_nan_inf_csr(dtype):
-        # The same values stored in CSR form: dim reports the full logical rank of
-        # the layout (2) regardless of the nan/inf payload.
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
-        col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
-        inp = torch.sparse_csr_tensor(
-            crow_indices, col_indices, values, (3, 4), device=flag_gems.device
-        )
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.dim(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.dim(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, 2)
+    _assert_result(res_out, ref_out, 2)
 
 
 @pytest.mark.dim

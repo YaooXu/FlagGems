@@ -257,23 +257,21 @@ def test__version_value_ranges(shape, value_range, dtype):
     _assert_result(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._version
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_VALUE_DTYPES))
+def test__version_nan_inf(shape, dtype):
+    # nan / inf / -inf are ordinary payloads the metadata query must ignore; a
+    # freshly built tensor holding them still reports version 0.
+    inp = _nan_inf_tensor(shape, dtype, flag_gems.device)
+    ref_device = "cpu" if utils.TO_CPU else flag_gems.device
+    ref_inp = _nan_inf_tensor(shape, dtype, ref_device)
 
-    @pytest.mark._version
-    @pytest.mark.parametrize("shape", tu.selected_shapes())
-    @pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
-    def test__version_nan_inf(shape, dtype):
-        # nan / inf / -inf are ordinary payloads the metadata query must ignore; a
-        # freshly built tensor holding them still reports version 0.
-        inp = _nan_inf_tensor(shape, dtype, flag_gems.device)
-        ref_device = "cpu" if utils.TO_CPU else flag_gems.device
-        ref_inp = _nan_inf_tensor(shape, dtype, ref_device)
+    ref_out = torch.ops.aten._version(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten._version(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _, ref_int = _assert_result(res_out, ref_out)
-        assert ref_int == 0
+    _, ref_int = _assert_result(res_out, ref_out)
+    assert ref_int == 0
 
 
 @pytest.mark._version

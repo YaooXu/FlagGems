@@ -358,30 +358,28 @@ def test_ccol_indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.ccol_indices
+@pytest.mark.parametrize("dtype", tu.selected_cases(_CSC_NAN_DTYPES))
+def test_ccol_indices_nan_inf_values_ignored(dtype):
+    # nan/inf/-inf/±0.0 are ordinary stored values: ccol_indices must still
+    # return exactly the stored ccol tensor, unchanged, for every one of them.
+    shape = (3, 4)
+    ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
+    rows = torch.tensor(
+        [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
+    )
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.ccol_indices
-    @pytest.mark.parametrize("dtype", _CSC_NAN_DTYPES)
-    def test_ccol_indices_nan_inf_values_ignored(dtype):
-        # nan/inf/-inf/±0.0 are ordinary stored values: ccol_indices must still
-        # return exactly the stored ccol tensor, unchanged, for every one of them.
-        shape = (3, 4)
-        ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
-        rows = torch.tensor(
-            [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
-        )
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.ccol_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.ccol_indices(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_result(res_out, ref_out, inp, ref_inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices

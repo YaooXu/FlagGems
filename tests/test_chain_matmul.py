@@ -225,33 +225,31 @@ def test_chain_matmul_out(shapes, value_range, dtype):
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.chain_matmul
+@pytest.mark.parametrize("dtype", tu.selected_cases(_CHAIN_DTYPES))
+def test_chain_matmul_nan_inf(dtype):
+    # inf @ finite exercises inf * 0 -> nan inside the reduction as well as
+    # inf + inf -> inf and (-inf) + (-inf) -> -inf; the output pattern is
+    # deterministic on both paths and equal_nan=True tolerates the nan entries.
+    m1 = torch.tensor(
+        [[float("inf"), 1.0], [1.0, float("-inf")]],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    m2 = torch.tensor(
+        [[1.0, 0.0], [1.0, 1.0]],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    inp = [m1, m2]
+    ref_inp = _to_ref(inp)
 
-    @pytest.mark.chain_matmul
-    @pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
-    def test_chain_matmul_nan_inf(dtype):
-        # inf @ finite exercises inf * 0 -> nan inside the reduction as well as
-        # inf + inf -> inf and (-inf) + (-inf) -> -inf; the output pattern is
-        # deterministic on both paths and equal_nan=True tolerates the nan entries.
-        m1 = torch.tensor(
-            [[float("inf"), 1.0], [1.0, float("-inf")]],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        m2 = torch.tensor(
-            [[1.0, 0.0], [1.0, 1.0]],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        inp = [m1, m2]
-        ref_inp = _to_ref(inp)
+    ref_out = torch.ops.aten.chain_matmul(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.chain_matmul(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        assert res_out.dtype == dtype
-        ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
-        tu.assert_result_close(res_out, ref)
+    assert res_out.dtype == dtype
+    ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
+    tu.assert_result_close(res_out, ref)
 
 
 # ---------------------------------------------------------------------------
@@ -259,36 +257,34 @@ if not tu.QUICK_MODE:
 # ---------------------------------------------------------------------------
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.chain_matmul
+@pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_CHAIN_DTYPES))
+def test_chain_matmul_backward(shapes, dtype):
+    inp = [m.requires_grad_() for m in _make_chain(shapes, dtype, ["-1", "1"])]
+    grad = tu.make_input(dtype, (shapes[0][0], shapes[-1][1]), ["-1", "1"])
 
-    @pytest.mark.chain_matmul
-    @pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)
-    @pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
-    def test_chain_matmul_backward(shapes, dtype):
-        inp = [m.requires_grad_() for m in _make_chain(shapes, dtype, ["-1", "1"])]
-        grad = tu.make_input(dtype, (shapes[0][0], shapes[-1][1]), ["-1", "1"])
+    ref_inp = []
+    for matrix in inp:
+        ref_matrix = tu.to_reference(matrix.detach())
+        ref_inp.append(ref_matrix.requires_grad_())
+    ref_grad = tu.to_reference(grad)
 
-        ref_inp = []
-        for matrix in inp:
-            ref_matrix = tu.to_reference(matrix.detach())
-            ref_inp.append(ref_matrix.requires_grad_())
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten.chain_matmul(ref_inp)
+    ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
+    for ref_g, shape in zip(ref_grads, shapes):
+        assert ref_g.shape == shape
 
-        ref_out = torch.ops.aten.chain_matmul(ref_inp)
-        ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
-        for ref_g, shape in zip(ref_grads, shapes):
-            assert ref_g.shape == shape
+    # The candidate forward must match the native-dtype reference...
+    res_out = _resolve_gems_op()(inp)
+    tu.assert_result_close(res_out, ref_out.to(dtype))
 
-        # The candidate forward must match the native-dtype reference...
-        res_out = _resolve_gems_op()(inp)
-        tu.assert_result_close(res_out, ref_out.to(dtype))
-
-        assert res_out.requires_grad
-        res_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
-        for res_g, ref_g in zip(res_grads, ref_grads):
-            assert res_g.dtype == dtype
-            assert res_g.shape == ref_g.shape
-            tu.assert_result_close(res_g, ref_g.to(dtype))
+    assert res_out.requires_grad
+    res_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
+    for res_g, ref_g in zip(res_grads, ref_grads):
+        assert res_g.dtype == dtype
+        assert res_g.shape == ref_g.shape
+        tu.assert_result_close(res_g, ref_g.to(dtype))
 
 
 # ---------------------------------------------------------------------------

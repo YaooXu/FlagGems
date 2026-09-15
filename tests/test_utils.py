@@ -36,6 +36,11 @@ from .conftest import QUICK_MODE
 # QUICK_MODE comes directly from pytest --quick; without it, use default cases.
 
 
+def selected_cases(cases, *, quick=()):
+    """Select parameter values; an empty quick subset contributes no cases."""
+    return list(quick if QUICK_MODE else cases)
+
+
 def selected_shapes():
     return QUICK_SHAPES if QUICK_MODE else REQUIRED_SHAPES
 

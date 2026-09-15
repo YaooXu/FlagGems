@@ -158,23 +158,21 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     _assert_arange_result(res_out, ref_out, inp, expected_len)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._dim_arange
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+def test__dim_arange_nan_inf(dtype):
+    # nan/inf are ordinary storage values for this op and must be ignored: the
+    # result is still the deterministic arange sequence over the selected dim.
+    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
+    inp[0, :, 0] = float("inf")
+    inp[1, :, 1] = float("-inf")
+    inp[2, :, 2] = float("nan")
+    ref_inp = tu.to_reference(inp)
 
-    @pytest.mark._dim_arange
-    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-    def test__dim_arange_nan_inf(dtype):
-        # nan/inf are ordinary storage values for this op and must be ignored: the
-        # result is still the deterministic arange sequence over the selected dim.
-        inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
-        inp[0, :, 0] = float("inf")
-        inp[1, :, 1] = float("-inf")
-        inp[2, :, 2] = float("nan")
-        ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
+    res_out = _resolve_gems_op()(inp, 1)
 
-        ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
-        res_out = _resolve_gems_op()(inp, 1)
-
-        _assert_arange_result(res_out, ref_out, inp, 8)
+    _assert_arange_result(res_out, ref_out, inp, 8)
 
 
 @pytest.mark._dim_arange

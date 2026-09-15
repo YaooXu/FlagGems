@@ -342,25 +342,23 @@ def test_sparse_resize_shape_levels(shape, dtype):
     _assert_values_equal(inp, ref_inp, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_resize_
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test_sparse_resize_nan_inf(dtype):
+    # nan/inf/-inf/-0.0 are ordinary payloads for this structural op: growing
+    # the sparse dims must move them verbatim (no arithmetic is performed).
+    src_shape, sparse_dim, nnz = (4, 5, 6), 2, 4
+    values = _nan_inf_values(dtype, (nnz, 6), flag_gems.device)
+    inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype, values=values)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.sparse_resize_
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test_sparse_resize_nan_inf(dtype):
-        # nan/inf/-inf/-0.0 are ordinary payloads for this structural op: growing
-        # the sparse dims must move them verbatim (no arithmetic is performed).
-        src_shape, sparse_dim, nnz = (4, 5, 6), 2, 4
-        values = _nan_inf_values(dtype, (nnz, 6), flag_gems.device)
-        inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype, values=values)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.sparse_resize_(ref_inp, [6, 5, 6], 2, 1)
+    res_out = _resolve_gems_op()(inp, [6, 5, 6], 2, 1)
 
-        ref_out = torch.ops.aten.sparse_resize_(ref_inp, [6, 5, 6], 2, 1)
-        res_out = _resolve_gems_op()(inp, [6, 5, 6], 2, 1)
-
-        assert res_out is inp
-        assert ref_out is ref_inp
-        _assert_sparse_structure(inp, ref_inp, (6, 5, 6), nnz, dtype, 2, 1)
-        utils.gems_assert_close(inp, ref_inp, dtype, equal_nan=True)
+    assert res_out is inp
+    assert ref_out is ref_inp
+    _assert_sparse_structure(inp, ref_inp, (6, 5, 6), nnz, dtype, 2, 1)
+    utils.gems_assert_close(inp, ref_inp, dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_resize_

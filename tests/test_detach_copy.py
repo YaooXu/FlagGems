@@ -128,38 +128,36 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.detach_copy
+@pytest.mark.parametrize("dtype", tu.selected_cases(_DETACH_COPY_FLOAT_DTYPES))
+def test_detach_copy_special_values(dtype):
+    # nan/inf/-inf must survive a memcpy untouched, and -0.0 must keep its sign
+    # bit. 1e30/-1e30 additionally overflow to +/-inf in fp16 on input
+    # creation, which is fine: the copy still transfers the stored value.
+    inp = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.detach_copy
-    @pytest.mark.parametrize("dtype", _DETACH_COPY_FLOAT_DTYPES)
-    def test_detach_copy_special_values(dtype):
-        # nan/inf/-inf must survive a memcpy untouched, and -0.0 must keep its sign
-        # bit. 1e30/-1e30 additionally overflow to +/-inf in fp16 on input
-        # creation, which is fine: the copy still transfers the stored value.
-        inp = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.detach_copy(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.detach_copy(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        tu.assert_result_equal(res_out, ref_out)
-        # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
-        # -0.0 == 0.0, so pin the sign explicitly).
-        assert torch.equal(torch.signbit(res_out), torch.signbit(ref_out))
+    tu.assert_result_equal(res_out, ref_out)
+    # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
+    # -0.0 == 0.0, so pin the sign explicitly).
+    assert torch.equal(torch.signbit(res_out), torch.signbit(ref_out))
 
 
 @pytest.mark.detach_copy_out
@@ -302,18 +300,16 @@ def test_detach_copy_out_rejects_wrong_dtype():
         _resolve_gems_op()(inp, out=res_out_bad)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark.detach_copy
-    @pytest.mark.parametrize(
-        "dtype, scenario", tu.special_value_cases(_DETACH_COPY_DTYPES)
+@pytest.mark.detach_copy
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_DETACH_COPY_DTYPES))
+)
+def test_detach_copy_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "detach_copy", getattr(flag_gems, "detach_copy", None)
     )
-    def test_detach_copy_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "detach_copy", getattr(flag_gems, "detach_copy", None)
-        )
-        expected = torch.ops.aten.detach_copy(reference)
-        actual = candidate(inp)
-        tu.assert_result_equal(actual, expected)
+    expected = torch.ops.aten.detach_copy(reference)
+    actual = candidate(inp)
+    tu.assert_result_equal(actual, expected)

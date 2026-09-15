@@ -310,46 +310,44 @@ def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
     _assert_result(res_out, ref_out, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_bsc_tensor
+@pytest.mark.parametrize("dtype", tu.selected_cases(_BSC_NAN_INF_DTYPES))
+def test_sparse_bsc_tensor_nan_inf(dtype):
+    # The factory copies the raw block values and performs no arithmetic on
+    # them, so inf/-inf/nan/-0.0 survive the construction unchanged (and
+    # 1e30/-1e30 cover the overflow-to-inf path in fp16 (1e30 remains finite in bf16)). equal_nan
+    # tolerates the nan outputs in every comparison below.
+    values = torch.tensor(
+        [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+            float("-inf"),
+            float("inf"),
+            float("nan"),
+            -1.5,
+            2.5,
+            0.0,
+            -0.0,
+            -1e30,
+            1e30,
+        ],
+        dtype=dtype,
+        device=flag_gems.device,
+    ).reshape(2, 3, 3)
+    ccol = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
 
-    @pytest.mark.sparse_bsc_tensor
-    @pytest.mark.parametrize("dtype", _BSC_NAN_INF_DTYPES)
-    def test_sparse_bsc_tensor_nan_inf(dtype):
-        # The factory copies the raw block values and performs no arithmetic on
-        # them, so inf/-inf/nan/-0.0 survive the construction unchanged (and
-        # 1e30/-1e30 cover the overflow-to-inf path in fp16 (1e30 remains finite in bf16)). equal_nan
-        # tolerates the nan outputs in every comparison below.
-        values = torch.tensor(
-            [
-                float("inf"),
-                float("-inf"),
-                float("nan"),
-                0.0,
-                -0.0,
-                1.5,
-                -2.5,
-                1e30,
-                -1e30,
-                float("-inf"),
-                float("inf"),
-                float("nan"),
-                -1.5,
-                2.5,
-                0.0,
-                -0.0,
-                -1e30,
-                1e30,
-            ],
-            dtype=dtype,
-            device=flag_gems.device,
-        ).reshape(2, 3, 3)
-        ccol = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
-        row = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
+    ref_out = _call_reference(ccol, row, values, [6, 6], dtype)
+    res_out = _call_candidate(ccol, row, values, [6, 6], dtype)
 
-        ref_out = _call_reference(ccol, row, values, [6, 6], dtype)
-        res_out = _call_candidate(ccol, row, values, [6, 6], dtype)
-
-        _assert_result(res_out, ref_out, dtype, equal_nan=True)
+    _assert_result(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_bsc_tensor

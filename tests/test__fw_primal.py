@@ -211,25 +211,23 @@ def test__fw_primal_mutation(shape, dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._fw_primal
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test__fw_primal_special_values(dtype):
+    # A pure view preserves every bit: signed zero, infinities and NaN
+    # (including the NaN payload) must round-trip exactly.
+    values = torch.tensor(
+        _FW_PRIMAL_SPECIAL_VALUES, dtype=dtype, device=flag_gems.device
+    )
+    ref_inp = tu.to_reference(values.clone())
 
-    @pytest.mark._fw_primal
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test__fw_primal_special_values(dtype):
-        # A pure view preserves every bit: signed zero, infinities and NaN
-        # (including the NaN payload) must round-trip exactly.
-        values = torch.tensor(
-            _FW_PRIMAL_SPECIAL_VALUES, dtype=dtype, device=flag_gems.device
-        )
-        ref_inp = tu.to_reference(values.clone())
+    ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
+    res_out = _resolve_gems_op()(values, 0)
 
-        ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
-        res_out = _resolve_gems_op()(values, 0)
-
-        _assert_view_semantics(res_out, ref_out, values)
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-        assert torch.signbit(res_out[0]).item() == torch.signbit(values[0]).item()
-        assert torch.signbit(res_out[1]).item() == torch.signbit(values[1]).item()
+    _assert_view_semantics(res_out, ref_out, values)
+    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
+    assert torch.signbit(res_out[0]).item() == torch.signbit(values[0]).item()
+    assert torch.signbit(res_out[1]).item() == torch.signbit(values[1]).item()
 
 
 @pytest.mark._fw_primal
@@ -248,24 +246,22 @@ def test__fw_primal_empty(shape, dtype):
     _assert_view_semantics(res_out, ref_out, inp)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._fw_primal
+@pytest.mark.parametrize("shape", _FW_PRIMAL_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FW_PRIMAL_BACKWARD_DTYPES))
+def test__fw_primal_backward(shape, dtype):
+    # A view is transparent to autograd: the gradient of a loss built on the
+    # result must match the reference gradient (the view contributes identity).
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
+    ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_(True)
 
-    @pytest.mark._fw_primal
-    @pytest.mark.parametrize("shape", _FW_PRIMAL_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", _FW_PRIMAL_BACKWARD_DTYPES)
-    def test__fw_primal_backward(shape, dtype):
-        # A view is transparent to autograd: the gradient of a loss built on the
-        # result must match the reference gradient (the view contributes identity).
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
-        ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_(True)
+    ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
+    res_out = _resolve_gems_op()(inp, 0)
 
-        ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
-        res_out = _resolve_gems_op()(inp, 0)
+    (ref_grad,) = torch.autograd.grad((ref_out.float() ** 2).sum(), ref_inp)
+    (res_grad,) = torch.autograd.grad((res_out.float() ** 2).sum(), inp)
 
-        (ref_grad,) = torch.autograd.grad((ref_out.float() ** 2).sum(), ref_inp)
-        (res_grad,) = torch.autograd.grad((res_out.float() ** 2).sum(), inp)
-
-        tu.assert_result_close(res_grad, ref_grad)
+    tu.assert_result_close(res_grad, ref_grad)
 
 
 @pytest.mark._fw_primal
@@ -312,18 +308,16 @@ def test__fw_primal_rejects_missing_level():
         _resolve_gems_op()(inp)
 
 
-if not tu.QUICK_MODE:
-
-    @pytest.mark._fw_primal
-    @pytest.mark.parametrize(
-        "dtype, scenario", tu.special_value_cases(_FW_PRIMAL_DTYPES)
+@pytest.mark._fw_primal
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_FW_PRIMAL_DTYPES))
+)
+def test__fw_primal_special_scenarios(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
+    reference = tu.to_reference(inp)
+    candidate = flag_gems.testing.resolve_gems_op(
+        "_fw_primal", getattr(flag_gems, "_fw_primal", None)
     )
-    def test__fw_primal_special_scenarios(dtype, scenario):
-        inp = tu.make_special_input(dtype, scenario)
-        reference = tu.to_reference(inp)
-        candidate = flag_gems.testing.resolve_gems_op(
-            "_fw_primal", getattr(flag_gems, "_fw_primal", None)
-        )
-        expected = torch.ops.aten._fw_primal(reference, 0)
-        actual = candidate(inp, 0)
-        tu.assert_result_equal(actual, expected)
+    expected = torch.ops.aten._fw_primal(reference, 0)
+    actual = candidate(inp, 0)
+    tu.assert_result_equal(actual, expected)

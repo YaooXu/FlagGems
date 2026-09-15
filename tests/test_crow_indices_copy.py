@@ -591,39 +591,35 @@ def _nan_inf_csr(dtype):
     return torch.sparse_csr_tensor(crow, cols, values, shape)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.crow_indices_copy
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test_crow_indices_copy_nan_inf_values(dtype):
+    # nan / +-inf stored values must not perturb the returned crow copy:
+    # crow_indices_copy reads only the compressed-row storage, so the copy must
+    # still be bit-exact even when the values contain non-finite entries.
+    inp = _nan_inf_csr(dtype)
+    ref_inp = tu.to_reference(inp.clone())
 
-    @pytest.mark.crow_indices_copy
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test_crow_indices_copy_nan_inf_values(dtype):
-        # nan / +-inf stored values must not perturb the returned crow copy:
-        # crow_indices_copy reads only the compressed-row storage, so the copy must
-        # still be bit-exact even when the values contain non-finite entries.
-        inp = _nan_inf_csr(dtype)
-        ref_inp = tu.to_reference(inp.clone())
+    ref_out = torch.ops.aten.crow_indices_copy(ref_inp)
+    res_out = _resolve_gems_op()(inp)
 
-        ref_out = torch.ops.aten.crow_indices_copy(ref_inp)
-        res_out = _resolve_gems_op()(inp)
-
-        _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (4,))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (4,))
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.crow_indices_copy_out
+@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
+def test_crow_indices_copy_out_nan_inf_values(dtype):
+    inp = _nan_inf_csr(dtype)
+    ref_inp = tu.to_reference(inp.clone())
+    out = _out_buffer(4, torch.long, inp.device)
+    ref_out = _out_buffer(4, torch.long, ref_inp.device)
 
-    @pytest.mark.crow_indices_copy_out
-    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-    def test_crow_indices_copy_out_nan_inf_values(dtype):
-        inp = _nan_inf_csr(dtype)
-        ref_inp = tu.to_reference(inp.clone())
-        out = _out_buffer(4, torch.long, inp.device)
-        ref_out = _out_buffer(4, torch.long, ref_inp.device)
+    ref_ret = torch.ops.aten.crow_indices_copy.out(ref_inp, out=ref_out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
-        ref_ret = torch.ops.aten.crow_indices_copy.out(ref_inp, out=ref_out)
-        res_ret = _resolve_gems_op()(inp, out=out)
-
-        assert res_ret is out
-        assert ref_ret is ref_out
-        _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
+    assert res_ret is out
+    assert ref_ret is ref_out
+    _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
 
 
 # ---------------------------------------------------------------------------

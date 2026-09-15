@@ -290,11 +290,11 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
 
 @pytest.mark._empty_affine_quantized_out
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-def test__empty_affine_quantized_out_value_ranges(value_range):
+@pytest.mark.parametrize("shape", tu.selected_cases([(16, 8)], quick=[(2, 19, 7)]))
+def test__empty_affine_quantized_out_value_ranges(value_range, shape):
     # Same value-range adaptation as the .default variant, applied to the .out
     # overload: the qparams written through the out buffer must survive every
     # range, and the buffer identity must be preserved.
-    shape = (16, 8) if not tu.QUICK_MODE else (2, 19, 7)
     scale = tu.make_input(torch.float64, (1,), value_range).item()
     zero_point = tu.make_input(torch.int64, (1,), value_range).item()
 

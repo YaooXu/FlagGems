@@ -231,26 +231,24 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
     tu.assert_result_equal(out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._neg_view_copy
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test__neg_view_copy_special_values(dtype):
+    # Negation flips the sign bit, so signed zero, infinities and NaN must be
+    # preserved exactly (including the -0.0 sign).
+    values = torch.tensor(
+        [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ref_inp = tu.to_reference(values.clone())
 
-    @pytest.mark._neg_view_copy
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test__neg_view_copy_special_values(dtype):
-        # Negation flips the sign bit, so signed zero, infinities and NaN must be
-        # preserved exactly (including the -0.0 sign).
-        values = torch.tensor(
-            [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ref_inp = tu.to_reference(values.clone())
+    ref_out = torch.ops.aten._neg_view_copy(ref_inp)
+    res_out = _resolve_gems_op()(values)
 
-        ref_out = torch.ops.aten._neg_view_copy(ref_inp)
-        res_out = _resolve_gems_op()(values)
-
-        tu.assert_result_equal(res_out, ref_out)
-        # Sign-bit flip: +0.0 negates to -0.0 and -0.0 negates to +0.0.
-        assert torch.signbit(res_out[0]).item() and not torch.signbit(res_out[1]).item()
+    tu.assert_result_equal(res_out, ref_out)
+    # Sign-bit flip: +0.0 negates to -0.0 and -0.0 negates to +0.0.
+    assert torch.signbit(res_out[0]).item() and not torch.signbit(res_out[1]).item()
 
 
 @pytest.mark._neg_view_copy
@@ -286,34 +284,32 @@ def test__neg_view_copy_empty(shape, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark._neg_view_copy
+@pytest.mark.parametrize("shape", _NEG_VIEW_COPY_BACKWARD_SHAPES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
+def test__neg_view_copy_backward(shape, dtype):
+    # Materializing the negative view computes -x, so d(-x)/dx == -1: the
+    # reference gradient must match the analytic value. The candidate is
+    # validated on the same contract when it advertises autograd support.
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_grad = tu.to_reference(grad)
 
-    @pytest.mark._neg_view_copy
-    @pytest.mark.parametrize("shape", _NEG_VIEW_COPY_BACKWARD_SHAPES)
-    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-    def test__neg_view_copy_backward(shape, dtype):
-        # Materializing the negative view computes -x, so d(-x)/dx == -1: the
-        # reference gradient must match the analytic value. The candidate is
-        # validated on the same contract when it advertises autograd support.
-        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = tu.to_reference(inp)
-        ref_grad = tu.to_reference(grad)
+    ref_out = torch.ops.aten._neg_view_copy(ref_inp)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    expected_in_grad = -ref_grad
+    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-        ref_out = torch.ops.aten._neg_view_copy(ref_inp)
-        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-        expected_in_grad = -ref_grad
-        tu.assert_result_close(ref_in_grad, expected_in_grad)
+    # The candidate forward output must match the reference...
+    res_out = _resolve_gems_op()(inp)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
 
-        # The candidate forward output must match the reference...
-        res_out = _resolve_gems_op()(inp)
-        _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
-
-        # ...and, if the candidate advertises autograd support, its gradient must
-        # match the analytic value too.
-        assert res_out.requires_grad
-        res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-        tu.assert_result_close(res_in_grad, expected_in_grad)
+    # ...and, if the candidate advertises autograd support, its gradient must
+    # match the analytic value too.
+    assert res_out.requires_grad
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_close(res_in_grad, expected_in_grad)
 
 
 @pytest.mark._neg_view_copy

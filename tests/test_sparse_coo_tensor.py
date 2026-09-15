@@ -572,36 +572,34 @@ def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
         tu.assert_result_close(res_out, ref_out)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_coo_tensor
+@pytest.mark.parametrize("case", _NAN_INF_CASES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_COO_DTYPES))
+def test_sparse_coo_tensor_nan_inf(case, dtype):
+    # The factory copies the raw stored values and performs no arithmetic on
+    # them, so inf / -inf / nan / -0.0 and huge 1e30 magnitudes survive the
+    # construction unchanged (1e30 covers the overflow-to-inf path in
+    # fp16/bf16). equal_nan tolerates the nan outputs in every comparison.
+    size, indices = case
+    sparse_dim = len(indices)
+    dense_shape = tuple(size[sparse_dim:])
+    nnz = len(indices[0])
+    indices_t = _make_index_tensor(indices)
+    values = _make_nan_inf_values((nnz,) + dense_shape, dtype)
 
-    @pytest.mark.sparse_coo_tensor
-    @pytest.mark.parametrize("case", _NAN_INF_CASES)
-    @pytest.mark.parametrize("dtype", _FLOAT_COO_DTYPES)
-    def test_sparse_coo_tensor_nan_inf(case, dtype):
-        # The factory copies the raw stored values and performs no arithmetic on
-        # them, so inf / -inf / nan / -0.0 and huge 1e30 magnitudes survive the
-        # construction unchanged (1e30 covers the overflow-to-inf path in
-        # fp16/bf16). equal_nan tolerates the nan outputs in every comparison.
-        size, indices = case
-        sparse_dim = len(indices)
-        dense_shape = tuple(size[sparse_dim:])
-        nnz = len(indices[0])
-        indices_t = _make_index_tensor(indices)
-        values = _make_nan_inf_values((nnz,) + dense_shape, dtype)
+    ref_out = _call_reference(indices_t, values, size, dtype)
+    res_out = _call_candidate(indices_t, values, size, dtype)
 
-        ref_out = _call_reference(indices_t, values, size, dtype)
-        res_out = _call_candidate(indices_t, values, size, dtype)
-
-        _assert_coo_structure(
-            res_out, ref_out, size, nnz, dtype, sparse_dim, len(dense_shape)
-        )
-        _assert_coo_values(res_out, ref_out, dtype, equal_nan=True)
-        utils.gems_assert_close(
-            _comparable(torch.ops.aten._values(res_out), dtype),
-            _comparable(torch.ops.aten._values(ref_out), dtype),
-            _compare_dtype(dtype),
-            equal_nan=True,
-        )
+    _assert_coo_structure(
+        res_out, ref_out, size, nnz, dtype, sparse_dim, len(dense_shape)
+    )
+    _assert_coo_values(res_out, ref_out, dtype, equal_nan=True)
+    utils.gems_assert_close(
+        _comparable(torch.ops.aten._values(res_out), dtype),
+        _comparable(torch.ops.aten._values(ref_out), dtype),
+        _compare_dtype(dtype),
+        equal_nan=True,
+    )
 
 
 @pytest.mark.sparse_coo_tensor

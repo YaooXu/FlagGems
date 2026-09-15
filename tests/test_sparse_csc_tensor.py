@@ -546,44 +546,42 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
     _assert_result(res_out, ref_out, dtype, torch.int64)
 
 
-if not tu.QUICK_MODE:
+@pytest.mark.sparse_csc_tensor
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOATISH_CSC_DTYPES))
+def test_sparse_csc_tensor_nan_inf_values(dtype):
+    # Non-finite values are stored verbatim; comparison uses equal_nan=True so
+    # nan == nan, inf == inf and the sign of zero are all matched. For
+    # float8_e4m3fn the +/-inf inputs saturate to nan, which the equal_nan
+    # comparison still matches.
+    values = torch.tensor(
+        [float("nan"), float("inf"), float("-inf"), 1.5, -0.0],
+        dtype=dtype,
+        device=flag_gems.device,
+    )
+    ccol = torch.tensor([0, 2, 5], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 0, 1, 0], dtype=torch.int64, device=flag_gems.device)
 
-    @pytest.mark.sparse_csc_tensor
-    @pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
-    def test_sparse_csc_tensor_nan_inf_values(dtype):
-        # Non-finite values are stored verbatim; comparison uses equal_nan=True so
-        # nan == nan, inf == inf and the sign of zero are all matched. For
-        # float8_e4m3fn the +/-inf inputs saturate to nan, which the equal_nan
-        # comparison still matches.
-        values = torch.tensor(
-            [float("nan"), float("inf"), float("-inf"), 1.5, -0.0],
-            dtype=dtype,
-            device=flag_gems.device,
-        )
-        ccol = torch.tensor([0, 2, 5], dtype=torch.int64, device=flag_gems.device)
-        row = torch.tensor([0, 1, 0, 1, 0], dtype=torch.int64, device=flag_gems.device)
+    ref_out = torch.ops.aten.sparse_csc_tensor(
+        ccol,
+        row,
+        values,
+        [2, 2],
+        dtype=dtype,
+        layout=torch.sparse_csc,
+        device=flag_gems.device,
+    )
+    gems_op = _resolve_gems_op()
+    res_out = gems_op(
+        ccol,
+        row,
+        values,
+        [2, 2],
+        dtype=dtype,
+        layout=torch.sparse_csc,
+        device=flag_gems.device,
+    )
 
-        ref_out = torch.ops.aten.sparse_csc_tensor(
-            ccol,
-            row,
-            values,
-            [2, 2],
-            dtype=dtype,
-            layout=torch.sparse_csc,
-            device=flag_gems.device,
-        )
-        gems_op = _resolve_gems_op()
-        res_out = gems_op(
-            ccol,
-            row,
-            values,
-            [2, 2],
-            dtype=dtype,
-            layout=torch.sparse_csc,
-            device=flag_gems.device,
-        )
-
-        _assert_result(res_out, ref_out, dtype, torch.int64, equal_nan=True)
+    _assert_result(res_out, ref_out, dtype, torch.int64, equal_nan=True)
 
 
 # ---------------------------------------------------------------------------
