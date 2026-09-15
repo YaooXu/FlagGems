@@ -77,25 +77,11 @@ def test_abs_int_value_ranges(shape, value_range, dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", tu.selected_cases(_ABS_FLOAT_DTYPES))
-def test_abs_nan_inf(dtype):
-    # inf/-inf -> +inf, nan -> nan, -0.0 -> 0.0. 1e30/-1e30 also cover the
-    # overflow-to-inf path in fp16 (1e30 remains finite in bf16); equal_nan=True tolerates nan outputs.
-    inp = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_ABS_DTYPES))
+)
+def test_abs_nan_inf(dtype, scenario):
+    inp = tu.make_special_input(dtype, scenario)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)

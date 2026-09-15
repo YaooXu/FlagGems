@@ -222,24 +222,14 @@ def test_add_broadcast(broadcast_pair, dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
-def test_add_nan_inf(dtype):
-    # inf + (-inf) -> nan, inf + inf -> inf, 0.0 + -0.0 -> 0.0; 1e30 also
-    # covers the overflow-to-inf path in fp16 (1e30 remains finite in bf16). equal_nan=True tolerates
-    # the nan outputs.
-    vals = [
-        float("inf"),
-        float("-inf"),
-        float("nan"),
-        0.0,
-        -0.0,
-        1.5,
-        -2.5,
-        1e30,
-        -1e30,
-    ]
-    inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
-    other = torch.tensor(vals[::-1], dtype=dtype, device=flag_gems.device)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_ADD_DTYPES))
+)
+@pytest.mark.parametrize("shift", [0, 1])
+def test_add_nan_inf(dtype, scenario, shift):
+    inp = tu.make_special_input(dtype, scenario)
+    # Aligned values add same-sign infinities; shifting pairs +inf with -inf.
+    other = inp.roll(shift)
     ref_inp = tu.to_reference(inp)
     ref_other = tu.to_reference(other)
 

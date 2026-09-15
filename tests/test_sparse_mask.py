@@ -226,27 +226,12 @@ def test_sparse_mask_out(shape, dtype):
 
 @pytest.mark.sparse_mask
 @pytest.mark.parametrize("shape", _SPARSE_MASK_NANINF_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test_sparse_mask_nan_inf(shape, dtype):
-    # Special values at masked positions pass through unchanged. 1e30/-1e30
-    # overflow to inf/-inf in fp16 and remain finite in bf16. The gather never
-    # combines values; equal_nan=True permits matching NaNs.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_SPARSE_MASK_DTYPES))
+)
+def test_sparse_mask_nan_inf(shape, dtype, scenario):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    specials = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    specials = tu.make_special_input(dtype, scenario)
     n = min(inp.numel(), specials.numel())
     inp.flatten()[:n] = specials[:n]
 

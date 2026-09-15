@@ -306,15 +306,10 @@ def test__empty_per_channel_affine_quantized_out(
 
 @pytest.mark._empty_per_channel_affine_quantized
 @pytest.mark.parametrize("shape", tu.selected_cases([(3, 4)]))
-def test__empty_per_channel_affine_quantized_nan_inf_scales(shape):
-    # The factory copies scale values verbatim, so nan/inf/-inf metadata must
-    # survive both the reference and the candidate unchanged. ``equal_nan`` is
-    # required because the exact-equality helpers compare nan != nan by default.
-    scales = torch.tensor(
-        [float("nan"), float("inf"), -float("inf")],
-        dtype=torch.float64,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize("scenario", tu.selected_cases(["nan", "inf", "mixed"]))
+def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
+    # The factory preserves special values in the float64 scale metadata.
+    scales = tu.make_special_input(torch.float64, scenario)[: shape[0]]
     zero_points = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 

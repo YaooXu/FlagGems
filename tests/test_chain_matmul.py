@@ -200,16 +200,12 @@ def test_chain_matmul_out(shapes, value_range, dtype):
 
 
 @pytest.mark.chain_matmul
-@pytest.mark.parametrize("dtype", tu.selected_cases(_CHAIN_DTYPES))
-def test_chain_matmul_nan_inf(dtype):
-    # inf @ finite exercises inf * 0 -> nan inside the reduction as well as
-    # inf + inf -> inf and (-inf) + (-inf) -> -inf; the output pattern is
-    # deterministic on both paths and equal_nan=True tolerates the nan entries.
-    m1 = torch.tensor(
-        [[float("inf"), 1.0], [1.0, float("-inf")]],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CHAIN_DTYPES))
+)
+def test_chain_matmul_nan_inf(dtype, scenario):
+    # Zero entries in m2 also exercise Inf * 0 -> NaN during reduction.
+    m1 = tu.make_special_input(dtype, scenario)[:4].reshape(2, 2)
     m2 = torch.tensor(
         [[1.0, 0.0], [1.0, 1.0]],
         dtype=dtype,
@@ -221,9 +217,7 @@ def test_chain_matmul_nan_inf(dtype):
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    assert res_out.dtype == dtype
-    ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
-    tu.assert_result_close(res_out, ref)
+    tu.assert_result_close(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------

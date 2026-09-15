@@ -179,26 +179,8 @@ def _make_input(shape, nnz, dtype, value_range=None, seed=2026):
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
-def _make_nan_inf_values(nnz, dtype):
-    # Repeating pattern of nan / +inf / -inf / finite values. Coalescing maps an
-    # index to nan when any contributor is nan (or when both +inf and -inf
-    # contribute); the pattern is fully determined by the value multiset, so the
-    # reference and the candidate agree with equal_nan=True.
-    base = torch.tensor(
-        [
-            float("nan"),
-            float("inf"),
-            float("-inf"),
-            0.5,
-            -0.5,
-            2.0,
-            float("nan"),
-            float("inf"),
-            float("-inf"),
-            1.5,
-        ],
-        dtype=dtype,
-    )
+def _make_special_values(nnz, dtype, scenario):
+    base = tu.make_special_input(dtype, scenario)
     return base.repeat((nnz + base.numel() - 1) // base.numel())[:nnz]
 
 
@@ -208,7 +190,7 @@ def _resolve_gems_op():
     )
 
 
-def _assert_coalesced(res_out, ref_out, dtype):
+def _assert_coalesced(res_out, ref_out, dtype, *, equal_nan=False):
     # Both sides must be coalesced sparse COO tensors with the same structure.
     assert res_out.layout == torch.sparse_coo
     assert res_out.shape == ref_out.shape
@@ -218,7 +200,9 @@ def _assert_coalesced(res_out, ref_out, dtype):
     utils.gems_assert_equal(res_out.indices(), ref_out.indices())
     # Values are sums of duplicates: tolerance for float, exact for int/bool.
     if dtype.is_floating_point or dtype.is_complex:
-        utils.gems_assert_close(res_out.values(), ref_out.values(), dtype)
+        utils.gems_assert_close(
+            res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
+        )
     else:
         utils.gems_assert_equal(res_out.values(), ref_out.values())
 
@@ -281,17 +265,16 @@ def test_coalesce_value_ranges(value_range, dtype, case):
 @pytest.mark.coalesce
 @pytest.mark.parametrize("case", _coalesce_cases())
 @pytest.mark.parametrize(
-    "dtype",
-    tu.selected_cases([dtype for dtype in _COALESCE_DTYPES if dtype.is_floating_point]),
+    "dtype,scenario",
+    tu.selected_cases(tu.special_value_cases(_COALESCE_DTYPES)),
 )
-def test_coalesce_nan_inf(case, dtype):
+def test_coalesce_nan_inf(case, dtype, scenario):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
-    # Rebuild with the same duplicate indices but values drawn from the
-    # nan/inf/-inf pattern (the result pattern is deterministic).
+    # Keep duplicate indices and vary the special-value scenario independently.
     inp = torch.sparse_coo_tensor(
-        inp._indices().clone(),
-        _make_nan_inf_values(nnz, dtype),
+        inp._indices(),
+        _make_special_values(nnz, dtype, scenario),
         shape,
         device=flag_gems.device,
     )
@@ -301,11 +284,7 @@ def test_coalesce_nan_inf(case, dtype):
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    # .indices() on an uncoalesced tensor raises, so this also proves the
-    # structure is right.
-    assert res_out.is_coalesced()
-    utils.gems_assert_equal(res_out.indices(), ref_out.indices())
-    utils.gems_assert_close(res_out.values(), ref_out.values(), dtype, equal_nan=True)
+    _assert_coalesced(res_out, ref_out, dtype, equal_nan=True)
     assert res_out is not inp
     assert not inp.is_coalesced()
 
