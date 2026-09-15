@@ -54,8 +54,7 @@ setattr(
 #     a couple of small representative shapes;
 #   * value ranges: tu.selected_ranges() over representative ranks, so every
 #     materializable dtype is exercised with negative, positive, extreme and
-#     degenerate ranges (unsigned dtypes only accept ranges whose lower bound
-#     is non-negative, because they cannot represent negatives);
+#     degenerate ranges (tu.make_input clamps unsigned bounds);
 #   * edge cases: non-contiguous (strided) inputs, the neg-bit toggle, writing
 #     through the returned alias, and nan/inf/+-0.0 special values;
 #   * backward: autograd.grad() through the neg view against the analytic
@@ -63,8 +62,7 @@ setattr(
 #   * negative: a non-tensor input raises on both the aten reference and the
 #     candidate.
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-# Unsigned dtypes cannot represent negative values; tu.make_input only accepts
-# ranges whose lower bound resolves to >= 0 for them.
+# The shape sweep uses a non-degenerate positive range for unsigned storage.
 _UNSIGNED_DTYPES = [torch.uint8]
 # aten's negation kernel is not implemented for float8/bool: the view is
 # creatable and inspectable but its values can never be read.

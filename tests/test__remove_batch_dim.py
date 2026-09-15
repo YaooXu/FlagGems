@@ -89,7 +89,6 @@ _REMOVE_BATCH_DIM_DTYPES = (
 # floating dtype); the view is bit-exact so the upcast changes nothing.
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
-_UNSIGNED_INT_DTYPES = (torch.uint8,)
 
 # (shape, out_dim, batch_size) grid. Every combination is a valid expand:
 # inserting batch_size at out_dim and aligning self to the trailing dims keeps
@@ -171,8 +170,6 @@ def _dtype_range_pairs():
     pairs = []
     for dtype in _REMOVE_BATCH_DIM_DTYPES:
         for value_range in tu.selected_ranges():
-            if dtype in _UNSIGNED_INT_DTYPES and value_range == ["-1", "0"]:
-                continue
             pairs.append((dtype, value_range))
     return pairs
 

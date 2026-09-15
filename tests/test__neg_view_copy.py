@@ -55,8 +55,7 @@ setattr(
 #     couple of small representative shapes;
 #   * value ranges: tu.selected_ranges() over representative ranks, so every
 #     supported dtype is exercised with negative, positive, extreme and
-#     degenerate ranges (unsigned dtypes only accept ranges whose lower bound is
-#     non-negative, because they cannot represent negatives);
+#     degenerate ranges (tu.make_input clamps unsigned bounds);
 #   * edge cases: non-contiguous (strided) inputs, empty tensors and
 #     nan/inf/+-0.0 special values;
 #   * backward: autograd.grad() against the analytic gradient -1 (a unary
@@ -103,18 +102,10 @@ _NEG_VIEW_COPY_EMPTY_SHAPES = [(0,), (4, 0), (2, 0, 3)]
 _NEG_VIEW_COPY_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
-def _ranges_for(dtype):
-    # The five spec ranges, minus the ones an unsigned dtype cannot represent.
-    ranges = tu.selected_ranges()
-    if dtype in _UNSIGNED_DTYPES:
-        return [rng for rng in ranges if rng[0] == "0"]
-    return ranges
-
-
 _RANGE_CASES = [
     (dtype, value_range)
     for dtype in _NEG_VIEW_COPY_DTYPES
-    for value_range in _ranges_for(dtype)
+    for value_range in tu.selected_ranges()
 ]
 
 

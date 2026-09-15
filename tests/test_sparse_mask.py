@@ -107,22 +107,10 @@ _SPARSE_MASK_NON_CONTIGUOUS_CASES = [
 ]
 
 
-def _value_range_supported(dtype, value_range):
-    # torch.testing.make_tensor cannot draw a negative bound for uint8 (and the
-    # degenerate [-1, 0] range raises); skip the ranges whose low bound is
-    # negative for unsigned dtypes. The shared value-range helper still supplies
-    # [0, 1], [0, max] and the degenerate [min, 0] (= all zeros) for uint8.
-    if dtype == torch.uint8 and tu.resolve_bound(value_range[0], dtype) < 0:
-        return False
-    return True
-
-
 def _value_range_cases():
     cases = []
     for dtype in _SPARSE_MASK_DTYPES:
         for value_range in tu.selected_ranges():
-            if not _value_range_supported(dtype, value_range):
-                continue
             for shape in tu.selected_shapes():
                 cases.append((shape, value_range, dtype))
     return cases

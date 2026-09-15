@@ -198,20 +198,6 @@ def _resolve_gems_op():
     )
 
 
-def _range_for_dtype(value_range, dtype):
-    # For unsigned integer storage the shared [-1, 0] range collapses to the
-    # single value 0, which torch.testing.make_tensor cannot sample
-    # (from == to); use the equivalent constant-zero range instead.
-    if (
-        dtype != torch.bool
-        and not dtype.is_floating_point
-        and tu.dtype_bounds(dtype)[0] >= 0
-        and value_range == ["-1", "0"]
-    ):
-        return ["0", "0"]
-    return value_range
-
-
 def _assert_sparse_structure(t, ref, size, nnz, dtype, sparse_dim, dense_dim):
     # Structural checks independent of the stored values: layout, shape, dtype,
     # sparse/dense split, the nnz count and the indices/values storage shapes.
@@ -276,7 +262,6 @@ def test_sparse_resize_value_ranges(case, dtype, value_range):
     # per-dtype ranges (sign coverage, [0,max], [min,0] and, at the all level,
     # the constant ranges). resize performs no arithmetic, so the payload must
     # survive verbatim regardless of its magnitude or sign.
-    value_range = _range_for_dtype(value_range, dtype)
     src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim = case
     dense_shape = tuple(src_shape[sparse_dim:])
     values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)

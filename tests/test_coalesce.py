@@ -36,10 +36,8 @@ from . import test_utils as tu
 #     the pigeonhole principle guarantees duplicate coordinates and therefore
 #     real merging work.
 #   * value ranges: the spec's five ranges from ``tu.selected_ranges()`` fed
-#     through ``tu.make_input``. Unsigned dtypes drop the negative ranges, and
-#     ranges whose bound is the dtype extreme are skipped for narrow dtypes
-#     because coalescing *sums* duplicates (see the accumulator-width note
-#     below).
+#     through ``tu.make_input``, which clamps unsigned bounds. Integer
+#     extremes are included; half-precision reduction limits are noted below.
 #   * identity branch: an already-coalesced input must be returned as itself.
 #   * edge cases: nan / +-inf / -inf values for float dtypes.
 #   * negative: dense, SparseCsr and float8 storage inputs have no registered
@@ -109,17 +107,11 @@ _COALESCED_CASES_QUICK = [((3, 5, 7), 120)]
 _VALUE_RANGE_CASES = [((8,), 20), ((3, 5, 7), 120), ((4, 4, 4, 4), 400)]
 _VALUE_RANGE_CASES_QUICK = [((3, 5, 7), 120)]
 
-# Coalescing sums duplicate values, so ranges whose bound is the dtype's
-# extreme are only swept for dtypes wide enough that the accumulated sum of a
-# few duplicates cannot wrap / overflow differently depending on the
-# accumulator width. Same-sign ranges avoid fp16/bf16 cancellation error.
-_NARROW_DTYPES = (torch.float16, torch.bfloat16, torch.int8, torch.uint8, torch.int16)
-_EXTREME_RANGES = (("0", "max"), ("min", "0"))
-# Half-precision floats cannot even absorb the mixed-sign [-1, 1] range: two
-# opposite-signed duplicates can cancel to a near-zero sum whose rounding error
-# exceeds the absolute tolerance (most visible when the reference runs on the
-# CPU, i.e. --ref cpu). Their sweep therefore stays same-sign.
+# Integer sums wrap in the output dtype, so their extreme ranges are covered.
+# The random fp16/bf16 sweep stays same-sign and avoids extremes because CPU
+# and CUDA accumulation can disagree on cancellation and overflow.
 _NARROW_FLOAT_DTYPES = (torch.float16, torch.bfloat16)
+_EXTREME_RANGES = (("0", "max"), ("min", "0"))
 
 
 def _coalesce_cases():
@@ -138,12 +130,9 @@ def _value_range_cases():
             # A single degenerate {0, 1} range; the main grid covers bool.
             continue
         for value_range in tu.selected_ranges():
-            if dtype == torch.uint8 and value_range in (["-1", "1"], ["-1", "0"]):
-                # make_tensor cannot represent a negative bound for uint8.
-                continue
             if dtype in _NARROW_FLOAT_DTYPES and value_range == ["-1", "1"]:
                 continue
-            if tuple(value_range) in _EXTREME_RANGES and dtype in _NARROW_DTYPES:
+            if tuple(value_range) in _EXTREME_RANGES and dtype in _NARROW_FLOAT_DTYPES:
                 continue
             for case in shapes:
                 cases.append((value_range, dtype, case))
