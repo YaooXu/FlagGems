@@ -12,41 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Correctness tests for ``aten::chain_matmul`` (alias of ``torch.linalg.multi_dot``).
-
-``chain_matmul`` multiplies a sequence of rank-2 matrices in an order chosen to
-minimize the number of scalar multiplications:
-
-    aten::chain_matmul(Tensor[] matrices) -> Tensor
-    aten::chain_matmul.out(Tensor[] matrices, *, Tensor(a!) out) -> Tensor(a!)
-
-The operator therefore has a *list* of tensors as its single argument (not a
-shape), only rank-2 matrices are accepted, there is no broadcasting, an empty
-chain and dimension-mismatched chains raise ``RuntimeError``, and the forward is
-differentiable with one gradient per input matrix. ``.out`` writes into and
-returns the caller-provided buffer.
-
-Candidate resolution
---------------------
-The candidate is resolved *inside every test* (never at import time) through
-``flag_gems.testing.resolve_gems_op`` so KernelGen's ``override_gems_op`` wins.
-The default overload uses the public name ``chain_matmul``; the ``.out`` overload
-uses the same public callable with the actual ``out`` keyword.
-
-dtype coverage
---------------
-The positive cases use the shared regular floating-point dtypes, including
-float64. The CUDA addmm path rejects integer, bool and FP8 operands; those
-restrictions are covered by the negative dtype cases.
-
-Value ranges
-------------
-The regular-operator spec's five ranges (``tu.selected_ranges()``) are swept.
-Ranges keep their full magnitudes. The reference retains the input dtype at
-each matrix product: a single fp64 upcast removes intermediate rounding and
-overflow, changing the multi-product operator being tested.
-"""
-
 import pytest
 import torch
 
@@ -55,59 +20,35 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ---------------------------------------------------------------------------
-# Dtype coverage
-# ---------------------------------------------------------------------------
+# Multiply compatible rank-2 matrices; keep native-dtype intermediate rounding and overflow.
+_CHAIN_SHAPES = tu.selected_cases(
+    [
+        [(1, 1)],
+        [(4, 8)],
+        [(2, 3), (3, 4)],
+        [(1, 5), (5, 1), (1, 7)],
+        [(16, 32), (32, 64), (64, 32), (32, 16)],
+        [(8, 16), (16, 32), (32, 48), (48, 32), (32, 16)],
+        [(33, 65), (65, 17), (17, 129), (129, 255), (255, 71)],
+    ],
+    quick=[[(2, 3), (3, 4)]],
+)
 
-# The CUDA addmm kernel accepts the regular floating-point dtypes.
-_CHAIN_DTYPES = list(utils.ALL_FLOAT_DTYPES)
+_OUT_CHAIN_SHAPES = _CHAIN_SHAPES[:4]
 
-# ---------------------------------------------------------------------------
-# chain shapes / value ranges
-# ---------------------------------------------------------------------------
-
-# Rank-2 chains covering the shape levels of the spec adapted to a
-# list-of-matrices operator. The spec's seven dense shapes do not apply here:
-# the input is ``Tensor[]`` (a matrix chain) whose adjacent matrices must agree
-# on the inner dimension (M0[k,n0] @ M1[n0,n1] @ ...), so a single dense shape
-# cannot express a legal input -- each entry below is a whole chain of matching
-# rank-2 shapes. They cover a degenerate/single-matrix chain, short chains,
-# rank-collapsing inner dims, 4/5-matrix chains and an odd, non-power-of-two
-# chain that exercises tiling edges.
-if tu.QUICK_MODE:
-    _CHAIN_SHAPES = [[(2, 3), (3, 4)]]
-    _OUT_CHAIN_SHAPES = [[(2, 3), (3, 4)]]
-    _BACKWARD_CHAINS = [[(2, 3), (3, 4)]]
-    _NONCONTIG_CHAINS = [[(4, 8), (8, 16)]]
-else:
-    _CHAIN_SHAPES = [
-        [(1, 1)],  # degenerate single-matrix chain
-        [(4, 8)],  # single matrix: no product at all
-        [(2, 3), (3, 4)],  # short chain
-        [(1, 5), (5, 1), (1, 7)],  # rank-collapsing inner dims
-        [(16, 32), (32, 64), (64, 32), (32, 16)],  # 4 matrices
-        [(8, 16), (16, 32), (32, 48), (48, 32), (32, 16)],  # 5 matrices
-        [(33, 65), (65, 17), (17, 129), (129, 255), (255, 71)],  # odd tiling
-    ]
-    _OUT_CHAIN_SHAPES = _CHAIN_SHAPES[:4]
-    _BACKWARD_CHAINS = [
+_BACKWARD_CHAINS = tu.selected_cases(
+    [
         [(4, 8)],
         [(2, 3), (3, 4)],
         [(4, 8), (8, 16), (16, 4)],
         [(16, 32), (32, 64), (64, 32), (32, 16)],
-    ]
-    _NONCONTIG_CHAINS = [
-        [(4, 8), (8, 16)],
-        [(16, 32), (32, 64), (64, 16)],
-    ]
+    ],
+    quick=[[(2, 3), (3, 4)]],
+)
 
-# Extreme workloads retain their declared bounds. Their oracle uses the original
-# dtype because upcasting changes intermediate overflow and NaN propagation.
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
+_NONCONTIG_CHAINS = tu.selected_cases(
+    [[(4, 8), (8, 16)], [(16, 32), (32, 64), (64, 16)]], quick=[[(4, 8), (8, 16)]]
+)
 
 
 def _resolve_gems_op():
@@ -116,32 +57,13 @@ def _resolve_gems_op():
     )
 
 
-def _make_chain(shapes, dtype, value_range):
-    return [tu.make_input(dtype, shape, value_range) for shape in shapes]
-
-
-def _make_noncontig_chain(shapes, dtype, value_range):
-    return [
-        tu.make_input(dtype, (cols, rows), value_range).t() for rows, cols in shapes
-    ]
-
-
-def _to_ref(matrices):
-    return [tu.to_reference(m) for m in matrices]
-
-
-# ---------------------------------------------------------------------------
-# default overload
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.chain_matmul
 @pytest.mark.parametrize("shapes", _CHAIN_SHAPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_chain_matmul(shapes, value_range, dtype):
-    inp = _make_chain(shapes, dtype, value_range)
-    ref_inp = _to_ref(inp)
+    inp = [tu.make_input(dtype, shape, value_range) for shape in shapes]
+    ref_inp = [tu.to_reference(m) for m in inp]
 
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -152,13 +74,11 @@ def test_chain_matmul(shapes, value_range, dtype):
 
 @pytest.mark.chain_matmul
 @pytest.mark.parametrize("shapes", _NONCONTIG_CHAINS)
-@pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_chain_matmul_non_contiguous(shapes, dtype):
-    # Transposed (non-unit-stride) matrices: the candidate must honour the
-    # strides of each input rather than assuming contiguous memory.
-    inp = _make_noncontig_chain(shapes, dtype, ["-1", "1"])
+    inp = [tu.make_input(dtype, (cols, rows), ["-1", "1"]).t() for rows, cols in shapes]
     assert all(not m.is_contiguous() for m in inp)
-    ref_inp = _to_ref(inp)
+    ref_inp = [tu.to_reference(m) for m in inp]
 
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -166,18 +86,13 @@ def test_chain_matmul_non_contiguous(shapes, dtype):
     tu.assert_result_close(res_out, ref_out.to(dtype))
 
 
-# ---------------------------------------------------------------------------
-# .out overload
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.chain_matmul_out
 @pytest.mark.parametrize("shapes", _OUT_CHAIN_SHAPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_chain_matmul_out(shapes, value_range, dtype):
-    inp = _make_chain(shapes, dtype, value_range)
-    ref_inp = _to_ref(inp)
+    inp = [tu.make_input(dtype, shape, value_range) for shape in shapes]
+    ref_inp = [tu.to_reference(m) for m in inp]
 
     out_shape = (shapes[0][0], shapes[-1][1])
     # Garbage-prefilled buffers: the .out overload must overwrite every element.
@@ -194,17 +109,12 @@ def test_chain_matmul_out(shapes, value_range, dtype):
     tu.assert_result_close(out, ref_out.to(dtype))
 
 
-# ---------------------------------------------------------------------------
-# nan / inf
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.chain_matmul
 @pytest.mark.parametrize(
-    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CHAIN_DTYPES))
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
 )
 def test_chain_matmul_nan_inf(dtype, scenario):
-    # Zero entries in m2 also exercise Inf * 0 -> NaN during reduction.
+    # Zeros in m2 also exercise Inf * 0 -> NaN during reduction.
     m1 = tu.make_special_input(dtype, scenario)[:4].reshape(2, 2)
     m2 = torch.tensor(
         [[1.0, 0.0], [1.0, 1.0]],
@@ -212,7 +122,7 @@ def test_chain_matmul_nan_inf(dtype, scenario):
         device=flag_gems.device,
     )
     inp = [m1, m2]
-    ref_inp = _to_ref(inp)
+    ref_inp = [tu.to_reference(m) for m in inp]
 
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -220,16 +130,13 @@ def test_chain_matmul_nan_inf(dtype, scenario):
     tu.assert_result_close(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# backward
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.chain_matmul
 @pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)
-@pytest.mark.parametrize("dtype", tu.selected_cases(_CHAIN_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_chain_matmul_backward(shapes, dtype):
-    inp = [m.requires_grad_() for m in _make_chain(shapes, dtype, ["-1", "1"])]
+    inp = [
+        tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_() for shape in shapes
+    ]
     grad = tu.make_input(dtype, (shapes[0][0], shapes[-1][1]), ["-1", "1"])
 
     ref_inp = []
@@ -253,11 +160,6 @@ def test_chain_matmul_backward(shapes, dtype):
         tu.assert_result_close(res_g, ref_g.to(dtype))
 
 
-# ---------------------------------------------------------------------------
-# negative cases
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.chain_matmul_negative
 def test_chain_matmul_rejects_empty_list():
     with pytest.raises(RuntimeError):
@@ -268,7 +170,6 @@ def test_chain_matmul_rejects_empty_list():
 
 @pytest.mark.chain_matmul_negative
 def test_chain_matmul_rejects_non_tensor():
-    # The aten schema requires a Tensor[]; a scalar cannot match it.
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.chain_matmul(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
@@ -325,10 +226,10 @@ def test_chain_matmul_rejects_int_dtype():
 
 @pytest.mark.chain_matmul_out_negative
 def test_chain_matmul_out_rejects_wrong_dtype():
-    # The .out overload validates the caller's buffer dtype and must raise for a
-    # mismatched buffer instead of silently casting.
-    inp = _make_chain([(4, 8), (8, 4)], torch.float32, ["-1", "1"])
-    ref_inp = _to_ref(inp)
+    inp = [
+        tu.make_input(torch.float32, shape, ["-1", "1"]) for shape in [(4, 8), (8, 4)]
+    ]
+    ref_inp = [tu.to_reference(m) for m in inp]
 
     ref_bad = torch.empty(4, 4, dtype=torch.int32, device=ref_inp[0].device)
     res_bad = torch.empty(4, 4, dtype=torch.int32, device=flag_gems.device)

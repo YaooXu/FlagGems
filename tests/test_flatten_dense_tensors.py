@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -20,89 +22,16 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::flatten_dense_tensors(Tensor[] tensors) -> Tensor is the DDP
-# gradient-flattening utility: every input is flattened to a contiguous 1-D
-# tensor (t.contiguous().view(-1)) and the results are concatenated into one
-# 1-D tensor. It is pure data movement (copy + cat): inputs are never mutated,
-# the result lives on the input device, and every storage dtype aten supports
-# round-trips exactly (float incl. float64/float8, int, bool). nan/inf/+-0.0
-# pass through unchanged.
-#
-# The "shape" dimension of a normal pointwise op is a *list* of tensor shapes
-# here (there is no elementwise broadcast semantics), so the regular-operator
-# spec is adapted as follows:
-#   * shape levels: tu.selected_shapes() is expanded into single-tensor and
-#     multi-tensor workloads, plus mixed-rank / empty / 0-dim / high-rank lists;
-#   * value ranges: tu.selected_ranges() over small input lists for every
-#     supported dtype (the values must round-trip exactly through the copy);
-#   * dtype coverage: the declared list includes the required
-#     int8/uint8/float8_e4m3fn/float8_e5m2 storage types;
-#   * edge cases: non-contiguous (transposed and strided) inputs and
-#     nan/inf/-inf/+-0.0 passthrough;
-#   * backward: autograd.grad() against the analytic narrow-and-view gradient
-#     (grad_output[offset:offset+numel].view(input_shape));
-#   * negative: an empty list and a non-tensor element must fail on both paths.
-_FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_FP8_SET = set(_FP8_DTYPES)
-_UNSIGNED_DTYPES = {torch.uint8}
-
-# The spec's required dtype set first (int8/uint8/fp8 + the standard
-# float/int dtypes), then the remaining dtypes shared helpers expose.
-_SUPPORTED_DTYPES = list(
-    dict.fromkeys(
-        [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
-        + list(utils.ALL_FLOAT_DTYPES)
-        + list(utils.ALL_INT_DTYPES)
-        + list(utils.BOOL_TYPES)
-    )
+# Flatten each input in logical order and concatenate into a contiguous 1-D tensor.
+_SUPPORTED_DTYPES = (
+    [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
+    + utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + [torch.bool]
 )
 
-
-_FLOAT_DTYPES = [
-    d for d in _SUPPORTED_DTYPES if d.is_floating_point and d not in _FP8_SET
-]
-_ACTIVE_FP8_DTYPES = [d for d in _SUPPORTED_DTYPES if d in _FP8_SET]
 _NUMERIC_DTYPES = [d for d in _SUPPORTED_DTYPES if d != torch.bool]
 
-
-def _numel(shape):
-    n = 1
-    for dim in shape:
-        n *= dim
-    return n
-
-
-def _flatten_shape_cases():
-    """List-of-shapes workloads for the main shape-level sweep.
-
-    Each case is a list of tensor shapes (number, ranks and sizes of the tensors
-    fed to the op; the dedicated non-contiguous test covers memory layout).
-    Default mode includes each spec shape as both a single tensor and a pair.
-    """
-    if tu.QUICK_MODE:
-        return [
-            [(2, 19, 7)],
-            [(2, 3), (4,), (5, 6, 7)],
-        ]
-    cases = [
-        [(2, 3)],  # single tensor
-        [(4, 5), (4, 5), (4, 5)],  # several same-shape tensors
-        [(2, 3), (4,), (5, 6, 7)],  # mixed ranks and sizes
-        [(1024,), (64, 64), (16, 16, 16)],  # larger tensors
-        [(0, 3), (2,), (1, 1, 1)],  # empty tensor among non-empty
-        [(), (3,), (1, 4)],  # 0-dim tensors
-        [(0,), (0,)],  # all-empty tensors
-        [(16, 7, 57, 32, 29)],  # high-rank single tensor
-    ]
-    for shape in tu.selected_shapes():
-        if [shape] not in cases:
-            cases.append([shape])
-        cases.append([shape, shape])
-    return cases
-
-
-# Small input lists for the value-range sweep (the values are copied verbatim,
-# so a few sizes suffice to exercise the full spec range list per dtype).
 _FLATTEN_RANGE_CASES = [
     [(8,)],
     [(3,), (5,)],
@@ -110,7 +39,6 @@ _FLATTEN_RANGE_CASES = [
     [(2, 4), (3, 3), (5,)],
 ]
 
-# Small input lists for the backward sweep.
 _FLATTEN_BACKWARD_CASES = [
     [(8,)],
     [(), (3,), (1, 4)],
@@ -118,6 +46,26 @@ _FLATTEN_BACKWARD_CASES = [
     [(2, 4), (3, 3), (5,)],
     [(16, 16), (8, 8, 8)],
 ]
+
+_FLATTEN_SHAPE_CASES = tu.selected_cases(
+    [
+        [(2, 3)],
+        [(4, 5), (4, 5), (4, 5)],
+        [(2, 3), (4,), (5, 6, 7)],
+        [(1024,), (64, 64), (16, 16, 16)],
+        [(0, 3), (2,), (1, 1, 1)],
+        [(), (3,), (1, 4)],
+        [(0,), (0,)],
+        [(16, 7, 57, 32, 29)],
+    ],
+    quick=[[(2, 19, 7)], [(2, 3), (4,), (5, 6, 7)]],
+)
+# Append each default shape as a singleton (once) and a pair, in that order.
+if not tu.QUICK_MODE:
+    for shape in tu.selected_shapes():
+        if [shape] not in _FLATTEN_SHAPE_CASES:
+            _FLATTEN_SHAPE_CASES.append([shape])
+        _FLATTEN_SHAPE_CASES.append([shape, shape])
 
 
 def _resolve_gems_op():
@@ -127,11 +75,9 @@ def _resolve_gems_op():
 
 
 @pytest.mark.flatten_dense_tensors
-@pytest.mark.parametrize("tensor_shapes", _flatten_shape_cases())
+@pytest.mark.parametrize("tensor_shapes", _FLATTEN_SHAPE_CASES)
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_flatten_dense_tensors(tensor_shapes, dtype):
-    # Shape levels x every supported dtype, values drawn from the default
-    # [-1, 1] range (negative and positive for each dtype).
     inp = [tu.make_input(dtype, shape, ["-1", "1"]) for shape in tensor_shapes]
     ref_inp = [tu.to_reference(t) for t in inp]
 
@@ -150,10 +96,6 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _NUMERIC_DTYPES)
 def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
-    # The op never transforms the stored values, so the full spec range sweep
-    # (including 0/max/min and the degenerate constant ranges) must round-trip
-    # exactly through the copy. bool ignores the range and is covered by the
-    # shape-level test above.
     inp = [tu.make_input(dtype, shape, value_range) for shape in tensor_shapes]
     ref_inp = [tu.to_reference(t) for t in inp]
 
@@ -166,7 +108,6 @@ def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
 @pytest.mark.flatten_dense_tensors
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_flatten_dense_tensors_non_contiguous(dtype):
-    # Column slices and a transpose exercise the contiguous-copy path.
     base = tu.make_input(dtype, (8, 16), ["-1", "1"])
     ref_base = tu.to_reference(base)
     views = [base[:, ::2], base.t(), base.reshape(4, 32)[:, ::3]]
@@ -207,12 +148,11 @@ def test_flatten_dense_tensors_nan_inf(dtype, scenario):
     ),
 )
 def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
-    # Backward slices and reshapes the upstream gradient without arithmetic.
     inp = [
         tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         for shape in tensor_shapes
     ]
-    total_numel = sum(_numel(shape) for shape in tensor_shapes)
+    total_numel = sum(math.prod(shape) for shape in tensor_shapes)
     grad = tu.make_input(dtype, (total_numel,), ["-1", "1"])
     ref_inp = [tu.to_reference(t) for t in inp]
     ref_grad = tu.to_reference(grad)
@@ -231,7 +171,6 @@ def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
 
 @pytest.mark.flatten_dense_tensors
 def test_flatten_dense_tensors_rejects_empty_list():
-    # aten requires a non-empty tensor list; the candidate must fail too.
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([])
     gems_op = _resolve_gems_op()
@@ -241,8 +180,6 @@ def test_flatten_dense_tensors_rejects_empty_list():
 
 @pytest.mark.flatten_dense_tensors
 def test_flatten_dense_tensors_rejects_non_tensor():
-    # The tensors argument must be a list of Tensors; a scalar element hits a
-    # schema mismatch and raises on both paths.
     a = tu.make_input(torch.float32, (4,), ["-1", "1"])
     ref_a = tu.to_reference(a)
     with pytest.raises(RuntimeError):

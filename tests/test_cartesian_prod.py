@@ -12,29 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Correctness tests for ``aten::cartesian_prod(Tensor[] tensors) -> Tensor``.
-
-``cartesian_prod`` consumes a list of 1-D tensors and writes one row per
-combination of one element from each input (``prod(sizes)`` rows, in row-major
-order with the first input varying slowest, i.e. ``itertools.product`` order).
-With a single input PyTorch returns the 1-D tensor itself (shape ``(N,)``); with
-``k`` inputs the output is ``(prod(sizes), k)``.
-
-The op performs no arithmetic: values, dtype and layout are copied verbatim.
-Consequences for the regular-operator spec:
-
-* its shape-level dimension is the *number and lengths of the 1-D inputs*
-  rather than a single dense shape, so the spec's seven dense shapes are
-  represented here by the input-list configs in ``_CARTESIAN_PROD_SIZES``
-  (single / singleton / empty / equal-length / mixed-length / 3-4 inputs);
-* the value-range sweep uses ``tu.make_input`` over every supported dtype, so
-  every range round-trips exactly through the gather materialization;
-* the multi-input analogue of broadcasting is combining inputs of unequal
-  lengths (e.g. ``[1, 7]`` or ``[3, 1, 3]``), which the shape configs cover.
-
-Every case below is one Workload (one pytest parametrization combo).
-"""
-
 import math
 
 import pytest
@@ -45,75 +22,50 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# Value-range sweep + shape levels + backward + negative + nan/inf.
+# Gather one row per combination, with the first input varying slowest.
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_INT8_DTYPES = [torch.int8, torch.uint8]
 
-# Candidate dtypes: the spec's required 9 dtypes plus the wider float/int/bool
-# sets, deduplicated in order.
-_SUPPORTED_DTYPES = list(
-    dict.fromkeys(
-        _FP8_DTYPES
-        + _INT8_DTYPES
-        + utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-    )
+_SUPPORTED_DTYPES = (
+    _FP8_DTYPES
+    + [torch.int8, torch.uint8]
+    + utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + [torch.bool]
 )
 
+_RANGE_PAIRS = [
+    (dtype, value_range)
+    for dtype in _SUPPORTED_DTYPES
+    if dtype != torch.bool
+    for value_range in tu.selected_ranges()
+]
 
-_FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
-
-# Regular floating dtypes support the reductions in multi-input backward.
-_FLOAT_DTYPES = [d for d in _SUPPORTED_DTYPES if d in utils.ALL_FLOAT_DTYPES]
-
-# The value-range grid applies to every supported non-bool dtype; bool ignores
-# the range (it is still covered, range-independently, by the shape grid).
-_RANGE_DTYPES = [d for d in _SUPPORTED_DTYPES if d != torch.bool]
-
-
-_RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in tu.selected_ranges()]
-
-# Shape levels: each entry is the list of 1-D input sizes (the op's shape
-# dimension). The spec's seven dense shapes do not apply to this op: its input
-# is ``Tensor[]`` (a list of 1-D tensors, one per operand), so the natural shape
-# parameter is the number and lengths of those inputs rather than a single dense
-# shape -- a lone tuple like (256,) cannot express "k operands of length n".
-# These configs therefore cover single / singleton / empty / equal-length /
-# mixed-length / 3-4 input cases and the resulting empty outputs.
-_CARTESIAN_PROD_SIZES = (
-    [[8], [3, 5], [2, 4, 3]]
-    if tu.QUICK_MODE
-    else [
-        [8],  # single input -> (8,)
-        [1],  # single singleton input -> (1,)
-        [0],  # single empty input -> (0,)
-        [3, 5],  # two inputs -> (15, 2)
-        [16, 16],  # two equal-length inputs -> (256, 2)
-        [1, 7],  # singleton + non-singleton -> (7, 2)
-        [64, 128],  # two larger inputs -> (8192, 2)
-        [256, 256],  # larger two-input case -> (65536, 2)
-        [2, 4, 3],  # three inputs -> (24, 3)
-        [3, 1, 3],  # mixed singleton dims -> (9, 3)
-        [8, 16, 32],  # larger three-input case -> (4096, 3)
-        [2, 5, 8, 3],  # four inputs -> (240, 4)
-        [0, 3],  # empty first input -> (0, 2)
-        [5, 0],  # empty second input -> (0, 2)
-    ]
+_CARTESIAN_PROD_SIZES = tu.selected_cases(
+    [
+        [8],
+        [1],
+        [0],
+        [3, 5],
+        [16, 16],
+        [1, 7],
+        [64, 128],
+        [256, 256],
+        [2, 4, 3],
+        [3, 1, 3],
+        [8, 16, 32],
+        [2, 5, 8, 3],
+        [0, 3],
+        [5, 0],
+    ],
+    quick=[[8], [3, 5], [2, 4, 3]],
 )
 
-# Backward input lists stay small (the autograd graph is built per input).
-_BACKWARD_SIZES = [[8], [3, 5]] if tu.QUICK_MODE else [[8], [3, 5], [2, 4, 3], [16, 16]]
+_BACKWARD_SIZES = tu.selected_cases(
+    [[8], [3, 5], [2, 4, 3], [16, 16]], quick=[[8], [3, 5]]
+)
 
 
 def _resolve_gems_op():
-    """Resolve the candidate inside the test (never at import time).
-
-    Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct ``flag_gems.cartesian_prod`` callable. ``LookupError`` from
-    ``resolve_gems_op`` is deliberately not caught: a test that cannot obtain
-    the candidate must fail loudly instead of silently running the reference.
-    """
     return flag_gems.testing.resolve_gems_op(
         "cartesian_prod", getattr(flag_gems, "cartesian_prod", None)
     )
@@ -123,7 +75,6 @@ def _resolve_gems_op():
 @pytest.mark.parametrize("sizes", _CARTESIAN_PROD_SIZES)
 @pytest.mark.parametrize("dtype,value_range", _RANGE_PAIRS)
 def test_cartesian_prod(sizes, dtype, value_range):
-    # Full grid: every supported dtype x every value range x every shape level.
     inp = [tu.make_input(dtype, (size,), value_range) for size in sizes]
     ref_inp = [tu.to_reference(t) for t in inp]
 
@@ -141,8 +92,6 @@ def test_cartesian_prod(sizes, dtype, value_range):
 @pytest.mark.cartesian_prod
 @pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
 def test_cartesian_prod_row_order(dtype):
-    # Exact semantic check: rows follow itertools.product order (first input
-    # varies slowest) and each input element is copied verbatim.
     a = torch.tensor([0, 1, 2], dtype=dtype, device=flag_gems.device)
     b = torch.tensor([10, 20], dtype=dtype, device=flag_gems.device)
     expected = torch.tensor(
@@ -166,8 +115,6 @@ def test_cartesian_prod_row_order(dtype):
 @pytest.mark.cartesian_prod
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_cartesian_prod_non_contiguous(dtype):
-    # A strided 1-D input must be read by value (indexed gather), not assumed
-    # contiguous; aten and the candidate must produce identical rows.
     base = tu.make_input(dtype, (16,), ["-1", "1"])
     ref_base = tu.to_reference(base)
     other = tu.make_input(dtype, (5,), ["-1", "1"])
@@ -208,7 +155,7 @@ def test_cartesian_prod_nan_inf(dtype, scenario):
         [
             (sizes, dtype)
             for sizes in _BACKWARD_SIZES
-            for dtype in _FLOAT_DTYPES + _FP8_DTYPES
+            for dtype in utils.ALL_FLOAT_DTYPES + _FP8_DTYPES
             if len(sizes) == 1 or dtype not in _FP8_DTYPES
         ]
     ),
@@ -251,7 +198,6 @@ def test_cartesian_prod_rejects_empty_list():
 @pytest.mark.parametrize("shape", [(3, 4), ()])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int32])
 def test_cartesian_prod_rejects_multidim_input(shape, dtype):
-    # The op only accepts 1-D tensors; a 2-D or 0-dim input must raise.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
     with pytest.raises(RuntimeError):
@@ -263,7 +209,6 @@ def test_cartesian_prod_rejects_multidim_input(shape, dtype):
 
 @pytest.mark.cartesian_prod
 def test_cartesian_prod_rejects_mixed_dtype():
-    # All inputs must share one dtype; mixing dtypes must raise.
     a = tu.make_input(torch.float32, (4,), ["-1", "1"])
     b = tu.make_input(torch.int32, (4,), ["-1", "1"])
     ref_inp = [
@@ -279,8 +224,6 @@ def test_cartesian_prod_rejects_mixed_dtype():
 
 @pytest.mark.cartesian_prod
 def test_cartesian_prod_rejects_non_tensor():
-    # The tensors argument must be a list of Tensors; a scalar element hits a
-    # schema mismatch and raises.
     a = tu.make_input(torch.float32, (4,), ["-1", "1"])
     ref_inp = tu.to_reference(a)
     with pytest.raises(RuntimeError):
