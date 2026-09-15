@@ -169,8 +169,7 @@ def _nan_inf_tensor(shape, dtype, device):
     values = torch.tensor(
         [float("nan"), float("inf"), float("-inf")], dtype=dtype, device=device
     )
-    index = torch.arange(numel, device=device) % 3
-    return values[index].reshape(shape)
+    return values.repeat((numel + 2) // 3)[:numel].reshape(shape)
 
 
 def _default_gems_op():
@@ -190,7 +189,7 @@ def _as_int(value):
     # return a 0-dim / single-element integral tensor. Normalize both.
     if isinstance(value, torch.Tensor):
         assert value.numel() == 1, "candidate returned a non-scalar tensor"
-        return int(value.item())
+        return value.item()
     return value
 
 

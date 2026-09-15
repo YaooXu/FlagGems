@@ -169,7 +169,7 @@ def _assert_pair(res, ref):
     res_scale, res_zp = res
     ref_scale, ref_zp = ref
     assert isinstance(res_scale, float), type(res_scale)
-    assert isinstance(res_zp, int), type(res_zp)
+    assert isinstance(res_zp, int) and not isinstance(res_zp, bool), type(res_zp)
     tu.assert_result_close(
         torch.tensor(res_scale, dtype=torch.float64),
         torch.tensor(ref_scale, dtype=torch.float64),

@@ -445,3 +445,40 @@ def test_csc_candidate_cannot_change_reference_through_shared_inputs(component):
             cases.test_sparse_csc_tensor(
                 (4, 4), 4, torch.float32, torch.int64, ["0", "1"]
             )
+
+
+@pytest.mark.parametrize("value", [0.5, False])
+def test_version_rejects_nonintegral_tensor_results(value):
+    from . import test__version as cases
+
+    def invalid(inp):
+        return torch.tensor(value, device=inp.device)
+
+    with testing.override_gems_op("_version", invalid):
+        with pytest.raises(AssertionError):
+            cases.test__version_fresh((4,), torch.float32)
+
+
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
+def test_version_accepts_integral_tensor_results(dtype):
+    from . import test__version as cases
+
+    def valid(inp):
+        return torch.tensor(
+            torch.ops.aten._version(inp), dtype=dtype, device=inp.device
+        )
+
+    with testing.override_gems_op("_version", valid):
+        cases.test__version_fresh((4,), torch.float32)
+
+
+def test_quantization_params_reject_boolean_zero_point():
+    from . import test__choose_qparams_per_tensor as cases
+
+    def invalid(inp, reduce_range):
+        scale, zero_point = torch.ops.aten._choose_qparams_per_tensor(inp, reduce_range)
+        return scale, bool(zero_point)
+
+    with testing.override_gems_op("_choose_qparams_per_tensor", invalid):
+        with pytest.raises(AssertionError):
+            cases.test__choose_qparams_per_tensor_constant(0.0, torch.float32, False)
