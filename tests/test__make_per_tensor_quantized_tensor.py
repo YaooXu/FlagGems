@@ -23,11 +23,7 @@ import flag_gems
 from . import conftest as cfg
 from . import test_utils as tu
 
-# ``_make_per_tensor_quantized_tensor`` starts with an underscore, and
-# ``pytest.mark`` refuses to generate a marker via attribute access for such
-# names. Register the markers directly on the MarkGenerator so
-# ``@pytest.mark._make_per_tensor_quantized_tensor`` and ``-m
-# _make_per_tensor_quantized_tensor`` both work.
+# Register underscore-prefixed pytest markers explicitly.
 for _name in (
     "_make_per_tensor_quantized_tensor",
     "_make_per_tensor_quantized_tensor_out",
@@ -38,33 +34,7 @@ for _name in (
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_make_per_tensor_quantized_tensor(Tensor self, float scale, int
-# zero_point) -> Tensor wraps an integer tensor (the quantized int
-# representation) into a per-tensor affine quantized tensor. The output dtype is
-# derived from the input dtype via toQIntType (uint8 -> quint8, int8 -> qint8,
-# int32 -> qint32); no quantization arithmetic is applied -- the output's
-# int_repr is an exact copy of the input values and scale/zero_point are stored
-# verbatim as qparams. Only the three integer storage dtypes are accepted.
-#
-# Spec dimension applicability:
-# - Value ranges: the data path is a pure bit copy, so the main grid runs
-#   tu.selected_ranges() over the accepted storage dtypes (the five spec ranges
-#   are snapped into each dtype's domain). The qparams are the second value
-#   dimension: scale/zero_point are stored verbatim, including non-finite
-#   scales, which is the nan/inf dimension of the spec (no floating tensor
-#   payload can exist because floating inputs are rejected).
-# - Shape levels: the main grids sweep tu.selected_shapes() (the seven required
-#   0~5-dim shapes) plus the (0,) empty grid. The qparams / boundary /
-#   nan-inf tests pin their value dimension and use a few small fixed shapes.
-# - Broadcast: N/A -- unary op with a single tensor input.
-# - Backward: N/A -- the input is an integer storage tensor, no autograd graph.
-# - Negative cases: non-storage input dtypes, a non-quantized .out buffer, a
-#   wrong-dtype quantized .out buffer and a shape-mismatched .out buffer must
-#   raise on the aten reference and the candidate must reject them too.
-
-# Quantized storage maps int8/uint8/int32 to qint8/quint8/qint32.
-
-
+# Copy integer storage and attach per-tensor scale/zero-point metadata.
 _MAKE_PERTENSOR_INPUT_DTYPES = [torch.int8, torch.uint8, torch.int32]
 
 _QUANT_DTYPE = {
@@ -72,23 +42,19 @@ _QUANT_DTYPE = {
     torch.int8: torch.qint8,
     torch.int32: torch.qint32,
 }
-# A different quantized dtype for each storage dtype, used to check that the
-# .out overload rejects a buffer whose dtype does not match the derived one.
+
 _WRONG_QUANT_DTYPE = {
     torch.uint8: torch.qint8,
     torch.int8: torch.quint8,
     torch.int32: torch.quint8,
 }
-# scale and zero_point are opaque qparams (the reference accepts any float /
-# int), so representative values exercise the metadata path; the data path is a
-# pure copy.
+
 _MAKE_PERTENSOR_SCALES = [0.01, 0.5, 1.0]
+
 _MAKE_PERTENSOR_ZERO_POINTS = [-1, 2]
-# Non-finite scales are stored verbatim (the reference performs no validation);
-# this is the nan/inf dimension of the regular-operator spec.
+
 _NON_FINITE_SCALES = [float("nan"), float("inf"), float("-inf")]
-# Every storage dtype outside {uint8, int8, int32} is rejected by the aten
-# reference.
+
 _REJECTED_DTYPES = [
     torch.float16,
     torch.float32,
@@ -98,22 +64,16 @@ _REJECTED_DTYPES = [
     torch.int64,
     torch.bool,
 ]
-# Shape grid: the spec's shape levels (7 shapes at full level, the smoke shape
-# at quick level) plus the empty grid, which the shared set does not contain --
-# a pure copy kernel must still handle zero elements.
+
 _GRID_SHAPES = tu.selected_shapes() + [(0,)]
-# Fixed small shapes for the value-dimension tests (qparams / boundary /
-# nan-inf): these pin scale/zero_point/data values rather than shape, so they
-# stay level-independent and keep the collected-case budget above tu.MIN_CASES
-# in both the quick and the full level.
+
 _SMALL_SHAPES = [(7,), (4, 8), (2, 3, 5)]
-# Boundary patterns filled into the boundary-value test tensor.
+
 _BOUNDARY_PATTERNS = ("min_max_0_1", "constant_min", "constant_max")
 
 
 def _make_input(shape, dtype, device=None):
-    # Full-range random values including the dtype max (randint's high is
-    # exclusive, so info.max + 1 is required).
+    # randint excludes high, so max + 1 includes the dtype maximum.
     info = torch.iinfo(dtype)
     return torch.randint(
         info.min,
@@ -151,10 +111,6 @@ def _resolve_gems_op():
 
 
 def _assert_quant_metadata(res_out, ref_out):
-    # _make_per_tensor_quantized_tensor wraps integer data in a fresh quantized
-    # tensor: the observable contract is the derived output dtype, the stored
-    # qparams, the shape, and the int representation (an exact copy of the input
-    # values). The input is never mutated and the output never aliases it.
     assert res_out.is_quantized
     assert res_out.dtype == ref_out.dtype
     assert res_out.shape == ref_out.shape
@@ -177,9 +133,6 @@ def _assert_quant_metadata(res_out, ref_out):
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test__make_per_tensor_quantized_tensor_value_ranges(shape, dtype, value_range):
-    # Main value-range x shape x storage-dtype grid (one workload per combo).
-    # The data path is a bit copy, so the expected result is derived from the
-    # aten reference for the same input.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -197,8 +150,6 @@ def test__make_per_tensor_quantized_tensor_value_ranges(shape, dtype, value_rang
 @pytest.mark.parametrize("scale", _MAKE_PERTENSOR_SCALES)
 @pytest.mark.parametrize("zero_point", _MAKE_PERTENSOR_ZERO_POINTS)
 def test__make_per_tensor_quantized_tensor_qparams(shape, dtype, scale, zero_point):
-    # scale / zero_point are the second value dimension: they are stored
-    # verbatim as qparams and never touch the data path.
     inp = _make_input(shape, dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -215,8 +166,6 @@ def test__make_per_tensor_quantized_tensor_qparams(shape, dtype, scale, zero_poi
 @pytest.mark.parametrize("pattern", _BOUNDARY_PATTERNS)
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 def test__make_per_tensor_quantized_tensor_boundary_values(dtype, pattern):
-    # make_tensor draws values strictly below the dtype max, so pin the exact
-    # dtype bounds explicitly: min/max/0/(±1) must round-trip bit-exactly.
     inp = _boundary_input(dtype, pattern)
     ref_inp = tu.to_reference(inp)
 
@@ -231,8 +180,6 @@ def test__make_per_tensor_quantized_tensor_boundary_values(dtype, pattern):
 @pytest.mark.parametrize("scale", _NON_FINITE_SCALES)
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 def test__make_per_tensor_quantized_tensor_non_finite_scale(dtype, scale):
-    # nan/inf dimension: the reference stores a non-finite scale verbatim (it
-    # performs no validation), so the candidate must too.
     inp = _make_input((4, 8), dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -246,9 +193,6 @@ def test__make_per_tensor_quantized_tensor_non_finite_scale(dtype, scale):
 @pytest.mark._make_per_tensor_quantized_tensor
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
-    # The copy must read through arbitrary input strides and still emit a
-    # contiguous output. Slice on both the test device and the reference device
-    # so the two inputs share the same memory layout.
     base = _make_input((16, 8), dtype)
     ref_base = tu.to_reference(base)
     inp = base[:, ::2]
@@ -261,10 +205,6 @@ def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-# aten::_make_per_tensor_quantized_tensor.out(Tensor self, float scale, int
-# zero_point, *, Tensor(a!) out) -> Tensor(a!) resets the qparams of the
-# provided out tensor (keeping its shape and dtype) and returns the same object
-# (alias semantics).
 @pytest.mark._make_per_tensor_quantized_tensor_out
 @pytest.mark.parametrize("shape", _GRID_SHAPES)
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
@@ -302,8 +242,7 @@ def test__make_per_tensor_quantized_tensor_out_value_ranges(shape, dtype, value_
 @pytest.mark.parametrize("scale", _MAKE_PERTENSOR_SCALES)
 @pytest.mark.parametrize("zero_point", _MAKE_PERTENSOR_ZERO_POINTS)
 def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point):
-    # The .out overload must overwrite the buffer's stale qparams (allocated
-    # here with scale=1.0 / zero_point=0) with the requested ones.
+    # Overwrite the initial scale=1 and zero_point=0 qparams.
     inp = _make_input((4, 8), dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -328,18 +267,9 @@ def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point)
     tu.assert_result_equal(inp, ref_inp)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases: each invalid request must raise on the aten reference and the
-# candidate must reject it too rather than silently succeeding.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark._make_per_tensor_quantized_tensor
 @pytest.mark.parametrize("dtype", _REJECTED_DTYPES)
 def test__make_per_tensor_quantized_tensor_rejects_non_storage_dtype(dtype):
-    # Only uint8/int8/int32 storage tensors can be wrapped; the aten reference
-    # raises "Creation of quantized tensor requires quantized dtype like
-    # torch.quint8" for every other dtype.
     inp = torch.tensor([1, 2, 3], dtype=dtype, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
     with pytest.raises(RuntimeError):
@@ -351,9 +281,6 @@ def test__make_per_tensor_quantized_tensor_rejects_non_storage_dtype(dtype):
 @pytest.mark._make_per_tensor_quantized_tensor_out
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 def test__make_per_tensor_quantized_tensor_out_rejects_non_quantized_buffer(dtype):
-    # The .out overload cannot change the out tensor's dtype, so a plain (non-
-    # quantized) buffer is rejected by the reference and must be by the
-    # candidate too.
     inp = _make_input((2, 3), dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -371,8 +298,6 @@ def test__make_per_tensor_quantized_tensor_out_rejects_non_quantized_buffer(dtyp
 @pytest.mark._make_per_tensor_quantized_tensor_out
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 def test__make_per_tensor_quantized_tensor_out_rejects_wrong_quantized_dtype(dtype):
-    # A quantized buffer of any other dtype (e.g. qint8 for a quint8 output) is
-    # rejected as well.
     inp = _make_input((2, 3), dtype)
     ref_inp = tu.to_reference(inp)
 

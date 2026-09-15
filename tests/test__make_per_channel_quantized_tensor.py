@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # SPDX-License-Identifier: Apache-2.0
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -22,11 +23,7 @@ import flag_gems
 from . import conftest as cfg
 from . import test_utils as tu
 
-# ``_make_per_channel_quantized_tensor`` starts with an underscore, and
-# ``pytest.mark`` refuses to generate a marker via attribute access for such
-# names. Register the markers directly on the MarkGenerator so
-# ``@pytest.mark._make_per_channel_quantized_tensor`` and ``-m
-# _make_per_channel_quantized_tensor`` both work.
+# Register underscore-prefixed pytest markers explicitly.
 for _name in (
     "_make_per_channel_quantized_tensor",
     "_make_per_channel_quantized_tensor_out",
@@ -37,33 +34,8 @@ for _name in (
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_make_per_channel_quantized_tensor(Tensor self, Tensor scale, Tensor
-# zero_point, int axis) -> Tensor reinterprets a *plain integer* tensor
-# (uint8/int8/int32) as the storage of a torch.per_channel_affine quantized
-# tensor carrying per-channel scale/zero_point metadata. The output quantized
-# dtype is derived from the storage dtype: uint8 -> quint8, int8 -> qint8,
-# int32 -> qint32; the integer values are copied to the output storage
-# unchanged. The scale dtype selects the qscheme:
-#   * integer zero_points -> torch.per_channel_affine (float64 scales and
-#     int64 zero_points as reported by the q_per_channel_* getters);
-#   * floating zero_points -> torch.per_channel_affine_float_qparams (float32
-#     scales and zero_points).
-# Both the data path (bit-exact copy) and the metadata (stored verbatim) are
-# exact, so every assertion is an equality check (tu.assert_result_equal).
-#
-# Regular-operator spec dimensions:
-# - Value ranges: the storage tensor, the scales and the zero_points are the
-#   only value-carrying inputs; all three are driven by tu.selected_ranges()
-#   (per-dtype bounds, sign coverage, degenerate constants).
-# - Shape levels: tu.selected_shapes() (0-dim scalar through 5-dim) with a
-#   valid axis per rank, plus a dedicated axis-semantics grid covering every
-#   positive/negative axis position. The op is not rank-fixed.
-# - Broadcast: N/A -- the op takes a single storage tensor plus 1-D metadata.
-# - Backward: N/A -- quantized tensors carry no autograd support.
-# - Negative cases: non-storage input dtypes, non-float or non-1-D scales,
-#   non-1-D zero_points and mismatched metadata lengths must raise on the aten
-#   reference and on the candidate alike.
-
+# Copy integer storage and attach per-channel scale/zero-point metadata.
+# Integer zero points use affine qparams; floating zero points use float_qparams.
 _STORAGE_DTYPES = [torch.uint8, torch.int8, torch.int32]
 
 _QUANT_DTYPE = {
@@ -72,19 +44,14 @@ _QUANT_DTYPE = {
     torch.int32: torch.qint32,
 }
 
-# A different quantized dtype for each storage dtype, used to check that the
-# .out overload rejects a buffer whose dtype does not match the derived one.
 _WRONG_QUANT_DTYPE = {
     torch.uint8: torch.qint8,
     torch.int8: torch.quint8,
     torch.int32: torch.quint8,
 }
 
-# The scale tensor may be float32 or float64; the quantizer canonicalizes both
-# to float64 (per_channel_affine) or float32 (float_qparams).
 _SCALE_DTYPES = [torch.float32, torch.float64]
 
-# Every non-storage dtype is rejected by the aten reference.
 _REJECTED_INPUT_DTYPES = [
     torch.float16,
     torch.float32,
@@ -95,27 +62,18 @@ _REJECTED_INPUT_DTYPES = [
     torch.bool,
 ]
 
-# Non-finite qparams are accepted and stored verbatim (the nan/inf dimension).
 _NON_FINITE = [float("nan"), float("inf"), float("-inf")]
 
-# One valid axis per shared shape level (0-dim through 5-dim). 0-dim / 1-dim
-# only have axis 0; higher ranks pick an interior/negative axis.
 _AXIS_BY_RANK = {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 3}
 
-_SHAPE_AXIS = [
-    (tuple(shape), _AXIS_BY_RANK[len(shape)]) for shape in tu.selected_shapes()
-]
+_SHAPE_AXIS = [(shape, _AXIS_BY_RANK[len(shape)]) for shape in tu.selected_shapes()]
+
 if tu.QUICK_MODE:
-    # The quick smoke level uses the single shared shape, which would leave the
-    # collected case count below tu.MIN_CASES; widen the grid with two extra
-    # ranks (the full level already uses the seven shared shape levels).
     _SHAPE_AXIS += [((2, 3, 4), 1), ((4, 5), 0)]
 
-# Axis-semantics grid: every valid positive and negative axis encoding.
-_AXIS_SHAPES = (
-    [((2, 3, 4), 1), ((2, 3, 4), -2), ((2, 3, 4), 0), ((7,), -1)]
-    if tu.QUICK_MODE
-    else [
+# Exercise positive and negative axis encodings.
+_AXIS_SHAPES = tu.selected_cases(
+    [
         ((7,), 0),
         ((7,), -1),
         ((2, 3), 0),
@@ -132,13 +90,16 @@ _AXIS_SHAPES = (
         ((2, 3, 4, 5), -1),
         ((2, 3, 4, 5, 6), 3),
         ((2, 3, 4, 5, 6), -1),
-    ]
+    ],
+    quick=[((2, 3, 4), 1), ((2, 3, 4), -2), ((2, 3, 4), 0), ((7,), -1)],
 )
 
 
-def _resolve(name):
-    default = getattr(flag_gems, name.replace(".", "_"), None)
-    return flag_gems.testing.resolve_gems_op(name, default)
+def _resolve_gems_op():
+    return flag_gems.testing.resolve_gems_op(
+        "_make_per_channel_quantized_tensor",
+        getattr(flag_gems, "_make_per_channel_quantized_tensor", None),
+    )
 
 
 def _ref_device():
@@ -146,7 +107,7 @@ def _ref_device():
 
 
 def _num_channels(shape, axis):
-    # A 0-dim storage tensor carries a single channel.
+    # A scalar storage tensor carries one channel.
     return 1 if len(shape) == 0 else shape[axis]
 
 
@@ -160,8 +121,7 @@ def _zero_point_bounds(dtype):
 
 
 def _make_metadata(shape, axis, storage_dtype, scale_dtype):
-    # Representative metadata: positive scales and zero_points inside the
-    # storage dtype's range.
+    # Use positive scales and zero points inside the storage dtype range.
     num_channels = _num_channels(shape, axis)
     scales = torch.rand(num_channels, dtype=scale_dtype, device=flag_gems.device) + 0.1
     low, high = _zero_point_bounds(storage_dtype)
@@ -172,8 +132,7 @@ def _make_metadata(shape, axis, storage_dtype, scale_dtype):
 
 
 def _make_float_metadata(shape, axis, zero_point_dtype):
-    # A floating-point zero_point tensor selects the
-    # per_channel_affine_float_qparams qscheme.
+    # Floating zero points select per_channel_affine_float_qparams.
     num_channels = _num_channels(shape, axis)
     scales = (
         torch.rand(num_channels, dtype=torch.float32, device=flag_gems.device) + 0.1
@@ -185,9 +144,7 @@ def _make_float_metadata(shape, axis, zero_point_dtype):
 
 
 def _make_out_buffer(shape, axis, storage_dtype, device, reference=False):
-    # The out buffer must already carry the derived quantized dtype. Its initial
-    # metadata is deliberately different so the overwrite performed by the op is
-    # observable.
+    # Prefill different qparams so out must overwrite existing metadata.
     num_channels = _num_channels(shape, axis)
     scales = torch.full((num_channels,), 9.0, dtype=torch.float64, device=device)
     zero_points = torch.full((num_channels,), 9, dtype=torch.int64, device=device)
@@ -205,8 +162,6 @@ def _make_out_buffer(shape, axis, storage_dtype, device, reference=False):
 
 
 def _assert_per_channel_metadata(res_out, ref_out):
-    # Compare the actual quantizer encoding and integer storage with ATen.
-    # Both integer and floating zero-point schemes use these same getters.
     assert res_out.is_quantized
     assert res_out.dtype == ref_out.dtype
     assert res_out.shape == ref_out.shape
@@ -230,13 +185,6 @@ def _assert_per_channel_metadata(res_out, ref_out):
 def test__make_per_channel_quantized_tensor_value_ranges(
     shape, axis, value_range, storage_dtype
 ):
-    # The storage tensor and the per-channel metadata are the only value-
-    # carrying inputs. Feed all three from the shared value-range table so every
-    # numeric range (negative, positive, full dtype bounds, degenerate
-    # constants) is exercised; the copy and the metadata must be preserved
-    # bit-exactly regardless of sign, magnitude or dtype bounds. The scales use
-    # float64 (the canonical quantizer storage dtype), including the +/- extremes
-    # of the range table, which the reference stores verbatim.
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, value_range)
     scales = tu.make_input(torch.float64, (num_channels,), value_range)
@@ -249,9 +197,7 @@ def test__make_per_channel_quantized_tensor_value_ranges(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -264,9 +210,6 @@ def test__make_per_channel_quantized_tensor_value_ranges(
 @pytest.mark.parametrize("scale_dtype", _SCALE_DTYPES)
 @pytest.mark.parametrize("shape,axis", _SHAPE_AXIS)
 def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dtype):
-    # The default overload over a representative value range, covering both
-    # input scale dtypes: the quantizer must canonicalize float32 and float64
-    # scales to float64 exactly (no lossy round-trip through a wider type).
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, scale_dtype)
     ref_inp = tu.to_reference(inp)
@@ -277,9 +220,7 @@ def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dt
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -294,9 +235,6 @@ def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dt
 def test__make_per_channel_quantized_tensor_axis(
     shape, axis, storage_dtype, scale_dtype
 ):
-    # Every valid axis position (positive and negative) across ranks 1-5: the
-    # stored q_per_channel_axis must be the caller-supplied value and the
-    # metadata/storage must be preserved for each encoding.
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, scale_dtype)
     ref_inp = tu.to_reference(inp)
@@ -307,9 +245,7 @@ def test__make_per_channel_quantized_tensor_axis(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -320,9 +256,6 @@ def test__make_per_channel_quantized_tensor_axis(
 @pytest.mark._make_per_channel_quantized_tensor
 @pytest.mark.parametrize("storage_dtype", _STORAGE_DTYPES)
 def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
-    # Pin the exact storage dtype bounds (make_tensor draws strictly inside the
-    # range): min/max/0/(+/-1) must round-trip bit-exactly through the storage
-    # copy, and the full-range zero_points must be stored verbatim.
     info = torch.iinfo(storage_dtype)
     values = [info.min, info.max, 0, 1]
     if storage_dtype != torch.uint8:
@@ -344,9 +277,7 @@ def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -358,9 +289,6 @@ def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
 @pytest.mark.parametrize("storage_dtype", _STORAGE_DTYPES)
 @pytest.mark.parametrize("scale_dtype", _SCALE_DTYPES)
 def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_dtype):
-    # A transposed view whose strides do not match the contiguous layout: the
-    # reference materializes/iterates the logical values, so they must be
-    # preserved in the output storage regardless of the physical layout.
     base = tu.make_input(storage_dtype, (4, 3, 8), ["0", "max"])
     inp = base.transpose(0, 1)
     assert not inp.is_contiguous()  # shape (3, 4, 8)
@@ -374,9 +302,7 @@ def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -391,9 +317,6 @@ def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_
 def test__make_per_channel_quantized_tensor_float_zero_points(
     shape, axis, storage_dtype, zero_point_dtype
 ):
-    # A floating-point zero_point tensor selects the
-    # per_channel_affine_float_qparams scheme (float32 scales/zero_points
-    # stored as-is) instead of the int64-zero_point per_channel_affine scheme.
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_float_metadata(shape, axis, zero_point_dtype)
     ref_inp = tu.to_reference(inp)
@@ -404,9 +327,7 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -418,7 +339,6 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
 @pytest.mark.parametrize("storage_dtype", _STORAGE_DTYPES)
 @pytest.mark.parametrize("bad", _NON_FINITE)
 def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad):
-    # nan/inf/-inf scales are accepted by both references and stored verbatim.
     shape, axis = (2, 3, 4), 1
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
@@ -436,9 +356,7 @@ def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -452,8 +370,6 @@ def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad
 def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
     storage_dtype, bad
 ):
-    # Non-finite float zero_points follow the float_qparams path and are stored
-    # verbatim, including NaNs.
     shape, axis = (2, 3, 4), 1
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
@@ -471,9 +387,7 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis
-    )
+    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -481,11 +395,6 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
     tu.assert_result_equal(zero_points, ref_zero_points)
 
 
-# aten::_make_per_channel_quantized_tensor.out(Tensor self, Tensor scale, Tensor
-# zero_point, int axis, *, Tensor(a!) out) -> Tensor(a!) overwrites the
-# quantizer metadata and the storage of the provided out tensor (keeping its
-# qscheme and dtype) and returns the same object (alias semantics). The out
-# buffer must already carry the derived quantized dtype.
 @pytest.mark._make_per_channel_quantized_tensor_out
 @pytest.mark.parametrize("storage_dtype", _STORAGE_DTYPES)
 @pytest.mark.parametrize("shape,axis", _SHAPE_AXIS)
@@ -504,9 +413,7 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     )
 
     act_out_buf = _make_out_buffer(shape, axis, storage_dtype, flag_gems.device)
-    res_ret = _resolve("_make_per_channel_quantized_tensor")(
-        inp, scales, zero_points, axis, out=act_out_buf
-    )
+    res_ret = _resolve_gems_op()(inp, scales, zero_points, axis, out=act_out_buf)
     assert res_ret is act_out_buf
 
     _assert_per_channel_metadata(act_out_buf, ref_out_buf)
@@ -515,17 +422,9 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     tu.assert_result_equal(zero_points, ref_zero_points)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases: each invalid request must raise on the aten reference and the
-# candidate must reject it too rather than silently succeeding.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark._make_per_channel_quantized_tensor
 @pytest.mark.parametrize("invalid_dtype", _REJECTED_INPUT_DTYPES)
 def test__make_per_channel_quantized_tensor_rejects_non_storage_dtype(invalid_dtype):
-    # Only integer storage dtypes (uint8/int8/int32) can be reinterpreted as
-    # quantized storage; float and other integer dtypes are rejected.
     shape = (2, 3)
     inp = torch.zeros(shape, dtype=invalid_dtype, device=flag_gems.device)
     scales = torch.full((3,), 0.5, dtype=torch.float32, device=flag_gems.device)
@@ -539,13 +438,12 @@ def test__make_per_channel_quantized_tensor_rejects_non_storage_dtype(invalid_dt
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(inp, scales, zero_points, 1)
+        _resolve_gems_op()(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
 @pytest.mark.parametrize("scale_dtype", [torch.int32, torch.int64])
 def test__make_per_channel_quantized_tensor_rejects_non_float_scales(scale_dtype):
-    # The scale tensor must be floating point; integer scales are rejected.
     shape = (2, 3)
     inp = torch.zeros(shape, dtype=torch.uint8, device=flag_gems.device)
     scales = torch.tensor([1, 2, 3], dtype=scale_dtype, device=flag_gems.device)
@@ -559,13 +457,12 @@ def test__make_per_channel_quantized_tensor_rejects_non_float_scales(scale_dtype
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(inp, scales, zero_points, 1)
+        _resolve_gems_op()(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
 @pytest.mark.parametrize("bad_metadata", ["scale", "zero_point"])
 def test__make_per_channel_quantized_tensor_rejects_non_1d_metadata(bad_metadata):
-    # The per-channel metadata must be 1-D (one entry per channel).
     shape = (2, 3)
     inp = torch.zeros(shape, dtype=torch.uint8, device=flag_gems.device)
     scales = torch.rand(3, dtype=torch.float32, device=flag_gems.device)
@@ -583,7 +480,7 @@ def test__make_per_channel_quantized_tensor_rejects_non_1d_metadata(bad_metadata
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(inp, scales, zero_points, 1)
+        _resolve_gems_op()(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -591,8 +488,7 @@ def test__make_per_channel_quantized_tensor_rejects_non_1d_metadata(bad_metadata
 def test__make_per_channel_quantized_tensor_rejects_metadata_length_mismatch(
     scale_len, zero_point_len
 ):
-    # The factory requires scales.numel() == zero_points.numel(); the lengths
-    # only need to match each other (they are not checked against size[axis]).
+    # Metadata lengths must match each other; the factory does not check size[axis].
     shape = (2, 3)
     inp = torch.zeros(shape, dtype=torch.uint8, device=flag_gems.device)
     scales = torch.rand(scale_len, dtype=torch.float32, device=flag_gems.device)
@@ -608,7 +504,7 @@ def test__make_per_channel_quantized_tensor_rejects_metadata_length_mismatch(
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(inp, scales, zero_points, 1)
+        _resolve_gems_op()(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor_out
@@ -616,8 +512,6 @@ def test__make_per_channel_quantized_tensor_rejects_metadata_length_mismatch(
 def test__make_per_channel_quantized_tensor_out_rejects_non_quantized_buffer(
     storage_dtype,
 ):
-    # The .out overload keeps the out tensor dtype, which must already be the
-    # derived quantized dtype; a plain (non-quantized) buffer is rejected.
     shape, axis = (2, 3), 1
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, torch.float32)
@@ -635,9 +529,7 @@ def test__make_per_channel_quantized_tensor_out_rejects_non_quantized_buffer(
 
     act_buf = torch.empty(shape, dtype=torch.float32, device=flag_gems.device)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(
-            inp, scales, zero_points, axis, out=act_buf
-        )
+        _resolve_gems_op()(inp, scales, zero_points, axis, out=act_buf)
 
 
 @pytest.mark._make_per_channel_quantized_tensor_out
@@ -645,8 +537,6 @@ def test__make_per_channel_quantized_tensor_out_rejects_non_quantized_buffer(
 def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
     storage_dtype,
 ):
-    # A quantized buffer of any other dtype (e.g. qint8 for a quint8 output) is
-    # rejected as well.
     shape, axis = (2, 3), 1
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
@@ -689,6 +579,4 @@ def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
         device=flag_gems.device,
     )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor")(
-            inp, scales, zero_points, axis, out=act_buf
-        )
+        _resolve_gems_op()(inp, scales, zero_points, axis, out=act_buf)

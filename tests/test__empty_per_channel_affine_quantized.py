@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # SPDX-License-Identifier: Apache-2.0
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -22,11 +23,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_empty_per_channel_affine_quantized`` starts with an underscore, and
-# ``pytest.mark`` refuses to generate a marker via attribute access for such
-# names. Register the markers directly on the MarkGenerator so
-# ``@pytest.mark._empty_per_channel_affine_quantized`` and ``-m
-# _empty_per_channel_affine_quantized`` both work.
+# Register underscore-prefixed pytest markers explicitly.
 for _name in (
     "_empty_per_channel_affine_quantized",
     "_empty_per_channel_affine_quantized_out",
@@ -37,78 +34,51 @@ for _name in (
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-
-def _resolve(name):
-    return flag_gems.testing.resolve_gems_op(name, getattr(flag_gems, name, None))
-
-
-# aten::_empty_per_channel_affine_quantized is a quantized-tensor factory: the
-# element values are uninitialized (like ``empty``), but the per-channel
-# quantizer metadata (qscheme, axis, scales, zero_points) is fully determined
-# by the arguments. Correctness therefore targets the metadata and the layout,
-# never the garbage element values.
-#
-# Regular-operator-spec adaptation:
-#   * dtype dimension   -> the *quantized* element dtypes (the only dtypes this
-#     factory accepts), declared directly in the case list.
-#   * value ranges      -> applied to scales/zero_points, the only value-carrying
-#     inputs, through ``tu.make_input`` / ``tu.selected_ranges``.
-#   * shape levels      -> ``tu.selected_shapes`` canonical sizes mapped onto a
-#     valid axis (rank 1-5), plus rank/axis/zero-size boundaries.
-#   * broadcast/backward-> not applicable: the factory takes a size list plus
-#     1-D metadata, and quantized tensors carry no autograd graph.
+# Allocate uninitialized quantized storage; compare layout and per-channel qparams.
 QINT_DTYPES = [torch.qint8, torch.quint8, torch.qint32, torch.quint4x2, torch.quint2x4]
 
-# The CUDA ``.out`` factory overwrites the quantizer metadata of the provided
-# out buffer, and that overwrite is unreliable for sub-byte quantized dtypes
-# (quint4x2/quint2x4): the scales stored in the out buffer come back corrupted
-# (zeros instead of the requested values) for higher-rank/negative-axis shapes.
-# The ``.default`` factory is not affected (it allocates a fresh tensor), so
-# sub-byte dtypes stay covered for ``.default`` and are only excluded from the
-# ``.out`` variant.
+# CUDA out metadata is unreliable for sub-byte dtypes; default still covers them.
 QINT_DTYPES_OUT = [torch.qint8, torch.quint8, torch.qint32]
 
-# (shape, axis) pairs. ``axis`` selects the per-channel dimension, so
-# num_channels = shape[axis] varies the metadata length. Covers the canonical
-# shared shape levels, every rank from 1 to 5, both positive and negative axis
-# encodings, and zero-sized dimensions.
-_CANONICAL_SHAPES_AXIS = [
-    ((256,), 0),
-    ((1024, 1024), 0),
-    ((1024, 1024), 1),
-    ((20, 320, 15), 1),
-    ((16, 128, 64, 60), 2),
-    ((16, 7, 57, 32, 29), 3),
-]
-
-_CUSTOM_SHAPES_AXIS = [
-    ((4,), 0),
-    ((2, 3), 0),
-    ((2, 3), 1),
-    ((2, 3), -1),
-    ((2, 3, 4), 1),
-    ((2, 3, 4), -1),
-    ((2, 3, 4, 5), 1),
-    ((2, 3, 4, 5), -1),
-    ((2, 3, 4, 5, 6), 2),
-    ((2, 3, 4, 5, 6), -2),
-    ((0, 2, 3), 1),
-    ((2, 0), 1),
-]
-
-SHAPE_AXIS = (
-    [((2, 19, 7), 1)] if tu.QUICK_MODE else _CUSTOM_SHAPES_AXIS + _CANONICAL_SHAPES_AXIS
+# (shape, axis), including empty and negative-axis cases.
+SHAPE_AXIS = tu.selected_cases(
+    [
+        ((4,), 0),
+        ((2, 3), 0),
+        ((2, 3), 1),
+        ((2, 3), -1),
+        ((2, 3, 4), 1),
+        ((2, 3, 4), -1),
+        ((2, 3, 4, 5), 1),
+        ((2, 3, 4, 5), -1),
+        ((2, 3, 4, 5, 6), 2),
+        ((2, 3, 4, 5, 6), -2),
+        ((0, 2, 3), 1),
+        ((2, 0), 1),
+        ((256,), 0),
+        ((1024, 1024), 0),
+        ((1024, 1024), 1),
+        ((20, 320, 15), 1),
+        ((16, 128, 64, 60), 2),
+        ((16, 7, 57, 32, 29), 3),
+    ],
+    quick=[((2, 19, 7), 1)],
 )
 
-# The quantizer stores scales as float64 and zero_points as int64 regardless of
-# the input dtypes; cover both supported input dtypes for each.
 SCALES_DTYPES = [torch.float32, torch.float64]
+
 ZERO_POINT_DTYPES = [torch.int32, torch.int64]
 
 
+def _resolve_gems_op():
+    return flag_gems.testing.resolve_gems_op(
+        "_empty_per_channel_affine_quantized",
+        getattr(flag_gems, "_empty_per_channel_affine_quantized", None),
+    )
+
+
 def _make_metadata(shape, axis, scale_dtype, zero_point_dtype):
-    # Positive zero_points: the CUDA per-channel affine quantizer validation
-    # rejects out-of-range values for some element dtypes.
+    # Use zero points accepted by the CUDA per-channel quantizer.
     num_channels = shape[axis]
     scales = torch.arange(
         1, num_channels + 1, dtype=scale_dtype, device=flag_gems.device
@@ -120,10 +90,6 @@ def _make_metadata(shape, axis, scale_dtype, zero_point_dtype):
 
 
 def _make_ranged_metadata(shape, axis, value_range):
-    # Feed scales/zero_points from the shared value-range table so every numeric
-    # range (negative, positive, full dtype bounds, constants) is exercised; the
-    # metadata must be stored bit-exactly regardless of sign, magnitude or dtype
-    # bounds.
     num_channels = shape[axis]
     scales = tu.make_input(torch.float64, (num_channels,), value_range).to(
         flag_gems.device
@@ -135,7 +101,6 @@ def _make_ranged_metadata(shape, axis, value_range):
 
 
 def _assert_per_channel_metadata(res_out, ref_out):
-    # Uninitialized storage is not compared; only layout and quantizer metadata.
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.stride() == ref_out.stride()
@@ -172,7 +137,7 @@ def test__empty_per_channel_affine_quantized(
         device=ref_device,
     )
 
-    gems_op = _resolve("_empty_per_channel_affine_quantized")
+    gems_op = _resolve_gems_op()
     res_out = gems_op(
         shape,
         scales=scales,
@@ -194,9 +159,6 @@ def test__empty_per_channel_affine_quantized(
 def test__empty_per_channel_affine_quantized_metadata_value_ranges(
     shape, axis, quantized_dtype, value_range
 ):
-    # dtype x value-range x shape grid: every element dtype crossed with all five
-    # shared ranges and all selected shapes. The metadata is stored verbatim, so
-    # all of them must round-trip exactly.
     scales, zero_points = _make_ranged_metadata(shape, axis, value_range)
     ref_scales = tu.to_reference(scales)
     ref_zero_points = tu.to_reference(zero_points)
@@ -211,7 +173,7 @@ def test__empty_per_channel_affine_quantized_metadata_value_ranges(
         device=ref_device,
     )
 
-    res_out = _resolve("_empty_per_channel_affine_quantized")(
+    res_out = _resolve_gems_op()(
         shape,
         scales=scales,
         zero_points=zero_points,
@@ -271,7 +233,7 @@ def test__empty_per_channel_affine_quantized_out(
         dtype=quantized_dtype,
         device=flag_gems.device,
     )
-    gems_op = _resolve("_empty_per_channel_affine_quantized")
+    gems_op = _resolve_gems_op()
     res_ret = gems_op(
         shape, scales=scales, zero_points=zero_points, axis=axis, out=act_out_buf
     )
@@ -286,7 +248,6 @@ def test__empty_per_channel_affine_quantized_out(
 @pytest.mark.parametrize("shape", tu.selected_cases([(3, 4)]))
 @pytest.mark.parametrize("scenario", tu.selected_cases(["nan", "inf", "mixed"]))
 def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
-    # The factory preserves special values in the float64 scale metadata.
     scales = tu.make_special_input(torch.float64, scenario)[: shape[0]]
     zero_points = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
     ref_scales = tu.to_reference(scales)
@@ -302,7 +263,7 @@ def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
         device=ref_device,
     )
 
-    res_out = _resolve("_empty_per_channel_affine_quantized")(
+    res_out = _resolve_gems_op()(
         shape,
         scales=scales,
         zero_points=zero_points,
@@ -318,9 +279,7 @@ def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
 
 @pytest.mark._empty_per_channel_affine_quantized
 def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
-    # The reference stores scales with full float64 precision (it does not round
-    # through float32). Values below are not representable in float32, so a
-    # candidate that widens float32 metadata would fail this exact check.
+    # These scale values cannot round-trip through float32.
     shape = (3, 4)
     scales = torch.tensor(
         [0.1 + 1e-17, 0.2, 1 / 3], dtype=torch.float64, device=flag_gems.device
@@ -339,7 +298,7 @@ def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
         device=ref_device,
     )
 
-    res_out = _resolve("_empty_per_channel_affine_quantized")(
+    res_out = _resolve_gems_op()(
         shape,
         scales=scales,
         zero_points=zero_points,
@@ -353,24 +312,9 @@ def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
     tu.assert_result_equal(zero_points, ref_zero_points)
 
 
-# --- Negative cases ---------------------------------------------------------
-# The reference validates (a) that the output dtype is quantized, (b) that the
-# scales tensor is floating point, and (c) that scales and zero_points have the
-# same number of elements. It does *not* validate the axis against the rank, nor
-# the metadata lengths against size[axis]: out-of-range axes and equal-but-wrong
-# metadata lengths are stored verbatim, so those are not negative cases here.
-# Each test asserts the reference rejects the arguments first (documenting that
-# the case is genuinely invalid) and then that the candidate rejects them
-# identically.
-
-
 @pytest.mark._empty_per_channel_affine_quantized
 @pytest.mark.parametrize("invalid_dtype", [torch.float32, torch.float64, torch.int32])
 def test__empty_per_channel_affine_quantized_negative_invalid_dtype(invalid_dtype):
-    # A non-quantized output dtype is rejected by the reference (RuntimeError on
-    # CPU, NotImplementedError - a RuntimeError subclass - on CUDA) and must be
-    # rejected by the candidate as well: a quantized factory must not silently
-    # allocate a non-quantized buffer.
     shape = (2, 3)
     scales = torch.tensor([1.0, 2.0], dtype=torch.float64, device=flag_gems.device)
     zero_points = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
@@ -386,7 +330,7 @@ def test__empty_per_channel_affine_quantized_negative_invalid_dtype(invalid_dtyp
             device=ref_device,
         )
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve("_empty_per_channel_affine_quantized")(
+        _resolve_gems_op()(
             shape,
             scales=scales,
             zero_points=zero_points,
@@ -399,7 +343,6 @@ def test__empty_per_channel_affine_quantized_negative_invalid_dtype(invalid_dtyp
 @pytest.mark._empty_per_channel_affine_quantized
 @pytest.mark.parametrize("scale_dtype", [torch.int32, torch.int64, torch.uint8])
 def test__empty_per_channel_affine_quantized_negative_non_float_scales(scale_dtype):
-    # scales must be a floating-point tensor; integer scales are rejected.
     shape = (2, 3)
     scales = torch.tensor([1, 2], dtype=scale_dtype, device=flag_gems.device)
     zero_points = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
@@ -415,7 +358,7 @@ def test__empty_per_channel_affine_quantized_negative_non_float_scales(scale_dty
             device=ref_device,
         )
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve("_empty_per_channel_affine_quantized")(
+        _resolve_gems_op()(
             shape,
             scales=scales,
             zero_points=zero_points,
@@ -430,8 +373,7 @@ def test__empty_per_channel_affine_quantized_negative_non_float_scales(scale_dty
 def test__empty_per_channel_affine_quantized_negative_metadata_length_mismatch(
     scale_len, zero_point_len
 ):
-    # The factory requires scales.numel() == zero_points.numel(); the lengths
-    # only need to match each other (they are not checked against size[axis]).
+    # Metadata lengths must match each other; the factory does not check size[axis].
     shape = (2, 3)
     scales = torch.arange(
         1, scale_len + 1, dtype=torch.float64, device=flag_gems.device
@@ -451,7 +393,7 @@ def test__empty_per_channel_affine_quantized_negative_metadata_length_mismatch(
             device=ref_device,
         )
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve("_empty_per_channel_affine_quantized")(
+        _resolve_gems_op()(
             shape,
             scales=scales,
             zero_points=zero_points,
