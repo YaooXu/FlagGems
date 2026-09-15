@@ -368,18 +368,14 @@ def _reference_crow_indices_copy_out(inp, out):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. Resolution
-    # order: (1) override, (2) the direct flag_gems.crow_indices_copy callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "crow_indices_copy", getattr(flag_gems, "crow_indices_copy", None)
     )
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "crow_indices_copy.out", getattr(flag_gems, "crow_indices_copy_out", None)
+    return tu.resolve_gems_op(
+        "crow_indices_copy", getattr(flag_gems, "crow_indices_copy", None)
     )
 
 
@@ -412,7 +408,7 @@ def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
 def test_crow_indices_copy(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_crow_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -439,7 +435,7 @@ def _out_buffer(shape, dtype, device):
 def test_crow_indices_copy_out(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_crow_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_crow_shape(case), torch.long, ref_inp.device)
 
@@ -461,7 +457,7 @@ def test_crow_indices_copy_spec_shapes(case, dtype):
     # tiny nnz, so only the (batch_dims + (nrows + 1,)) result shape matters.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_crow_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -475,7 +471,7 @@ def test_crow_indices_copy_spec_shapes(case, dtype):
 def test_crow_indices_copy_out_spec_shapes(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_crow_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_crow_shape(case), torch.long, ref_inp.device)
 
@@ -498,7 +494,7 @@ def test_crow_indices_copy_value_ranges(case, value_range, dtype):
     # perturb the returned compressed-row array.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_crow_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -515,7 +511,7 @@ def test_crow_indices_copy_out_value_ranges(case, value_range, dtype):
     # must be identical for every per-dtype value range of the storage.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_crow_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_crow_shape(case), torch.long, ref_inp.device)
 
@@ -534,7 +530,7 @@ def test_crow_indices_copy_empty_bsr(dtype):
     # still return a (n_row_blocks + 1,) contiguous int64 tensor (not a dense or
     # wrongly-shaped tensor).
     inp = _make_input("bsr", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_crow_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -546,7 +542,7 @@ def test_crow_indices_copy_empty_bsr(dtype):
 @pytest.mark.parametrize("dtype", _CROW_DTYPES)
 def test_crow_indices_copy_out_empty_bsr(dtype):
     inp = _make_input("bsr", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(3, torch.long, inp.device)
     ref_out = _out_buffer(3, torch.long, ref_inp.device)
 
@@ -576,7 +572,7 @@ def _uncoalesced_csr(dtype):
 @pytest.mark.parametrize("dtype", _CROW_DTYPES)
 def test_crow_indices_copy_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_crow_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -588,7 +584,7 @@ def test_crow_indices_copy_uncoalesced(dtype):
 @pytest.mark.parametrize("dtype", _CROW_DTYPES)
 def test_crow_indices_copy_out_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(5, torch.long, inp.device)
     ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
@@ -615,35 +611,39 @@ def _nan_inf_csr(dtype):
     return torch.sparse_csr_tensor(crow, cols, values, shape)
 
 
-@pytest.mark.crow_indices_copy
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_crow_indices_copy_nan_inf_values(dtype):
-    # nan / +-inf stored values must not perturb the returned crow copy:
-    # crow_indices_copy reads only the compressed-row storage, so the copy must
-    # still be bit-exact even when the values contain non-finite entries.
-    inp = _nan_inf_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = _reference_crow_indices_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.crow_indices_copy
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_crow_indices_copy_nan_inf_values(dtype):
+        # nan / +-inf stored values must not perturb the returned crow copy:
+        # crow_indices_copy reads only the compressed-row storage, so the copy must
+        # still be bit-exact even when the values contain non-finite entries.
+        inp = _nan_inf_csr(dtype)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (4,))
+        ref_out = _reference_crow_indices_copy(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (4,))
 
 
-@pytest.mark.crow_indices_copy_out
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_crow_indices_copy_out_nan_inf_values(dtype):
-    inp = _nan_inf_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone())
-    out = _out_buffer(4, torch.long, inp.device)
-    ref_out = _out_buffer(4, torch.long, ref_inp.device)
+if tu.LEVEL == "all":
 
-    ref_ret = _reference_crow_indices_copy_out(ref_inp, ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    @pytest.mark.crow_indices_copy_out
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_crow_indices_copy_out_nan_inf_values(dtype):
+        inp = _nan_inf_csr(dtype)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        out = _out_buffer(4, torch.long, inp.device)
+        ref_out = _out_buffer(4, torch.long, ref_inp.device)
 
-    assert res_ret is out
-    assert ref_ret is ref_out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
+        ref_ret = _reference_crow_indices_copy_out(ref_inp, ref_out)
+        res_ret = _resolve_gems_op_out()(inp, out=out)
+
+        assert res_ret is out
+        assert ref_ret is ref_out
+        _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +658,7 @@ def test_crow_indices_copy_negative_dense():
     # candidate must reject it.
     inp = tu.make_input(torch.float32, (3, 4), ["-1", "1"])
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_crow_indices_copy(utils.to_reference(inp.clone()))
+        _reference_crow_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -675,7 +675,7 @@ def test_crow_indices_copy_negative_csc():
         ccol_indices, row_indices, values, (4, 2), device=flag_gems.device
     )
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_crow_indices_copy(utils.to_reference(inp.clone()))
+        _reference_crow_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -688,7 +688,7 @@ def test_crow_indices_copy_negative_coo():
     values = torch.ones(2, dtype=torch.float32)
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_crow_indices_copy(utils.to_reference(inp.clone()))
+        _reference_crow_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -709,7 +709,9 @@ def test_crow_indices_copy_out_negative_dense():
     inp = tu.make_input(torch.float32, (3, 4), ["-1", "1"])
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_crow_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_crow_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -724,7 +726,9 @@ def test_crow_indices_copy_out_negative_csc():
     )
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_crow_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_crow_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -736,7 +740,9 @@ def test_crow_indices_copy_out_negative_coo():
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_crow_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_crow_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -746,7 +752,7 @@ def test_crow_indices_copy_out_negative_wrong_dtype():
     # The .out contract materializes int64 crow entries into out; an out tensor
     # of a different dtype must be rejected.
     inp = _make_input("csr", (5, 4), 6, None, torch.float32)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = torch.empty(6, dtype=torch.float32, device=inp.device)
     ref_out = torch.empty(6, dtype=torch.float32, device=ref_inp.device)
     with pytest.raises(RuntimeError):

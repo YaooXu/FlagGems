@@ -129,7 +129,7 @@ _ALL_TEST_DTYPES = list(dict.fromkeys(_VALUE_DTYPES + _VIEW_DTYPES))
 _NEG_VIEW_SHAPES = list(dict.fromkeys([(17,), (12, 13)] + tu.selected_shapes()))
 
 # Representative ranks for the full value-range sweep.
-_NEG_VIEW_RANGE_SHAPES = [(), (256,), (7, 13, 29)]
+_NEG_VIEW_RANGE_SHAPES = tu.selected_shapes()
 _NEG_VIEW_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _NEG_VIEW_TOGGLE_SHAPES = [(16, 32), (4, 8, 16)]
 _NEG_VIEW_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
@@ -137,11 +137,7 @@ _NEG_VIEW_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
 def _ranges_for(dtype):
-    # The five spec ranges, minus the ones an unsigned dtype cannot represent.
-    ranges = tu.selected_ranges()
-    if dtype in _UNSIGNED_DTYPES:
-        return [rng for rng in ranges if rng[0] == "0"]
-    return ranges
+    return tu.selected_ranges()
 
 
 _RANGE_CASES = [
@@ -152,12 +148,7 @@ _RANGE_CASES = [
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems._neg_view callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "_neg_view", getattr(flag_gems, "_neg_view", None)
-    )
+    return tu.resolve_gems_op("_neg_view", getattr(flag_gems, "_neg_view", None))
 
 
 def _assert_values_close(res_out, ref_out, dtype):
@@ -165,7 +156,7 @@ def _assert_values_close(res_out, ref_out, dtype):
     if dtype in _VIEW_DTYPES:
         return
     if dtype.is_floating_point:
-        utils.gems_assert_close(res_out, ref_out, dtype)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     else:
         utils.gems_assert_equal(res_out, ref_out)
 
@@ -189,7 +180,7 @@ def test__neg_view(shape, dtype):
     # Shape levels x every materializable dtype (including the required int8/
     # uint8 dtypes) over a non-degenerate representative value range.
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -207,7 +198,7 @@ def test__neg_view_value_ranges(shape, dtype, value_range):
     # The op never reads or transforms the stored values, so the full spec range
     # sweep must round-trip exactly through the negated materialization.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -224,7 +215,7 @@ def test__neg_view_unmaterializable_dtypes(shape, dtype):
     # materialized, so only the view contract (shape/stride/offset/data_ptr and
     # the neg bit) can be verified - which is precisely what the op promises.
     inp = tu.make_input(dtype, shape, ["0", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -242,7 +233,7 @@ def test__neg_view_non_contiguous(shape, dtype):
     # input. Slice on both the test device and the reference device so the two
     # inputs share the same memory layout.
     base = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -261,7 +252,7 @@ def test__neg_view_toggle(shape, dtype):
     # The neg bit is a toggle: applying _neg_view to an already-negated tensor
     # clears the bit and the materialized values come back to the base input.
     base = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
 
     inp = torch.ops.aten._neg_view(base)
     ref_inp = torch.ops.aten._neg_view(ref_base)
@@ -277,31 +268,33 @@ def test__neg_view_toggle(shape, dtype):
     assert not ref_out.is_neg()
 
 
-@pytest.mark._neg_view
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-def test__neg_view_special_values(dtype):
-    # Materializing the view flips every sign: +inf <-> -inf, nan stays nan,
-    # +0.0 <-> -0.0. equal_nan=True tolerates the nan output; copysign pins the
-    # sign of the two zero outputs (the sign bit is indistinguishable in a
-    # plain value comparison).
-    values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(values)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._neg_view(ref_inp)
-    res_out = _resolve_gems_op()(values)
+    @pytest.mark._neg_view
+    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+    def test__neg_view_special_values(dtype):
+        # Materializing the view flips every sign: +inf <-> -inf, nan stays nan,
+        # +0.0 <-> -0.0. equal_nan=True tolerates the nan output; copysign pins the
+        # sign of the two zero outputs (the sign bit is indistinguishable in a
+        # plain value comparison).
+        values = torch.tensor(
+            [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(values, independent=True)
 
-    _assert_view_semantics(res_out, ref_out, values)
-    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    items = res_out.cpu().tolist()
-    assert math.isinf(items[0]) and items[0] < 0  # +inf -> -inf
-    assert math.isinf(items[1]) and items[1] > 0  # -inf -> +inf
-    assert math.isnan(items[2])  # nan -> nan
-    assert math.copysign(1.0, items[3]) == -1.0  # +0.0 -> -0.0
-    assert math.copysign(1.0, items[4]) == 1.0  # -0.0 -> +0.0
+        ref_out = torch.ops.aten._neg_view(ref_inp)
+        res_out = _resolve_gems_op()(values)
+
+        _assert_view_semantics(res_out, ref_out, values)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
+        items = res_out.cpu().tolist()
+        assert math.isinf(items[0]) and items[0] < 0  # +inf -> -inf
+        assert math.isinf(items[1]) and items[1] > 0  # -inf -> +inf
+        assert math.isnan(items[2])  # nan -> nan
+        assert math.copysign(1.0, items[3]) == -1.0  # +0.0 -> -0.0
+        assert math.copysign(1.0, items[4]) == 1.0  # -0.0 -> +0.0
 
 
 @pytest.mark._neg_view
@@ -313,7 +306,7 @@ def test__neg_view_mutation(shape, dtype):
     # be observable on the candidate-side input. The reference runs on an
     # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten._neg_view(ref_inp)
@@ -321,40 +314,42 @@ def test__neg_view_mutation(shape, dtype):
     res_out.fill_(2.5)
     ref_out.fill_(2.5)
 
-    utils.gems_assert_close(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     assert res_out.data_ptr() == inp.data_ptr()
     # fill_ through a neg view writes -2.5 into the base storage, so the input
     # (no neg bit) materializes to -2.5 on both sides.
-    tu.assert_result_close(inp, ref_inp)
+    tu.assert_result_equal(inp, ref_inp)
 
 
-@pytest.mark._neg_view
-@pytest.mark.parametrize("shape", _NEG_VIEW_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__neg_view_backward(shape, dtype):
-    # Materializing the view computes -x, so d(-x)/dx == -1: the reference
-    # gradient must match the analytic value. The candidate is validated on the
-    # same contract when it advertises autograd support (a true view of a leaf
-    # carries requires_grad through the view machinery; a materializing kernel
-    # would not).
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    grad = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
-    ref_grad = utils.to_reference(grad)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._neg_view(ref_inp)
-    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-    expected_in_grad = -ref_grad
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
+    @pytest.mark._neg_view
+    @pytest.mark.parametrize("shape", _NEG_VIEW_BACKWARD_SHAPES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test__neg_view_backward(shape, dtype):
+        # Materializing the view computes -x, so d(-x)/dx == -1: the reference
+        # gradient must match the analytic value. The candidate is validated on the
+        # same contract when it advertises autograd support (a true view of a leaf
+        # carries requires_grad through the view machinery; a materializing kernel
+        # would not).
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        grad = tu.make_input(dtype, shape, ["-1", "1"])
+        ref_inp = utils.to_reference(inp, independent=True)
+        ref_grad = utils.to_reference(grad, independent=True)
 
-    # The candidate forward output must match the reference...
-    res_out = _resolve_gems_op()(inp)
-    _assert_values_close(res_out, ref_out, dtype)
-    _assert_view_semantics(res_out, ref_out, inp)
+        ref_out = torch.ops.aten._neg_view(ref_inp)
+        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+        expected_in_grad = -ref_grad
+        tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-    # ...and, if the candidate advertises autograd support, its gradient must
-    # match the analytic value too.
-    if res_out.requires_grad:
+        # The candidate forward output must match the reference...
+        res_out = _resolve_gems_op()(inp)
+        _assert_values_close(res_out, ref_out, dtype)
+        _assert_view_semantics(res_out, ref_out, inp)
+
+        # ...and, if the candidate advertises autograd support, its gradient must
+        # match the analytic value too.
+        assert res_out.requires_grad
         res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
         tu.assert_result_close(res_in_grad, expected_in_grad)
 

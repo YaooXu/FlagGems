@@ -181,14 +181,7 @@ def _make_input(shape, nnz, dtype, value_range, seed=0):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.crow_indices is registered; resolution
-    # order is: (1) override, (2) the direct flag_gems.crow_indices callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "crow_indices", getattr(flag_gems, "crow_indices", None)
-    )
+    return tu.resolve_gems_op("crow_indices", getattr(flag_gems, "crow_indices", None))
 
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
@@ -228,7 +221,7 @@ def test_crow_indices_layouts(case, dtype):
     # must match the reference exactly and alias the input's crow storage.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -246,7 +239,7 @@ def test_crow_indices_value_ranges(case, value_range, dtype):
     # crow_indices reads only layout metadata, not the values payload.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -264,7 +257,7 @@ def test_crow_indices_empty(dtype):
     cols = torch.empty(0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -282,7 +275,7 @@ def test_crow_indices_empty_batched(dtype):
     cols = torch.empty(2, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(2, 0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -297,7 +290,7 @@ def test_crow_indices_single_row(dtype):
     # crow[0] == 0 and crow[1] == nnz.
     shape, nnz = (1, 7), 5
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -319,7 +312,7 @@ def test_crow_indices_uncoalesced(dtype):
     assert cols[0].item() == cols[1].item()
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -338,7 +331,7 @@ def test_crow_indices_full_storage(dtype):
     values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.crow_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -346,28 +339,30 @@ def test_crow_indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-@pytest.mark.crow_indices
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-def test_crow_indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: crow_indices must still
-    # return exactly the stored crow tensor, unchanged, for every one of them.
-    shape = (3, 4)
-    crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
-    cols = torch.tensor(
-        [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
-    )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.crow_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.crow_indices
+    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+    def test_crow_indices_nan_inf_values_ignored(dtype):
+        # nan/inf/-inf/±0.0 are ordinary stored values: crow_indices must still
+        # return exactly the stored crow tensor, unchanged, for every one of them.
+        shape = (3, 4)
+        crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
+        cols = torch.tensor(
+            [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
+        )
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        inp = torch.sparse_csr_tensor(crow, cols, values, shape)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_result(res_out, ref_out, inp, ref_inp)
+        ref_out = torch.ops.aten.crow_indices(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.crow_indices
@@ -377,7 +372,7 @@ def test_crow_indices_dense_raises():
     # rather than silently return a bogus crow tensor.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises((RuntimeError, NotImplementedError)):
-        torch.ops.aten.crow_indices(utils.to_reference(inp))
+        torch.ops.aten.crow_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError, NotImplementedError)):
         _resolve_gems_op()(inp)
 
@@ -396,7 +391,7 @@ def test_crow_indices_csc_raises():
         ccol, row_indices, values.to(flag_gems.device), (2, 3)
     )
     with pytest.raises((RuntimeError, NotImplementedError)):
-        torch.ops.aten.crow_indices(utils.to_reference(inp))
+        torch.ops.aten.crow_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError, NotImplementedError)):
         _resolve_gems_op()(inp)
 
@@ -407,7 +402,7 @@ def test_crow_indices_coo_raises():
     # has no Sparse implementation and raises. The candidate must reject it too.
     inp = torch.randn(3, 4, device=flag_gems.device).to_sparse_coo()
     with pytest.raises((RuntimeError, NotImplementedError)):
-        torch.ops.aten.crow_indices(utils.to_reference(inp))
+        torch.ops.aten.crow_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError, NotImplementedError)):
         _resolve_gems_op()(inp)
 

@@ -86,10 +86,6 @@ _ADD_BATCH_DIM_DTYPES = (
 # float32 first; the view is bit-exact, so the round-trip changes nothing.
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
-# The spec's [-1, 0] range has no representable unsigned counterpart (it
-# collapses to the empty [0, 0) interval), so it is skipped for uint8.
-_UNSIGNED_INT_DTYPES = (torch.uint8,)
-
 
 def _view_shapes():
     # _add_batch_dim needs an existing dimension to hide: rank >= 1. The shared
@@ -113,38 +109,21 @@ def _add_batch_dim_cases():
 
 
 def _dtype_range_pairs():
-    pairs = []
-    for dtype in _ADD_BATCH_DIM_DTYPES:
-        for value_range in tu.selected_ranges():
-            if dtype in _UNSIGNED_INT_DTYPES and value_range == ["-1", "0"]:
-                continue
-            pairs.append((dtype, value_range))
-    return pairs
+    return [
+        (dtype, value_range)
+        for dtype in _ADD_BATCH_DIM_DTYPES
+        for value_range in tu.selected_ranges()
+    ]
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order is:
-    # (1) override, (2) the direct flag_gems._add_batch_dim callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_add_batch_dim", getattr(flag_gems, "_add_batch_dim", None)
     )
 
 
-def _as_comparable(t):
-    if t.dtype in _FP8_DTYPES:
-        return t.to(torch.float32)
-    return t
-
-
 def _assert_materialized_equal(res, ref):
-    res = _as_comparable(res)
-    ref = _as_comparable(ref)
-    if res.dtype == torch.bool or not res.is_floating_point():
-        utils.gems_assert_equal(res, ref)
-    else:
-        utils.gems_assert_close(res, ref, res.dtype, equal_nan=True)
+    tu.assert_result_equal(res, ref)
 
 
 def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype):
@@ -183,7 +162,7 @@ def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype
         res_val = torch.ops.aten._remove_batch_dim(
             res_obs, level, batch_size, batch_dim
         )
-        _assert_materialized_equal(res_val, ref_val)
+        tu.assert_result_close(res_val, ref_val)
 
 
 @pytest.mark._add_batch_dim
@@ -194,7 +173,7 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
     # [-1, 1] keeps every storage dtype valid (bool ignores the range); the
     # value-range sweep below covers all five spec ranges.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
@@ -211,7 +190,7 @@ def test__add_batch_dim_value_ranges(shape, dtype, value_range):
     batch_dim = len(shape) // 2
     level = 0
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
@@ -228,7 +207,7 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -239,41 +218,35 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
 
 
-@pytest.mark._add_batch_dim
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__add_batch_dim_nan_inf(dtype):
-    # The view never performs arithmetic, so nan/inf/-inf and signed zeros pass
-    # through the lazy wrapper untouched. 1e30 also covers the overflow-to-inf
-    # path in fp16/bf16.
-    vals = [
-        float("inf"),
-        float("-inf"),
-        float("nan"),
-        0.0,
-        -0.0,
-        1.5,
-        -2.5,
-        1e30,
-        -1e30,
-    ]
-    inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
-    batch_dim, level = 0, 0
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
-    res_out = _resolve_gems_op()(inp, batch_dim, level)
+    @pytest.mark._add_batch_dim
+    @pytest.mark.parametrize(
+        "dtype, scenario", tu.special_value_cases(_ADD_BATCH_DIM_DTYPES)
+    )
+    def test__add_batch_dim_nan_inf(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        ref_inp = utils.to_reference(inp, independent=True)
+        batch_dim, level = 0, 0
 
-    assert is_legacy_batchedtensor(ref_out)
-    assert is_legacy_batchedtensor(res_out)
-    # The logical (visible) shape drops the hidden batch dim: for the 1-D input
-    # below with batch_dim=0 the batched view exposes a 0-dim scalar.
-    assert res_out.shape == ref_out.shape
+        ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
+        res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-    batch_size = inp.size(batch_dim)
-    ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
-    res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    _assert_materialized_equal(ref_mat, ref_inp)
-    _assert_materialized_equal(res_mat, ref_mat)
+        assert is_legacy_batchedtensor(ref_out)
+        assert is_legacy_batchedtensor(res_out)
+        # The logical (visible) shape drops the hidden batch dim: for the 1-D input
+        # below with batch_dim=0 the batched view exposes a 0-dim scalar.
+        assert res_out.shape == ref_out.shape
+
+        batch_size = inp.size(batch_dim)
+        ref_mat = torch.ops.aten._remove_batch_dim(
+            ref_out, level, batch_size, batch_dim
+        )
+        res_mat = torch.ops.aten._remove_batch_dim(
+            res_out, level, batch_size, batch_dim
+        )
+        _assert_materialized_equal(ref_mat, ref_inp)
+        _assert_materialized_equal(res_mat, ref_mat)
 
 
 @pytest.mark._add_batch_dim

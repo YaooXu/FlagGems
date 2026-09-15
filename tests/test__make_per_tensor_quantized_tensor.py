@@ -176,18 +176,6 @@ def _make_input(shape, dtype, device=None):
 
 
 def _make_value_input(dtype, shape, value_range):
-    # tu.make_input resolves the spec's ranges per-dtype and delegates to
-    # torch.testing.make_tensor, which for uint8 clamps negative bounds to 0
-    # and then raises on the resulting degenerate randint range (from=0 >=
-    # to=0). Resolve the bounds ourselves and clamp to the unsigned domain so
-    # every selected_ranges() entry stays usable for uint8 too.
-    if dtype == torch.uint8:
-        low = max(int(tu.resolve_bound(value_range[0], dtype)), 0)
-        high = max(int(tu.resolve_bound(value_range[1], dtype)), 0)
-        low, high = sorted((low, high))
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.randint(low, high + 1, shape, dtype=dtype, device=flag_gems.device)
     return tu.make_input(dtype, shape, value_range)
 
 
@@ -217,21 +205,16 @@ def _ref_device():
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override installed by KernelGen for this run wins. The
-    # default stays None until flag_gems._make_per_tensor_quantized_tensor is
-    # registered; resolution order is: (1) override, (2) the direct flag_gems
-    # callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_make_per_tensor_quantized_tensor",
         getattr(flag_gems, "_make_per_tensor_quantized_tensor", None),
     )
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_make_per_tensor_quantized_tensor.out",
-        getattr(flag_gems, "_make_per_tensor_quantized_tensor_out", None),
+    return tu.resolve_gems_op(
+        "_make_per_tensor_quantized_tensor",
+        getattr(flag_gems, "_make_per_tensor_quantized_tensor", None),
     )
 
 
@@ -271,7 +254,7 @@ def test__make_per_tensor_quantized_tensor_value_ranges(shape, dtype, value_rang
     # The data path is a bit copy, so the expected result is derived from the
     # aten reference for the same input.
     inp = _make_value_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
     res_out = _resolve_gems_op()(inp, 0.5, -3)
@@ -290,7 +273,7 @@ def test__make_per_tensor_quantized_tensor_qparams(shape, dtype, scale, zero_poi
     # scale / zero_point are the second value dimension: they are stored
     # verbatim as qparams and never touch the data path.
     inp = _make_input(shape, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(
         ref_inp, scale, zero_point
@@ -310,7 +293,7 @@ def test__make_per_tensor_quantized_tensor_boundary_values(dtype, pattern):
     # make_tensor draws values strictly below the dtype max, so pin the exact
     # dtype bounds explicitly: min/max/0/(±1) must round-trip bit-exactly.
     inp = _boundary_input(dtype, pattern)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
     res_out = _resolve_gems_op()(inp, 0.5, -3)
@@ -326,7 +309,7 @@ def test__make_per_tensor_quantized_tensor_non_finite_scale(dtype, scale):
     # nan/inf dimension: the reference stores a non-finite scale verbatim (it
     # performs no validation), so the candidate must too.
     inp = _make_input((4, 8), dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, scale, 0)
     res_out = _resolve_gems_op()(inp, scale, 0)
@@ -344,7 +327,7 @@ def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
     # contiguous output. Slice on both the test device and the reference device
     # so the two inputs share the same memory layout.
     base = _make_input((16, 8), dtype)
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = base[:, ::2]
     ref_inp = ref_base[:, ::2]
 
@@ -365,7 +348,7 @@ def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test__make_per_tensor_quantized_tensor_out_value_ranges(shape, dtype, value_range):
     inp = _make_value_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     # The out buffers start with different qparams so the overwrite performed by
     # the op is observable. The out dtype must already be the derived quantized
@@ -392,7 +375,7 @@ def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point)
     # The .out overload must overwrite the buffer's stale qparams (allocated
     # here with scale=1.0 / zero_point=0) with the requested ones.
     inp = _make_input((4, 8), dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out_buf = _quant_buffer((4, 8), _QUANT_DTYPE[dtype], 1.0, 0, _ref_device())
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor.out(
@@ -423,7 +406,7 @@ def test__make_per_tensor_quantized_tensor_rejects_non_storage_dtype(dtype):
     # raises "Creation of quantized tensor requires quantized dtype like
     # torch.quint8" for every other dtype.
     inp = torch.tensor([1, 2, 3], dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
     with pytest.raises(RuntimeError):
         torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.1, 0)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
@@ -437,7 +420,7 @@ def test__make_per_tensor_quantized_tensor_out_rejects_non_quantized_buffer(dtyp
     # quantized) buffer is rejected by the reference and must be by the
     # candidate too.
     inp = _make_input((2, 3), dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_buf = torch.empty((2, 3), dtype=torch.float32, device=_ref_device())
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
@@ -456,7 +439,7 @@ def test__make_per_tensor_quantized_tensor_out_rejects_wrong_quantized_dtype(dty
     # A quantized buffer of any other dtype (e.g. qint8 for a quint8 output) is
     # rejected as well.
     inp = _make_input((2, 3), dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_buf = _quant_buffer((2, 3), _WRONG_QUANT_DTYPE[dtype], 1.0, 0, _ref_device())
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):

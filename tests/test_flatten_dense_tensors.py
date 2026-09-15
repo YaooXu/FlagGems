@@ -91,21 +91,6 @@ def _numel(shape):
 
 
 def _make_input(dtype, shape, value_range):
-    """tu.make_input with dtype bounds clamped for the range symbols.
-
-    tu.make_input resolves ``max``/``min`` through float and then relies on
-    torch.testing.make_tensor to clamp, which rejects a degenerate
-    ``low == high`` for unsigned dtypes (e.g. uint8 with ``[-1, 0]`` collapses
-    to the single representable value 0). Clamp first and handle that case.
-    """
-    if dtype != torch.bool and not (dtype.is_floating_point or dtype.is_complex):
-        info = torch.iinfo(dtype)
-        low = min(max(int(tu.resolve_bound(value_range[0], dtype)), info.min), info.max)
-        high = min(
-            max(int(tu.resolve_bound(value_range[1], dtype)), info.min), info.max
-        )
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
     return tu.make_input(dtype, shape, value_range)
 
 
@@ -161,12 +146,7 @@ _FLATTEN_BACKWARD_CASES = [
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.flatten_dense_tensors callable.
-    # LookupError is not caught: a test that cannot obtain the candidate must
-    # fail loudly rather than run the PyTorch reference in its place.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "flatten_dense_tensors", getattr(flag_gems, "flatten_dense_tensors", None)
     )
 
@@ -195,7 +175,7 @@ def _assert_result(res, ref, dtype):
     if dtype in _FP8_SET:
         _assert_exact(res, ref, dtype)
     else:
-        tu.assert_result_close(res, ref)
+        tu.assert_result_equal(res, ref)
 
 
 def _assert_flattened(res_out, ref_out, dtype, input_device):
@@ -217,7 +197,7 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
     # [-1, 1] range (negative and positive for each dtype).
     inp = [_make_input(dtype, shape, ["-1", "1"]) for shape in tensor_shapes]
     inp_before = [t.clone() for t in inp]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
     expected_numel = sum(t.numel() for t in inp)
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
@@ -227,7 +207,7 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
     assert res_out.numel() == expected_numel
     # The op is read-only: inputs must be left untouched.
     for res_t, before in zip(inp, inp_before):
-        _assert_exact(res_t, utils.to_reference(before), dtype)
+        _assert_exact(res_t, utils.to_reference(before, independent=True), dtype)
 
 
 @pytest.mark.flatten_dense_tensors
@@ -240,7 +220,7 @@ def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
     # exactly through the copy. bool ignores the range and is covered by the
     # shape-level test above.
     inp = [_make_input(dtype, shape, value_range) for shape in tensor_shapes]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
     res_out = _apply_flatten_dense_tensors(inp)
@@ -255,7 +235,7 @@ def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
 def test_flatten_dense_tensors_non_contiguous(dtype):
     # Column slices and a transpose exercise the contiguous-copy path.
     base = _make_input(dtype, (8, 16), ["-1", "1"])
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     views = [base[:, ::2], base.t(), base.reshape(4, 32)[:, ::3]]
     ref_views = [ref_base[:, ::2], ref_base.t(), ref_base.reshape(4, 32)[:, ::3]]
     assert all(not v.is_contiguous() for v in views)
@@ -266,63 +246,80 @@ def test_flatten_dense_tensors_non_contiguous(dtype):
     _assert_flattened(res_out, ref_out, dtype, views[0].device)
 
 
-@pytest.mark.flatten_dense_tensors
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES + _ACTIVE_FP8_DTYPES)
-def test_flatten_dense_tensors_nan_inf(dtype):
-    # A pure copy: +inf/-inf/nan/+-0.0 pass through unchanged (equal_nan=True is
-    # active on both comparison paths; 1e30 overflows identically on both sides
-    # for the low-precision dtypes).
-    values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
-    ref_inp = [utils.to_reference(values), utils.to_reference(other)]
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
-    res_out = _apply_flatten_dense_tensors([values, other])
+    @pytest.mark.flatten_dense_tensors
+    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES + _ACTIVE_FP8_DTYPES)
+    def test_flatten_dense_tensors_nan_inf(dtype):
+        # A pure copy: +inf/-inf/nan/+-0.0 pass through unchanged (equal_nan=True is
+        # active on both comparison paths; 1e30 overflows identically on both sides
+        # for the low-precision dtypes).
+        values = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
+        ref_inp = [
+            utils.to_reference(values, independent=True),
+            utils.to_reference(other, independent=True),
+        ]
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    _assert_result(res_out, ref_out, dtype)
+        ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
+        res_out = _apply_flatten_dense_tensors([values, other])
+
+        assert res_out.shape == ref_out.shape
+        assert res_out.dtype == ref_out.dtype
+        _assert_result(res_out, ref_out, dtype)
 
 
-@pytest.mark.flatten_dense_tensors
-@pytest.mark.parametrize("tensor_shapes", _FLATTEN_BACKWARD_CASES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
-    # The forward op places input i at out[offset:offset+numel] after flattening
-    # it to 1-D, so the gradient of input i is grad_output[offset:offset+numel]
-    # viewed as the original shape (a pure narrow-and-view gather, no
-    # arithmetic). Validate the autograd reference against that analytic value,
-    # then check the candidate forward output and - only when the candidate
-    # output is differentiable - its gradient against the reference gradient.
-    inp = [
-        _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        for shape in tensor_shapes
-    ]
-    total_numel = sum(_numel(shape) for shape in tensor_shapes)
-    grad = _make_input(dtype, (total_numel,), ["-1", "1"])
-    ref_inp = [utils.to_reference(t) for t in inp]
-    ref_grad = utils.to_reference(grad)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
-    ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
+    @pytest.mark.flatten_dense_tensors
+    @pytest.mark.parametrize("tensor_shapes", _FLATTEN_BACKWARD_CASES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
+        # The forward op places input i at out[offset:offset+numel] after flattening
+        # it to 1-D, so the gradient of input i is grad_output[offset:offset+numel]
+        # viewed as the original shape (a pure narrow-and-view gather, no
+        # arithmetic). Validate the autograd reference against that analytic value,
+        # then check the candidate forward output and - only when the candidate
+        # output is differentiable - its gradient against the reference gradient.
+        inp = [
+            _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+            for shape in tensor_shapes
+        ]
+        total_numel = sum(_numel(shape) for shape in tensor_shapes)
+        grad = _make_input(dtype, (total_numel,), ["-1", "1"])
+        ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+        ref_grad = utils.to_reference(grad, independent=True)
 
-    expected = []
-    offset = 0
-    for shape in tensor_shapes:
-        numel = _numel(shape)
-        expected.append(ref_grad[offset : offset + numel].view(shape))
-        offset += numel
-    for got, exp in zip(ref_in_grads, expected):
-        tu.assert_result_close(got, exp)
+        ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
+        ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    res_out = _apply_flatten_dense_tensors(inp)
-    tu.assert_result_close(res_out, ref_out)
+        expected = []
+        offset = 0
+        for shape in tensor_shapes:
+            numel = _numel(shape)
+            expected.append(ref_grad[offset : offset + numel].view(shape))
+            offset += numel
+        for got, exp in zip(ref_in_grads, expected):
+            tu.assert_result_close(got, exp)
 
-    if res_out.requires_grad:
+        res_out = _apply_flatten_dense_tensors(inp)
+        tu.assert_result_close(res_out, ref_out)
+
+        assert res_out.requires_grad
         res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
         for got, exp in zip(res_in_grads, expected):
             tu.assert_result_close(got, exp)
@@ -343,7 +340,7 @@ def test_flatten_dense_tensors_rejects_non_tensor():
     # The tensors argument must be a list of Tensors; a scalar element hits a
     # schema mismatch and raises on both paths.
     a = _make_input(torch.float32, (4,), ["-1", "1"])
-    ref_a = utils.to_reference(a)
+    ref_a = utils.to_reference(a, independent=True)
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([ref_a, 3.14])
     gems_op = _resolve_gems_op()

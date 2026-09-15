@@ -343,7 +343,7 @@ def _resolve_gems_op():
     without a candidate the test must fail loudly rather than evaluate the
     PyTorch reference a second time and pass.
     """
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "sparse_coo_tensor", getattr(flag_gems, "sparse_coo_tensor", None)
     )
 
@@ -353,8 +353,8 @@ def _call_reference(indices, values, size, dtype):
     # ``indices`` overload, a list selects the explicit ``indices_size``
     # overload; the component tensors are cloned and moved to the reference
     # device so a mutating candidate cannot hide behind shared storage.
-    ref_indices = utils.to_reference(indices.clone())
-    ref_values = utils.to_reference(values.clone())
+    ref_indices = utils.to_reference(indices.clone(), independent=True)
+    ref_values = utils.to_reference(values.clone(), independent=True)
     if size is None:
         return torch.ops.aten.sparse_coo_tensor(
             ref_indices, ref_values, dtype=dtype, device=ref_indices.device
@@ -526,8 +526,8 @@ def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
     nnz = 3
     indices_t = _make_index_tensor(indices)
     values = _make_values(nnz, (), dtype)
-    ref_indices = utils.to_reference(indices_t.clone())
-    ref_values = utils.to_reference(values.clone())
+    ref_indices = utils.to_reference(indices_t.clone(), independent=True)
+    ref_values = utils.to_reference(values.clone(), independent=True)
 
     ref_out = torch.ops.aten.sparse_coo_tensor(
         ref_indices,
@@ -572,34 +572,36 @@ def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
         tu.assert_result_close(res_out, ref_out)
 
 
-@pytest.mark.sparse_coo_tensor
-@pytest.mark.parametrize("case", _NAN_INF_CASES)
-@pytest.mark.parametrize("dtype", _FLOAT_COO_DTYPES)
-def test_sparse_coo_tensor_nan_inf(case, dtype):
-    # The factory copies the raw stored values and performs no arithmetic on
-    # them, so inf / -inf / nan / -0.0 and huge 1e30 magnitudes survive the
-    # construction unchanged (1e30 covers the overflow-to-inf path in
-    # fp16/bf16). equal_nan tolerates the nan outputs in every comparison.
-    size, indices = case
-    sparse_dim = len(indices)
-    dense_shape = tuple(size[sparse_dim:])
-    nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
-    values = _make_nan_inf_values((nnz,) + dense_shape, dtype)
+if tu.LEVEL == "all":
 
-    ref_out = _call_reference(indices_t, values, size, dtype)
-    res_out = _call_candidate(indices_t, values, size, dtype)
+    @pytest.mark.sparse_coo_tensor
+    @pytest.mark.parametrize("case", _NAN_INF_CASES)
+    @pytest.mark.parametrize("dtype", _FLOAT_COO_DTYPES)
+    def test_sparse_coo_tensor_nan_inf(case, dtype):
+        # The factory copies the raw stored values and performs no arithmetic on
+        # them, so inf / -inf / nan / -0.0 and huge 1e30 magnitudes survive the
+        # construction unchanged (1e30 covers the overflow-to-inf path in
+        # fp16/bf16). equal_nan tolerates the nan outputs in every comparison.
+        size, indices = case
+        sparse_dim = len(indices)
+        dense_shape = tuple(size[sparse_dim:])
+        nnz = len(indices[0])
+        indices_t = _make_index_tensor(indices)
+        values = _make_nan_inf_values((nnz,) + dense_shape, dtype)
 
-    _assert_coo_structure(
-        res_out, ref_out, size, nnz, dtype, sparse_dim, len(dense_shape)
-    )
-    _assert_coo_values(res_out, ref_out, dtype, equal_nan=True)
-    utils.gems_assert_close(
-        _comparable(torch.ops.aten._values(res_out), dtype),
-        _comparable(torch.ops.aten._values(ref_out), dtype),
-        _compare_dtype(dtype),
-        equal_nan=True,
-    )
+        ref_out = _call_reference(indices_t, values, size, dtype)
+        res_out = _call_candidate(indices_t, values, size, dtype)
+
+        _assert_coo_structure(
+            res_out, ref_out, size, nnz, dtype, sparse_dim, len(dense_shape)
+        )
+        _assert_coo_values(res_out, ref_out, dtype, equal_nan=True)
+        utils.gems_assert_close(
+            _comparable(torch.ops.aten._values(res_out), dtype),
+            _comparable(torch.ops.aten._values(ref_out), dtype),
+            _compare_dtype(dtype),
+            equal_nan=True,
+        )
 
 
 @pytest.mark.sparse_coo_tensor
@@ -631,8 +633,8 @@ def test_sparse_coo_tensor_inputs_not_mutated(case):
     # Snapshot through the reference-device helper: under ``--ref cpu`` the
     # snapshots live on the CPU, which is the convention the accuracy helpers
     # expect for the reference operand.
-    indices_before = utils.to_reference(indices_t.clone())
-    values_before = utils.to_reference(values.clone())
+    indices_before = utils.to_reference(indices_t.clone(), independent=True)
+    values_before = utils.to_reference(values.clone(), independent=True)
 
     out = _call_candidate(
         indices_t, values, size if variant == "indices_size" else None, dtype
@@ -783,8 +785,8 @@ def test_sparse_coo_tensor_negative_layout():
     # rejected even though the components are otherwise valid.
     indices_t = _make_index_tensor([[0, 1], [2, 0]])
     values = _make_values(2, (), torch.float32)
-    ref_indices = utils.to_reference(indices_t.clone())
-    ref_values = utils.to_reference(values.clone())
+    ref_indices = utils.to_reference(indices_t.clone(), independent=True)
+    ref_values = utils.to_reference(values.clone(), independent=True)
 
     _assert_rejected(
         lambda: torch.ops.aten.sparse_coo_tensor(

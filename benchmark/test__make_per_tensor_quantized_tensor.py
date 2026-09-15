@@ -139,11 +139,11 @@ def test__make_per_tensor_quantized_tensor():
 @pytest.mark._make_per_tensor_quantized_tensor_out
 def test__make_per_tensor_quantized_tensor_out():
     bench = MakePerTensorQuantizedTensorBenchmark(
-        op_name="_make_per_tensor_quantized_tensor.out",
+        op_name="_make_per_tensor_quantized_tensor",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._make_per_tensor_quantized_tensor.out,
-        gems_op=getattr(flag_gems, "_make_per_tensor_quantized_tensor_out", None),
+        gems_op=getattr(flag_gems, "_make_per_tensor_quantized_tensor", None),
         dtypes=MAKE_PERTENSOR_INPUT_DTYPES,
     )
     bench.run()

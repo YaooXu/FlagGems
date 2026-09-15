@@ -103,7 +103,7 @@ def _supported_component_dtypes():
                 tu.make_input(dtype, (3, 4), ["0", "1"]),
             ]
             inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-            ref_inp = utils.to_reference(inp)
+            ref_inp = utils.to_reference(inp, independent=True)
             ref = torch.ops.aten._nested_tensor_strides(ref_inp)
         except Exception:
             continue
@@ -143,20 +143,7 @@ def _supports_inf(dtype):
 
 
 def _make_component(dtype, shape, value_range):
-    """Value-range helper that survives the unsigned-dtype snapping of the
-    shared helper (uint8 cannot represent the ``-1``/``min`` low bound, which
-    ``torch.testing.make_tensor`` rejects for a non-degenerate range)."""
-    try:
-        return tu.make_input(dtype, shape, value_range)
-    except RuntimeError:
-        dtype_min, dtype_max = tu.dtype_bounds(dtype)
-        low = max(int(tu.resolve_bound(value_range[0], dtype)), int(dtype_min))
-        high = min(int(tu.resolve_bound(value_range[1], dtype)), int(dtype_max))
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-        )
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _make_nested(
@@ -239,14 +226,8 @@ def _value_range_layouts():
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems._nested_tensor_strides is registered;
-    # resolution order is: (1) override, (2) the direct flag_gems callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "_nested_tensor_strides",
-        getattr(flag_gems, "_nested_tensor_strides", None),
+    return tu.resolve_gems_op(
+        "_nested_tensor_strides", getattr(flag_gems, "_nested_tensor_strides", None)
     )
 
 
@@ -284,7 +265,7 @@ def test__nested_tensor_strides(num_tensors, num_dims, dtype):
     # a contiguous copy, so its strides row is the contiguous strides of
     # (L, trailing * (num_dims - 1)), independent of the ragged dim-0 length L.
     inp, _lengths = _make_nested(num_tensors, num_dims, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -311,7 +292,7 @@ def test__nested_tensor_strides_shape_levels(case, dtype):
         _make_component(dtype, (length,) + trailing, _VALUE_RANGE) for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -331,7 +312,7 @@ def test__nested_tensor_strides_value_ranges(case, value_range, dtype):
     # every storage dtype and value range the nested-tensor runtime supports.
     num_tensors, num_dims = case
     inp, _lengths = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -353,7 +334,7 @@ def test__nested_tensor_strides_uniform(dtype):
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -376,7 +357,7 @@ def test__nested_tensor_strides_with_empty_components(dtype):
         _make_component(dtype, (length, 4), _VALUE_RANGE) for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -418,32 +399,34 @@ def test__nested_tensor_strides_transposed(dtype):
     assert bool(torch.all(res_cpu[:, -1] == 4))
 
 
-@pytest.mark._nested_tensor_strides
-@pytest.mark.parametrize("dtype", _FLOAT_COMPONENT_DTYPES)
-def test__nested_tensor_strides_nan_inf_values(dtype):
-    # nan/inf/-inf component values are ordinary storage: the strides metadata is
-    # derived only from component shapes, so every row still reports the true
-    # component strides (4, 1).
-    num_tensors, num_dims = 4, 2
-    gen = torch.Generator("cpu").manual_seed(3)
-    lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
-    # fp8 e4m3fn has nan but no inf representation (assigning inf overflows), so
-    # the inf/-inf writes are guarded; nan is always covered.
-    has_inf = _supports_inf(dtype)
-    components = []
-    for length in lengths:
-        values = _make_component(dtype, (length, 4), _VALUE_RANGE)
-        values[0, 0] = float("nan")
-        values[0, 1] = float("inf") if has_inf else float("nan")
-        values[-1, -1] = float("-inf") if has_inf else float("nan")
-        components.append(values)
-    inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._nested_tensor_strides
+    @pytest.mark.parametrize("dtype", _FLOAT_COMPONENT_DTYPES)
+    def test__nested_tensor_strides_nan_inf_values(dtype):
+        # nan/inf/-inf component values are ordinary storage: the strides metadata is
+        # derived only from component shapes, so every row still reports the true
+        # component strides (4, 1).
+        num_tensors, num_dims = 4, 2
+        gen = torch.Generator("cpu").manual_seed(3)
+        lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
+        # fp8 e4m3fn has nan but no inf representation (assigning inf overflows), so
+        # the inf/-inf writes are guarded; nan is always covered.
+        has_inf = _supports_inf(dtype)
+        components = []
+        for length in lengths:
+            values = _make_component(dtype, (length, 4), _VALUE_RANGE)
+            values[0, 0] = float("nan")
+            values[0, 1] = float("inf") if has_inf else float("nan")
+            values[-1, -1] = float("-inf") if has_inf else float("nan")
+            components.append(values)
+        inp = torch.nested.nested_tensor(components, device=flag_gems.device)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
+        ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
 
 
 # A candidate may legitimately surface a "not supported" failure as a
@@ -466,7 +449,7 @@ def test__nested_tensor_strides_dense_raises(dtype):
     # candidate must fail too rather than silently reporting a bogus strides row.
     inp = tu.make_input(dtype, (4, 4), _VALUE_RANGE)
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._nested_tensor_strides(utils.to_reference(inp))
+        torch.ops.aten._nested_tensor_strides(utils.to_reference(inp, independent=True))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 

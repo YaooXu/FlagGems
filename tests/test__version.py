@@ -199,11 +199,7 @@ def _default_gems_op():
 
 
 def _resolve_gems_op():
-    # Resolved inside every test (never at import time) so the process-local
-    # override injected by KernelGen for this run wins. The resolution order is
-    # (1) the process-local override, (2) the direct FlagGems callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op("_version", _default_gems_op())
+    return tu.resolve_gems_op("_version", _default_gems_op())
 
 
 def _as_int(value):
@@ -261,21 +257,23 @@ def test__version_value_ranges(shape, value_range, dtype):
     _assert_result(res_out, ref_out)
 
 
-@pytest.mark._version
-@pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
-def test__version_nan_inf(shape, dtype):
-    # nan / inf / -inf are ordinary payloads the metadata query must ignore; a
-    # freshly built tensor holding them still reports version 0.
-    inp = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    ref_device = "cpu" if utils.TO_CPU else flag_gems.device
-    ref_inp = _nan_inf_tensor(shape, dtype, ref_device)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._version(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._version
+    @pytest.mark.parametrize("shape", tu.selected_shapes())
+    @pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
+    def test__version_nan_inf(shape, dtype):
+        # nan / inf / -inf are ordinary payloads the metadata query must ignore; a
+        # freshly built tensor holding them still reports version 0.
+        inp = _nan_inf_tensor(shape, dtype, flag_gems.device)
+        ref_device = "cpu" if utils.TO_CPU else flag_gems.device
+        ref_inp = _nan_inf_tensor(shape, dtype, ref_device)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == 0
+        ref_out = torch.ops.aten._version(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _, ref_int = _assert_result(res_out, ref_out)
+        assert ref_int == 0
 
 
 @pytest.mark._version

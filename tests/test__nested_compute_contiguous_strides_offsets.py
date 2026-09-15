@@ -153,15 +153,7 @@ def _make_sizes_from_range(num_tensors, num_dims, value_range, seed=0):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems._nested_compute_contiguous_strides_offsets
-    # is registered; resolution order is: (1) override, (2) the direct
-    # flag_gems callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        _OP_NAME,
-        getattr(flag_gems, _OP_NAME, None),
-    )
+    return tu.resolve_gems_op(_OP_NAME, getattr(flag_gems, _OP_NAME, None))
 
 
 def _assert_layout(num_tensors, num_dims, res_strides, res_offsets):
@@ -186,11 +178,12 @@ def _assert_layout(num_tensors, num_dims, res_strides, res_offsets):
 @pytest.mark.parametrize("num_tensors", _NUM_TENSORS)
 def test__nested_compute_contiguous_strides_offsets(num_tensors, num_dims, pattern):
     sizes = _make_nested_size(num_tensors, num_dims, pattern)
-    ref_sizes = utils.to_reference(sizes)
+    ref_sizes = utils.to_reference(sizes, independent=True)
 
-    ref_strides, ref_offsets = (
-        torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
-    )
+    (
+        ref_strides,
+        ref_offsets,
+    ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
     res_strides, res_offsets = _resolve_gems_op()(sizes)
 
     _assert_layout(num_tensors, num_dims, res_strides, res_offsets)
@@ -208,11 +201,12 @@ def test__nested_compute_contiguous_strides_offsets_value_ranges(layout, value_r
     # exact int64.
     num_tensors, num_dims = layout
     sizes = _make_sizes_from_range(num_tensors, num_dims, value_range)
-    ref_sizes = utils.to_reference(sizes)
+    ref_sizes = utils.to_reference(sizes, independent=True)
 
-    ref_strides, ref_offsets = (
-        torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
-    )
+    (
+        ref_strides,
+        ref_offsets,
+    ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
     res_strides, res_offsets = _resolve_gems_op()(sizes)
 
     _assert_layout(num_tensors, num_dims, res_strides, res_offsets)
@@ -228,10 +222,11 @@ def test__nested_compute_contiguous_strides_offsets_known_layout():
     expected_strides = torch.tensor([[3, 1], [3, 1], [3, 1], [3, 1]], dtype=torch.int64)
     expected_offsets = torch.tensor([0, 6, 18, 21], dtype=torch.int64)
 
-    ref_strides, ref_offsets = (
-        torch.ops.aten._nested_compute_contiguous_strides_offsets(
-            utils.to_reference(sizes)
-        )
+    (
+        ref_strides,
+        ref_offsets,
+    ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(
+        utils.to_reference(sizes, independent=True)
     )
     res_strides, res_offsets = _resolve_gems_op()(sizes)
 

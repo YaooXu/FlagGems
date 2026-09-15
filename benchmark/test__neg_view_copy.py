@@ -86,11 +86,9 @@ def test__neg_view_copy():
 @pytest.mark._neg_view_copy_out
 def test__neg_view_copy_out():
     bench = NegViewCopyOutBenchmark(
-        op_name="_neg_view_copy.out",
+        op_name="_neg_view_copy",
         torch_op=torch.ops.aten._neg_view_copy.out,
-        # KernelGen's override_gems_op("_neg_view_copy.out", ...) is picked up
-        # through flag_gems.testing.resolve_gems_op.
-        gems_op=getattr(flag_gems, "_neg_view_copy_out", None),
+        gems_op=getattr(flag_gems, "_neg_view_copy", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

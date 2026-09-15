@@ -20,35 +20,6 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::slow_conv_transpose2d(Tensor self, Tensor weight, SymInt[2] kernel_size,
-# Tensor? bias=None, SymInt[2] stride=[1, 1], SymInt[2] padding=[0, 0],
-# SymInt[2] output_padding=[0, 0], SymInt[2] dilation=[1, 1]) -> Tensor is the
-# im2col based "slow" transposed conv2d (groups always 1, dilation supported).
-# ``self`` is (N, C_in, H, W) or the unbatched (C_in, H, W); ``weight`` uses the
-# transposed layout (C_in, C_out, kH, kW) so the bias length is
-# ``weight_shape[1]`` (C_out). The output is (N, C_out, H_out, W_out) with
-#   H_out = (H - 1)*sH - 2*pH + dil_h*(kH - 1) + output_pad_h + 1
-# and likewise for W (output_padding must be < stride or dilation per dim).
-#
-# The .default overload is resolved through its public name
-# "slow_conv_transpose2d" (KernelGen's override_gems_op wins over the direct
-# callable) and the .out overload through "slow_conv_transpose2d.out", whose
-# default implementation is the adapter below; KernelGen may override
-# "slow_conv_transpose2d.out" with a real out-kernel.
-#
-# Dtype coverage: the op is only defined for floating point. On CUDA the native
-# op raises "slow_conv_transpose2d_out_cuda not implemented for 'Int'/'Char'/
-# 'Byte'/'Float8E4M3FN'/'Float8E5M2'", so int8/uint8/fp8/int32/int64 have no
-# kernel to compare against. The value-range tests run over the full float
-# family (fp16/fp32/bf16 and fp64 when the device supports it).
-#
-# Each (input, weight, kernel_size, stride, padding, output_padding, dilation)
-# tuple below is one distinct parametrized workload: they cover 1x1/2x2/3x3/5x5
-# kernels, stride 1/2, padding 0/1/2, output_padding 0/1, dilation 1/2,
-# asymmetric strides/paddings/dilations, the unbatched 3D form, with and
-# without bias. Element counts stay well below 1M so the correctness run stays
-# fast.
-
 if tu.LEVEL == "quick":
     SLOW_CONV_TRANSPOSE2D_CASES = [
         (
@@ -61,7 +32,7 @@ if tu.LEVEL == "quick":
             (1, 1),
         ),
     ]
-    FLOAT_DTYPES = [torch.float32]
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
     BIASES = [True]
 else:
     SLOW_CONV_TRANSPOSE2D_CASES = [
@@ -177,24 +148,9 @@ else:
     FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES  # fp16, fp32, bf16, (+fp64)
     BIASES = [True, False]
 
-# Value-range coverage deviates from the spec's five ranges: the transposed-conv
-# reduction accumulates up to C_in*kH*kW products in the *input* dtype (the
-# native op does the same), so dtype-max inputs overflow that accumulator right
-# away -- a single product of two ~dtype-max values already exceeds the input
-# dtype (fp32: ~1e77 vs a 3.4e38 max) -- saturating to inf (NaN where
-# opposite-sign terms cancel), while the fp64 upcast reference stays finite.
-# Measured on this device with fp32 inputs drawn from [0, dtype_max]: the native
-# output is entirely inf and the fp64 reference is entirely finite (max ~7e77,
-# far below the fp64 limit 1.8e308). The two dtype-extreme ranges [0, dtype_max]
-# and [dtype_min, 0] are therefore dropped: the comparison would be dominated by
-# saturation rather than the operator's rounding. The three retained ranges
-# [-1, 1], [0, 1] and [-1, 0] still cover mixed, non-negative and non-positive
-# inputs, and the one-sided magnitudes the dropped ranges encode are represented
-# by [0, 1] / [-1, 0].
-_UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
-_CONV_VALUE_RANGES = [
-    r for r in tu.selected_ranges() if not ({r[0], r[1]} & _UNSAFE_FOR_REDUCTION)
-]
+# Extreme workloads retain their declared bounds. Their oracle uses the original
+# dtype because upcasting changes intermediate overflow and NaN propagation.
+_CONV_VALUE_RANGES = tu.selected_ranges()
 
 # The reference is an fp64 upcast of the rounded inputs, and the native op (like
 # any candidate) accumulates the transposed conv in the input dtype. Scale the
@@ -212,49 +168,19 @@ _BACKWARD_CASES = SLOW_CONV_TRANSPOSE2D_CASES[:3]
 _GEMS_ERRORS = (TypeError, ValueError, RuntimeError, AttributeError)
 
 
-def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order is:
-    # (1) override, (2) the direct flag_gems.slow_conv_transpose2d callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose2d", getattr(flag_gems, "slow_conv_transpose2d", None)
+def _resolve_gems_op(*, expected_input_metadata=None):
+    return tu.resolve_gems_op(
+        "slow_conv_transpose2d",
+        getattr(flag_gems, "slow_conv_transpose2d", None),
+        expected_input_metadata=expected_input_metadata,
     )
 
 
-def _slow_conv_transpose2d_out_adapter(
-    self,
-    weight,
-    kernel_size,
-    bias=None,
-    stride=(1, 1),
-    padding=(0, 0),
-    output_padding=(0, 0),
-    dilation=(1, 1),
-    *,
-    out,
-):
-    # Default implementation of the ".out" overload: run the direct kernel and
-    # write its result into the caller's out buffer. KernelGen's override of
-    # "slow_conv_transpose2d.out" replaces this adapter with a real out-kernel.
-    out.copy_(
-        _resolve_gems_op()(
-            self,
-            weight,
-            kernel_size,
-            bias,
-            stride,
-            padding,
-            output_padding,
-            dilation,
-        )
-    )
-    return out
-
-
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose2d.out", _slow_conv_transpose2d_out_adapter
+def _resolve_gems_op_out(*, expected_input_metadata=None):
+    return tu.resolve_gems_op(
+        "slow_conv_transpose2d",
+        getattr(flag_gems, "slow_conv_transpose2d", None),
+        expected_input_metadata=expected_input_metadata,
     )
 
 
@@ -349,9 +275,9 @@ def test_slow_conv_transpose2d(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     ref_out = torch.ops.aten.slow_conv_transpose2d(
         ref_inp,
@@ -364,7 +290,9 @@ def test_slow_conv_transpose2d(
         dilation,
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    # Native CUDA adds a leading batch dimension to the unbatched input.
+    # Match its post-call metadata while still protecting every stored value.
+    res_out = _resolve_gems_op(expected_input_metadata={0: ref_inp})(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -391,19 +319,20 @@ def test_slow_conv_transpose2d_value_ranges(
     value_range,
     dtype,
 ):
-    # Sweep the shared value ranges ([-1,1], [0,1], [-1,0] and the constant
-    # ranges, minus the dtype-extreme ones that overflow the conv reduction).
-    # Use the calibrated _assert_close rather than tu.assert_result_close
-    # because the native op's bf16 accumulation noise alone exceeds the generic
-    # rtol=1e-2/atol=1e-3 tolerance even for the smallest kernel.
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(
+        inp, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_weight = utils.to_reference(
+        weight, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_bias = utils.to_reference(
+        bias_t, not tu.is_extreme_range(value_range), independent=True
+    )
 
     ref_out = torch.ops.aten.slow_conv_transpose2d(
         ref_inp,
@@ -420,7 +349,7 @@ def test_slow_conv_transpose2d_value_ranges(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 # ---------------------------------------------------------------------------
@@ -428,113 +357,16 @@ def test_slow_conv_transpose2d_value_ranges(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow_conv_transpose2d
-@pytest.mark.parametrize(
-    "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
-    _BACKWARD_CASES,
-)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("bias", BIASES)
-def test_slow_conv_transpose2d_backward(
-    inp_shape,
-    weight_shape,
-    kernel_size,
-    stride,
-    padding,
-    output_padding,
-    dilation,
-    dtype,
-    bias,
-):
-    _disable_tf32()
+if tu.LEVEL == "all":
 
-    inp, weight, bias_t = _make_conv_inputs(
-        inp_shape, weight_shape, bias, dtype, ["-1", "1"]
+    @pytest.mark.slow_conv_transpose2d
+    @pytest.mark.parametrize(
+        "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
+        _BACKWARD_CASES,
     )
-    inp = (_INPUT_SCALE * inp).requires_grad_()
-    weight = (_INPUT_SCALE * weight).requires_grad_()
-    if bias_t is not None:
-        bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
-
-    out_shape = _conv_output_shape(
-        inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation
-    )
-    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
-
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
-    ref_grad_out = utils.to_reference(grad_out, True)
-    ref_out = torch.ops.aten.slow_conv_transpose2d(
-        ref_inp,
-        ref_weight,
-        kernel_size,
-        ref_bias,
-        stride,
-        padding,
-        output_padding,
-        dilation,
-    )
-    if ref_bias is None:
-        ref_gi, ref_gw = torch.autograd.grad(
-            ref_out, (ref_inp, ref_weight), ref_grad_out
-        )
-        ref_gb = None
-    else:
-        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-            ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
-        )
-
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
-    )
-    _assert_close(res_out, ref_out.to(dtype), dtype)
-
-    # Only compare gradients when the candidate advertises autograd support
-    # (otherwise the candidate wrapper did not install a backward and
-    # autograd.grad would raise).
-    if not res_out.requires_grad:
-        pytest.skip("candidate does not propagate autograd through the op")
-    if bias_t is None:
-        res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
-        res_gb = None
-    else:
-        res_gi, res_gw, res_gb = torch.autograd.grad(
-            res_out, (inp, weight, bias_t), grad_out
-        )
-    # grad_input reduces over C_out*kH*kW terms, grad_weight/grad_bias over
-    # N*H_out*W_out terms; the fp64 reference is exact for the scaled inputs, so
-    # the candidate only needs to match the native precision.
-    in_reduce_dim = weight_shape[1] * weight_shape[2] * weight_shape[3]
-    out_reduce_dim = inp_shape[0] * out_shape[2] * out_shape[3]
-    for res_g, ref_g, reduce_dim in zip(
-        (res_gi, res_gw, res_gb),
-        (ref_gi, ref_gw, ref_gb),
-        (in_reduce_dim, out_reduce_dim, out_reduce_dim),
-    ):
-        if ref_g is None:
-            assert res_g is None
-        else:
-            utils.gems_assert_close(
-                res_g, ref_g.to(dtype), dtype, reduce_dim=reduce_dim
-            )
-
-
-# ---------------------------------------------------------------------------
-# nan / inf propagation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.slow_conv_transpose2d
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_slow_conv_transpose2d_nan_inf(dtype):
-    # nan/inf in the input must propagate deterministically through the
-    # scatter-add of the transposed conv. Weights are strictly positive and no
-    # -inf is injected, so an inf output can never be cancelled into nan and
-    # the nan/inf positions are stable (equal_nan=True compares them exactly).
-    _disable_tf32()
-
-    (
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    @pytest.mark.parametrize("bias", BIASES)
+    def test_slow_conv_transpose2d_backward(
         inp_shape,
         weight_shape,
         kernel_size,
@@ -542,35 +374,138 @@ def test_slow_conv_transpose2d_nan_inf(dtype):
         padding,
         output_padding,
         dilation,
-    ) = SLOW_CONV_TRANSPOSE2D_CASES[0]
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    inp[0, 0, 1, 1] = float("nan")
-    inp[0, 1, 3, 3] = float("inf")
-    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-    bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
+        dtype,
+        bias,
+    ):
+        _disable_tf32()
 
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias, True)
-    ref_out = torch.ops.aten.slow_conv_transpose2d(
-        ref_inp,
-        ref_weight,
-        kernel_size,
-        ref_bias,
-        stride,
-        padding,
-        output_padding,
-        dilation,
-    ).to(dtype)
+        inp, weight, bias_t = _make_conv_inputs(
+            inp_shape, weight_shape, bias, dtype, ["-1", "1"]
+        )
+        inp = (_INPUT_SCALE * inp).requires_grad_()
+        weight = (_INPUT_SCALE * weight).requires_grad_()
+        if bias_t is not None:
+            bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
-    )
+        out_shape = _conv_output_shape(
+            inp_shape,
+            weight_shape,
+            kernel_size,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        )
+        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
-    # Sanity check that the injected values actually reached the output.
-    assert torch.isnan(ref_out).any()
-    assert torch.isinf(ref_out).any()
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias_t, True, independent=True)
+        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_out = torch.ops.aten.slow_conv_transpose2d(
+            ref_inp,
+            ref_weight,
+            kernel_size,
+            ref_bias,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        )
+        if ref_bias is None:
+            ref_gi, ref_gw = torch.autograd.grad(
+                ref_out, (ref_inp, ref_weight), ref_grad_out
+            )
+            ref_gb = None
+        else:
+            ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+                ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
+            )
+
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
+        )
+        _assert_close(res_out, ref_out.to(dtype), dtype)
+
+        assert res_out.requires_grad, "candidate must preserve autograd"
+        if bias_t is None:
+            res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
+            res_gb = None
+        else:
+            res_gi, res_gw, res_gb = torch.autograd.grad(
+                res_out, (inp, weight, bias_t), grad_out
+            )
+        # grad_input reduces over C_out*kH*kW terms, grad_weight/grad_bias over
+        # N*H_out*W_out terms; the fp64 reference is exact for the scaled inputs, so
+        # the candidate only needs to match the native precision.
+        in_reduce_dim = weight_shape[1] * weight_shape[2] * weight_shape[3]
+        out_reduce_dim = inp_shape[0] * out_shape[2] * out_shape[3]
+        for res_g, ref_g, reduce_dim in zip(
+            (res_gi, res_gw, res_gb),
+            (ref_gi, ref_gw, ref_gb),
+            (in_reduce_dim, out_reduce_dim, out_reduce_dim),
+        ):
+            if ref_g is None:
+                assert res_g is None
+            else:
+                utils.gems_assert_close(
+                    res_g, ref_g.to(dtype), dtype, reduce_dim=reduce_dim
+                )
+
+
+# ---------------------------------------------------------------------------
+# nan / inf propagation
+# ---------------------------------------------------------------------------
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.slow_conv_transpose2d
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    def test_slow_conv_transpose2d_nan_inf(dtype):
+        # nan/inf in the input must propagate deterministically through the
+        # scatter-add of the transposed conv. Weights are strictly positive and no
+        # -inf is injected, so an inf output can never be cancelled into nan and
+        # the nan/inf positions are stable (equal_nan=True compares them exactly).
+        _disable_tf32()
+
+        (
+            inp_shape,
+            weight_shape,
+            kernel_size,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        ) = SLOW_CONV_TRANSPOSE2D_CASES[0]
+        inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+        inp[0, 0, 1, 1] = float("nan")
+        inp[0, 1, 3, 3] = float("inf")
+        weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
+        bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
+
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_out = torch.ops.aten.slow_conv_transpose2d(
+            ref_inp,
+            ref_weight,
+            kernel_size,
+            ref_bias,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        ).to(dtype)
+
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
+        )
+
+        _assert_close(res_out, ref_out, dtype, equal_nan=True)
+        # Sanity check that the injected values actually reached the output.
+        assert torch.isnan(ref_out).any()
+        assert torch.isinf(ref_out).any()
 
 
 # ---------------------------------------------------------------------------
@@ -601,14 +536,14 @@ def test_slow_conv_transpose2d_out(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     # The native .out overload is callable on this backend (probed), so call it
     # directly for the reference -- never simulate it with default()+copy_.
     ref_full = torch.ops.aten.slow_conv_transpose2d(
-        ref_inp,
+        utils.to_reference(ref_inp, independent=True),
         ref_weight,
         kernel_size,
         ref_bias,
@@ -632,7 +567,7 @@ def test_slow_conv_transpose2d_out(
     assert ref_ret is ref_out
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op_out(expected_input_metadata={0: ref_inp})(
         inp,
         weight,
         kernel_size,

@@ -80,18 +80,7 @@ def _random_compressed(batch, n_rows, n_cols, nnz, gen):
 
 
 def _make_values(dtype, shape, value_range):
-    """Stored values from the shared value-range framework (tu.make_input).
-
-    The returned col_indices view never depends on the values, so this one
-    constructor covers every per-dtype range. Unsigned integer storage cannot
-    represent the negative bound of the ``[-1, 0]`` / ``[min, 0]`` ranges;
-    those ranges are snapped to the representable degenerate ``[0, 0]`` range
-    (the metadata output is unaffected either way).
-    """
-    try:
-        return tu.make_input(dtype, shape, list(value_range))
-    except RuntimeError:
-        return tu.make_input(dtype, shape, ["0", "0"])
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _build_csr(shape, nnz, dtype, value_range, seed=0):
@@ -264,14 +253,7 @@ _NAN_INF_DTYPES = [dtype for dtype in utils.ALL_FLOAT_DTYPES if dtype in _COL_DT
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.col_indices is registered; resolution
-    # order is: (1) override, (2) the direct flag_gems.col_indices callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "col_indices", getattr(flag_gems, "col_indices", None)
-    )
+    return tu.resolve_gems_op("col_indices", getattr(flag_gems, "col_indices", None))
 
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
@@ -314,7 +296,7 @@ def test_col_indices_layouts(case, dtype):
     # storage.
     layout, shape, nnz, blocks = case
     inp = _build_input(layout, shape, nnz, blocks, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -332,7 +314,7 @@ def test_col_indices_value_ranges(case, value_range, dtype):
     # because col_indices reads only layout metadata, not the values payload.
     layout, shape, nnz, blocks = case
     inp = _build_input(layout, shape, nnz, blocks, dtype, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -348,7 +330,7 @@ def test_col_indices_empty(dtype):
     # has a null data pointer on both sides, so the alias check degenerates to
     # 0 == 0.
     inp = _build_input("csr", (4, 5), 0, None, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -362,7 +344,7 @@ def test_col_indices_empty_batched(dtype):
     # nnz == 0 with batch dims: the returned col_indices preserves the batch
     # dims and has shape batch_dims + (0,).
     inp = _build_input("csr", (2, 4, 5), 0, None, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -377,7 +359,7 @@ def test_col_indices_empty_bsr(dtype):
     # nnz == 0 for BSR: col and values are empty, but col_indices must still
     # return a (0,) contiguous int64 view.
     inp = _build_input("bsr", (4, 6), 0, (2, 2), dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -391,7 +373,7 @@ def test_col_indices_single_row(dtype):
     # nrows == 1: crow has the degenerate shape (2,) with crow[0] == 0 and
     # crow[1] == nnz, and col_indices has shape (nnz,).
     inp = _build_input("csr", (1, 7), 5, None, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -413,7 +395,7 @@ def test_col_indices_uncoalesced(dtype):
     assert cols[0].item() == cols[1].item()
     values = _make_values(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -433,7 +415,7 @@ def test_col_indices_full_storage(dtype):
     values = _make_values(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -449,7 +431,7 @@ def test_col_indices_bsr_ragged_blocks(dtype):
     # use ceil and torch pads the logical size internally. col_indices returns
     # the stored block-column indices, one per stored block.
     inp = _build_input("bsr", (10, 10), 6, (3, 4), dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -457,27 +439,29 @@ def test_col_indices_bsr_ragged_blocks(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-@pytest.mark.col_indices
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_col_indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/+-0.0 are ordinary stored values: col_indices must still
-    # return exactly the stored col_indices tensor, unchanged, for every one of
-    # them.
-    shape = (3, 4)
-    crow = torch.tensor([0, 2, 4, 5], dtype=torch.long, device=flag_gems.device)
-    cols = torch.tensor([0, 1, 2, 3, 0], dtype=torch.long, device=flag_gems.device)
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    inp = torch.sparse_csr_tensor(crow, cols, values, shape)
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.col_indices
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_col_indices_nan_inf_values_ignored(dtype):
+        # nan/inf/-inf/+-0.0 are ordinary stored values: col_indices must still
+        # return exactly the stored col_indices tensor, unchanged, for every one of
+        # them.
+        shape = (3, 4)
+        crow = torch.tensor([0, 2, 4, 5], dtype=torch.long, device=flag_gems.device)
+        cols = torch.tensor([0, 1, 2, 3, 0], dtype=torch.long, device=flag_gems.device)
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        inp = torch.sparse_csr_tensor(crow, cols, values, shape)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_result(res_out, ref_out, inp, ref_inp)
+        ref_out = torch.ops.aten.col_indices(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.col_indices
@@ -487,7 +471,7 @@ def test_col_indices_dense_raises():
     # rather than silently return a bogus col_indices tensor.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(RuntimeError):
-        torch.ops.aten.col_indices(utils.to_reference(inp))
+        torch.ops.aten.col_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -504,7 +488,7 @@ def test_col_indices_csc_raises():
         ccol_indices, row_indices, values.to(flag_gems.device), (4, 2)
     )
     with pytest.raises(RuntimeError):
-        torch.ops.aten.col_indices(utils.to_reference(inp))
+        torch.ops.aten.col_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -520,7 +504,7 @@ def test_col_indices_bsc_raises():
         ccol_indices, row_indices, values, (4, 4), device=flag_gems.device
     )
     with pytest.raises(RuntimeError):
-        torch.ops.aten.col_indices(utils.to_reference(inp))
+        torch.ops.aten.col_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -531,7 +515,7 @@ def test_col_indices_coo_raises():
     # Sparse implementation and raises. The candidate must reject it too.
     inp = torch.randn(3, 4, device=flag_gems.device).to_sparse_coo()
     with pytest.raises(RuntimeError):
-        torch.ops.aten.col_indices(utils.to_reference(inp))
+        torch.ops.aten.col_indices(utils.to_reference(inp, independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 

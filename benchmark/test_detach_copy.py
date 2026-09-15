@@ -70,9 +70,9 @@ def test_detach_copy():
 @pytest.mark.detach_copy_out
 def test_detach_copy_out():
     bench = DetachCopyOutBenchmark(
-        op_name="detach_copy.out",
+        op_name="detach_copy",
         torch_op=torch.ops.aten.detach_copy.out,
-        gems_op=getattr(flag_gems, "detach_copy_out", None),
+        gems_op=getattr(flag_gems, "detach_copy", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

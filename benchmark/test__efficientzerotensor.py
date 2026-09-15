@@ -100,11 +100,11 @@ def test__efficientzerotensor():
 @pytest.mark._efficientzerotensor_out
 def test__efficientzerotensor_out():
     bench = EfficientZeroTensorBenchmark(
-        op_name="_efficientzerotensor_out",
+        op_name="_efficientzerotensor",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._efficientzerotensor.out,
-        gems_op=getattr(flag_gems, "_efficientzerotensor_out", None),
+        gems_op=getattr(flag_gems, "_efficientzerotensor", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

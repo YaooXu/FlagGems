@@ -87,7 +87,7 @@ if QUICK_MODE:
         ((1, 2, 5, 5), (2, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
     ]
     SLOW_CONV2D_VALUE_RANGES_CASES = list(SLOW_CONV2D_BACKWARD_CASES)
-    FLOAT_DTYPES = [torch.float32]
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 else:
     SLOW_CONV2D_BACKWARD_CASES = [
         ((16, 4, 8, 8), (4, 4, 3, 3), (3, 3), (1, 1), (0, 0)),
@@ -116,26 +116,9 @@ _MIXED_MASKS = [(True, False, True), (False, True, True)]
 # indexing/formula bugs.
 _INPUT_SCALE = 0.1
 
-# Value-range coverage deviates from the spec's five ranges: the op contracts
-# over C_in*kH*kW products, and the candidate (like the native operator)
-# accumulates them in the *input* dtype. Dtype-max inputs overflow that
-# accumulator immediately -- a single product of two ~dtype-max values already
-# exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- so the three
-# gradients saturate to inf (NaN where opposite-sign terms cancel), while the
-# fp64 upcast reference stays finite. Measured on this device with fp32 inputs
-# drawn from [0, dtype_max] (scaled by _INPUT_SCALE): all three native
-# gradients are entirely inf and all three fp64 references are entirely finite
-# (max ~1e77, far below the fp64 limit 1.8e308). The two dtype-extreme ranges
-# [0, dtype_max] and [dtype_min, 0] are therefore dropped: the comparison would
-# be dominated by saturation rather than the operator's rounding. The three
-# retained ranges [-1, 1], [0, 1] and [-1, 0] still cover negative, positive,
-# mixed and zero-containing inputs for every dtype.
-_UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
-_SLOW_CONV2D_VALUE_RANGES = [
-    value_range
-    for value_range in tu.selected_ranges()
-    if not ({value_range[0], value_range[1]} & _UNSAFE_FOR_REDUCTION)
-]
+# Extreme workloads retain their declared bounds. Their oracle uses the original
+# dtype because upcasting changes intermediate overflow and NaN propagation.
+_SLOW_CONV2D_VALUE_RANGES = tu.selected_ranges()
 
 # Invalid configurations for the negative tests, as
 # (inp_shape, weight_shape, kernel_size, stride, padding, grad_output_shape):
@@ -167,7 +150,7 @@ def _resolve_gems_op():
     (1) override, (2) the direct ``flag_gems._slow_conv2d_backward`` callable,
     (3) LookupError.
     """
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_slow_conv2d_backward", getattr(flag_gems, "_slow_conv2d_backward", None)
     )
 
@@ -187,21 +170,25 @@ def _make_inputs(
     p_h, p_w = padding
     h_out = (h_in + 2 * p_h - k_h) // s_h + 1
     w_out = (w_in + 2 * p_w - k_w) // s_w + 1
-    inp = _INPUT_SCALE * tu.make_input(dtype, inp_shape, value_range)
-    weight = _INPUT_SCALE * tu.make_input(dtype, weight_shape, value_range)
-    grad_output = _INPUT_SCALE * tu.make_input(
-        dtype, (n_in, out_c, h_out, w_out), value_range
+    inp = (1.0 if tu.is_extreme_range(value_range) else _INPUT_SCALE) * tu.make_input(
+        dtype, inp_shape, value_range
     )
+    weight = (
+        1.0 if tu.is_extreme_range(value_range) else _INPUT_SCALE
+    ) * tu.make_input(dtype, weight_shape, value_range)
+    grad_output = (
+        1.0 if tu.is_extreme_range(value_range) else _INPUT_SCALE
+    ) * tu.make_input(dtype, (n_in, out_c, h_out, w_out), value_range)
     return inp, weight, grad_output
 
 
 def _reference_output_mask(
-    inp, weight, grad_output, kernel_size, stride, padding, mask
+    inp, weight, grad_output, kernel_size, stride, padding, mask, *, upcast=True
 ):
     """High-precision (fp64 upcast) reference computed with torch.ops.aten."""
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_grad_output = utils.to_reference(grad_output, True)
+    ref_inp = utils.to_reference(inp, upcast, independent=True)
+    ref_weight = utils.to_reference(weight, upcast, independent=True)
+    ref_grad_output = utils.to_reference(grad_output, upcast, independent=True)
     return torch.ops.aten._slow_conv2d_backward.output_mask(
         ref_grad_output,
         ref_inp,
@@ -283,7 +270,14 @@ def test__slow_conv2d_backward_value_ranges(case, value_range, dtype):
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, value_range
     )
     ref = _reference_output_mask(
-        inp, weight, grad_output, kernel_size, stride, padding, _FULL_MASK
+        inp,
+        weight,
+        grad_output,
+        kernel_size,
+        stride,
+        padding,
+        _FULL_MASK,
+        upcast=not tu.is_extreme_range(value_range),
     )
 
     res = _resolve_gems_op()(
@@ -293,7 +287,7 @@ def test__slow_conv2d_backward_value_ranges(case, value_range, dtype):
     in_reduce_dim, out_reduce_dim = _reduction_dims(
         inp_shape, weight_shape, stride, padding
     )
-    _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype)
+    _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype, equal_nan=True)
 
 
 @pytest.mark._slow_conv2d_backward
@@ -572,10 +566,10 @@ def test__slow_conv2d_backward_backward(case, dtype):
     # through autograd on the fp64 upcast reference and compare against the
     # candidate's three gradients. This validates the candidate against the true
     # gradient through an independent computation path.
-    ref_inp = utils.to_reference(inp, True).requires_grad_(True)
-    ref_weight = utils.to_reference(weight, True).requires_grad_(True)
-    ref_bias = utils.to_reference(bias, True).requires_grad_(True)
-    ref_grad_output = utils.to_reference(grad_output, True)
+    ref_inp = utils.to_reference(inp, True, independent=True).requires_grad_(True)
+    ref_weight = utils.to_reference(weight, True, independent=True).requires_grad_(True)
+    ref_bias = utils.to_reference(bias, True, independent=True).requires_grad_(True)
+    ref_grad_output = utils.to_reference(grad_output, True, independent=True)
 
     fwd = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -596,41 +590,45 @@ def test__slow_conv2d_backward_backward(case, dtype):
     _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype)
 
 
-@pytest.mark._slow_conv2d_backward
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test__slow_conv2d_backward_nan_inf(dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+if tu.LEVEL == "all":
 
-    inp = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 5, 5), ["-1", "1"])
-    weight = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 3, 3), ["-1", "1"])
-    grad_output = _INPUT_SCALE * tu.make_input(dtype, (2, 2, 5, 5), ["-1", "1"])
+    @pytest.mark._slow_conv2d_backward
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    def test__slow_conv2d_backward_nan_inf(dtype):
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    # Poison a few entries with nan / inf / -inf. The fp64-upcast reference sees
-    # exactly the same values, so the special values propagate identically
-    # through the im2col products on both paths; equal_nan tolerates the nan
-    # entries produced by nan products and inf + (-inf) accumulation.
-    inp[0, 0, 2, 2] = float("nan")
-    inp[1, 2, 1, 4] = float("inf")
-    weight[1, 1, 0, 0] = float("-inf")
-    grad_output[0, 1, 3, 3] = float("nan")
-    grad_output[1, 0, 0, 0] = float("inf")
+        inp = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 5, 5), ["-1", "1"])
+        weight = _INPUT_SCALE * tu.make_input(dtype, (2, 3, 3, 3), ["-1", "1"])
+        grad_output = _INPUT_SCALE * tu.make_input(dtype, (2, 2, 5, 5), ["-1", "1"])
 
-    kernel_size = (3, 3)
-    stride = (1, 1)
-    padding = (1, 1)
-    ref = _reference_output_mask(
-        inp, weight, grad_output, kernel_size, stride, padding, _FULL_MASK
-    )
+        # Poison a few entries with nan / inf / -inf. The fp64-upcast reference sees
+        # exactly the same values, so the special values propagate identically
+        # through the im2col products on both paths; equal_nan tolerates the nan
+        # entries produced by nan products and inf + (-inf) accumulation.
+        inp[0, 0, 2, 2] = float("nan")
+        inp[1, 2, 1, 4] = float("inf")
+        weight[1, 1, 0, 0] = float("-inf")
+        grad_output[0, 1, 3, 3] = float("nan")
+        grad_output[1, 0, 0, 0] = float("inf")
 
-    res = _resolve_gems_op()(
-        grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
-    )
+        kernel_size = (3, 3)
+        stride = (1, 1)
+        padding = (1, 1)
+        ref = _reference_output_mask(
+            inp, weight, grad_output, kernel_size, stride, padding, _FULL_MASK
+        )
 
-    in_reduce_dim, out_reduce_dim = _reduction_dims(
-        (2, 3, 5, 5), (2, 3, 3, 3), stride, padding
-    )
-    _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype, equal_nan=True)
+        res = _resolve_gems_op()(
+            grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
+        )
+
+        in_reduce_dim, out_reduce_dim = _reduction_dims(
+            (2, 3, 5, 5), (2, 3, 3, 3), stride, padding
+        )
+        _assert_grads_close(
+            res, ref, in_reduce_dim, out_reduce_dim, dtype, equal_nan=True
+        )
 
 
 @pytest.mark._slow_conv2d_backward

@@ -138,15 +138,8 @@ _AXIS_SHAPES = (
 
 
 def _resolve(name):
-    # Resolved inside each test (never at module import time) so that the
-    # process-local override installed by KernelGen via ``override_gems_op`` for
-    # this run wins. The .out overload is resolved through its aten schema name
-    # ("_make_per_channel_quantized_tensor.out") so the override key matches the
-    # schema; its direct fallback callable carries the flag_gems underscore
-    # suffix ("_make_per_channel_quantized_tensor_out"). Resolution order:
-    # (1) override, (2) the direct flag_gems callable, (3) LookupError.
     default = getattr(flag_gems, name.replace(".", "_"), None)
-    return flag_gems.testing.resolve_gems_op(name, default)
+    return tu.resolve_gems_op(name, default)
 
 
 def _ref_device():
@@ -159,17 +152,6 @@ def _num_channels(shape, axis):
 
 
 def _make_range_tensor(dtype, shape, value_range):
-    # tu.make_input delegates to torch.testing.make_tensor, which clamps
-    # negative bounds to 0 for uint8 and then raises on the resulting degenerate
-    # randint range (from=0 >= to=0). Resolve and clamp the bounds ourselves so
-    # every selected_ranges() entry stays usable for uint8 too.
-    if dtype == torch.uint8:
-        low = max(int(tu.resolve_bound(value_range[0], dtype)), 0)
-        high = max(int(tu.resolve_bound(value_range[1], dtype)), 0)
-        low, high = sorted((low, high))
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.randint(low, high + 1, shape, dtype=dtype, device=flag_gems.device)
     return tu.make_input(dtype, shape, value_range)
 
 
@@ -215,8 +197,8 @@ def _make_out_buffer(shape, axis, storage_dtype, device, reference=False):
     scales = torch.full((num_channels,), 9.0, dtype=torch.float64, device=device)
     zero_points = torch.full((num_channels,), 9, dtype=torch.int64, device=device)
     if reference:
-        scales = utils.to_reference(scales)
-        zero_points = utils.to_reference(zero_points)
+        scales = utils.to_reference(scales, independent=True)
+        zero_points = utils.to_reference(zero_points, independent=True)
     return torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
         scales=scales,
@@ -267,19 +249,21 @@ def _assert_per_channel_affine(
     # (scales widened to float64, zero_points to int64).
     utils.gems_assert_equal(
         res_out.q_per_channel_scales(),
-        utils.to_reference(scales).to(torch.float64),
+        utils.to_reference(scales, independent=True).to(torch.float64),
         equal_nan=equal_nan,
     )
     utils.gems_assert_equal(
         res_out.q_per_channel_zero_points(),
-        utils.to_reference(zero_points).to(torch.int64),
+        utils.to_reference(zero_points, independent=True).to(torch.int64),
         equal_nan=equal_nan,
     )
 
     # The integer storage is copied unchanged from the input tensor, so the
     # underlying representation must match the input and the reference
     # bit-exactly.
-    utils.gems_assert_equal(res_out.int_repr(), utils.to_reference(inp))
+    utils.gems_assert_equal(
+        res_out.int_repr(), utils.to_reference(inp, independent=True)
+    )
     utils.gems_assert_equal(res_out.int_repr(), ref_out.int_repr())
 
 
@@ -321,15 +305,17 @@ def _assert_per_channel_float_qparams(
     )
     utils.gems_assert_equal(
         res_out.q_per_channel_scales(),
-        utils.to_reference(scales).to(torch.float32),
+        utils.to_reference(scales, independent=True).to(torch.float32),
         equal_nan=equal_nan,
     )
     utils.gems_assert_equal(
         res_out.q_per_channel_zero_points(),
-        utils.to_reference(zero_points).to(torch.float32),
+        utils.to_reference(zero_points, independent=True).to(torch.float32),
         equal_nan=equal_nan,
     )
-    utils.gems_assert_equal(res_out.int_repr(), utils.to_reference(inp))
+    utils.gems_assert_equal(
+        res_out.int_repr(), utils.to_reference(inp, independent=True)
+    )
     utils.gems_assert_equal(res_out.int_repr(), ref_out.int_repr())
 
 
@@ -351,9 +337,9 @@ def test__make_per_channel_quantized_tensor_value_ranges(
     inp = _make_range_tensor(storage_dtype, shape, value_range)
     scales = _make_range_tensor(torch.float64, (num_channels,), value_range)
     zero_points = _make_range_tensor(storage_dtype, (num_channels,), value_range)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -376,9 +362,9 @@ def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dt
     # scales to float64 exactly (no lossy round-trip through a wider type).
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, scale_dtype)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -405,9 +391,9 @@ def test__make_per_channel_quantized_tensor_axis(
     # metadata/storage must be preserved for each encoding.
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, scale_dtype)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -439,9 +425,9 @@ def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
         0.5, 1.5, num_channels, dtype=torch.float64, device=flag_gems.device
     )
     zero_points = torch.tensor(values, dtype=torch.int64, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -466,9 +452,9 @@ def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_
     assert not inp.is_contiguous()  # shape (3, 4, 8)
     axis = 1
     scales, zero_points = _make_metadata(inp.shape, axis, storage_dtype, scale_dtype)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -493,9 +479,9 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
     # stored as-is) instead of the int64-zero_point per_channel_affine scheme.
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_float_metadata(shape, axis, zero_point_dtype)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -524,9 +510,9 @@ def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad
     zero_points = torch.zeros(
         num_channels, dtype=storage_dtype, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -558,9 +544,9 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
     zero_points = torch.full(
         (num_channels,), bad, dtype=torch.float32, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out = torch.ops.aten._make_per_channel_quantized_tensor(
         ref_inp, ref_scales, ref_zero_points, axis
@@ -586,9 +572,9 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
 def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, torch.float32)
-    ref_inp = utils.to_reference(inp)
-    ref_scales = utils.to_reference(scales)
-    ref_zero_points = utils.to_reference(zero_points)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_scales = utils.to_reference(scales, independent=True)
+    ref_zero_points = utils.to_reference(zero_points, independent=True)
 
     ref_out_buf = _make_out_buffer(
         shape, axis, storage_dtype, _ref_device(), reference=True
@@ -599,7 +585,7 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     assert ref_ret is ref_out_buf
 
     act_out_buf = _make_out_buffer(shape, axis, storage_dtype, flag_gems.device)
-    res_ret = _resolve("_make_per_channel_quantized_tensor.out")(
+    res_ret = _resolve("_make_per_channel_quantized_tensor")(
         inp, scales, zero_points, axis, out=act_out_buf
     )
     assert res_ret is act_out_buf
@@ -626,9 +612,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_storage_dtype(invalid_dt
 
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor(
-            utils.to_reference(inp),
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
@@ -646,9 +632,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_float_scales(scale_dtype
 
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor(
-            utils.to_reference(inp),
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
@@ -670,9 +656,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_1d_metadata(bad_metadata
 
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor(
-            utils.to_reference(inp),
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
@@ -695,9 +681,9 @@ def test__make_per_channel_quantized_tensor_rejects_metadata_length_mismatch(
 
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor(
-            utils.to_reference(inp),
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             1,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
@@ -714,21 +700,21 @@ def test__make_per_channel_quantized_tensor_out_rejects_non_quantized_buffer(
     shape, axis = (2, 3), 1
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, torch.float32)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_buf = torch.empty(shape, dtype=torch.float32, device=_ref_device())
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor.out(
             ref_inp,
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             axis,
             out=ref_buf,
         )
 
     act_buf = torch.empty(shape, dtype=torch.float32, device=flag_gems.device)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor.out")(
+        _resolve("_make_per_channel_quantized_tensor")(
             inp, scales, zero_points, axis, out=act_buf
         )
 
@@ -744,20 +730,19 @@ def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
     num_channels = _num_channels(shape, axis)
     inp = _make_range_tensor(storage_dtype, shape, ["0", "max"])
     scales, zero_points = _make_metadata(shape, axis, storage_dtype, torch.float32)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_buf = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
         scales=utils.to_reference(
             torch.full(
-                (num_channels,),
-                9.0,
-                dtype=torch.float64,
-                device=flag_gems.device,
-            )
+                (num_channels,), 9.0, dtype=torch.float64, device=flag_gems.device
+            ),
+            independent=True,
         ),
         zero_points=utils.to_reference(
-            torch.full((num_channels,), 9, dtype=torch.int64, device=flag_gems.device)
+            torch.full((num_channels,), 9, dtype=torch.int64, device=flag_gems.device),
+            independent=True,
         ),
         axis=axis,
         dtype=_WRONG_QUANT_DTYPE[storage_dtype],
@@ -766,8 +751,8 @@ def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
     with pytest.raises((RuntimeError, NotImplementedError, TypeError)):
         torch.ops.aten._make_per_channel_quantized_tensor.out(
             ref_inp,
-            utils.to_reference(scales),
-            utils.to_reference(zero_points),
+            utils.to_reference(scales, independent=True),
+            utils.to_reference(zero_points, independent=True),
             axis,
             out=ref_buf,
         )
@@ -785,6 +770,6 @@ def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
         device=flag_gems.device,
     )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_make_per_channel_quantized_tensor.out")(
+        _resolve("_make_per_channel_quantized_tensor")(
             inp, scales, zero_points, axis, out=act_buf
         )

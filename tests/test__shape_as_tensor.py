@@ -84,12 +84,7 @@ _EMPTY_SHAPES = [(0,), (0, 5), (3, 0, 4)]
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins.
-    # ``flag_gems._shape_as_tensor`` may not be registered yet, so getattr
-    # supplies a safe default and resolve_gems_op falls back to the package
-    # namespace before raising.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_shape_as_tensor", getattr(flag_gems, "_shape_as_tensor", None)
     )
 
@@ -137,7 +132,7 @@ def test__shape_as_tensor_value_ranges(shape, value_range, dtype):
     # values the storage holds, so every range from the regular-operator spec
     # is exercised here.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -153,7 +148,7 @@ def test__shape_as_tensor_empty(shape, value_range, dtype):
     # Zero-size dimensions are part of the logical shape; a ``numel == 0`` fast
     # path that drops them would fail here.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -173,7 +168,7 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     inp = view_fn(base)
     assert not inp.is_contiguous()
     assert inp.shape == expected
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -181,21 +176,23 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     _assert_result(res_out, ref_out, inp, expected)
 
 
-@pytest.mark._shape_as_tensor
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__shape_as_tensor_nan_inf(dtype):
-    # nan/inf are ordinary storage values for this op and must be ignored: the
-    # result is still the deterministic shape tensor over the logical shape.
-    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
-    inp[0, :, 0] = float("inf")
-    inp[1, :, 1] = float("-inf")
-    inp[2, :, 2] = float("nan")
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._shape_as_tensor
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test__shape_as_tensor_nan_inf(dtype):
+        # nan/inf are ordinary storage values for this op and must be ignored: the
+        # result is still the deterministic shape tensor over the logical shape.
+        inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
+        inp[0, :, 0] = float("inf")
+        inp[1, :, 1] = float("-inf")
+        inp[2, :, 2] = float("nan")
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, inp, (4, 8, 6))
+        ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, inp, (4, 8, 6))
 
 
 @pytest.mark._shape_as_tensor
@@ -204,7 +201,7 @@ def test__shape_as_tensor_ignores_autograd(shape):
     # The metadata query has no autograd support: a requires_grad input still
     # yields a fresh, non-grad int64 tensor with exactly the logical shape.
     inp = tu.make_input(torch.float32, shape, ["-1", "1"]).requires_grad_()
-    ref_inp = utils.to_reference(inp.detach())
+    ref_inp = utils.to_reference(inp.detach(), independent=True)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)

@@ -35,44 +35,11 @@ setattr(
     ),
 )
 
-# aten::_slow_conv2d_forward(Tensor self, Tensor weight, SymInt[2] kernel_size,
-# Tensor? bias, SymInt[2] stride, SymInt[2] padding) -> Tensor is the im2col
-# based "slow" conv2d (no dilation, groups always 1). ``self`` is (N, C_in, H, W),
-# ``weight`` is (C_out, C_in, kH, kW) and ``kernel_size`` must match the weight
-# spatial dims. The output is (N, C_out, H_out, W_out) with
-#   H_out = (H + 2*pH - kH) // sH + 1, W_out = (W + 2*pW - kW) // sW + 1.
-# The .default overload is resolved through its public name "_slow_conv2d_forward"
-# (KernelGen's override_gems_op("_slow_conv2d_forward", ...) wins over the direct
-# callable); the .output overload is resolved through "_slow_conv2d_forward.output"
-# whose fallback implementation is the adapter below.
-#
-# Coverage follows the regular-operator spec adapted to a matrix/reduction-like
-# op:
-#   * shape/param levels: each (input, weight, kernel_size, stride, padding)
-#     tuple in SLOW_CONV2D_CASES is one distinct parametrized workload (the
-#     shared tu.selected_shapes() set is pointwise-shaped and does not apply to
-#     a conv whose input must be 4-D); they cover 1x1/3x3/3x5/5x5 kernels,
-#     stride 1 and 2, padding 0/1/2, small outputs and channel counts up to 16;
-#   * dtype coverage: the op is probed (see UNSUPPORTED_DTYPES) and only the
-#     floating dtypes the CUDA/CPU kernel actually implements are exercised -
-#     fp16/fp32/bf16/fp64; int8/uint8/fp8/int32/int64/bool all raise
-#     "slow_conv2d_*" not implemented and are covered as negative cases;
-#   * value ranges: tu.make_input over the spec's ranges, adapted so the
-#     multiply-accumulate never overflows (the [0, max]/[min, 0] extremes are
-#     dropped; see _CONV_VALUE_RANGES);
-#   * broadcast: not applicable - conv requires C_in to match exactly between
-#     input and weight (any mismatch is a negative case below);
-#   * backward: the op is differentiable (aten routes to _slow_conv2d_backward),
-#     so gradients are compared against the fp64 upcast reference, including
-#     the candidate path when the kernel advertises autograd support;
-#   * negative: kernel_size mismatch, kernel larger than input, C_in mismatch,
-#     non-4-D input, unsupported dtype and non-tuple scalar params all raise;
-#   * nan/inf: deterministic propagation through the im2col GEMM.
 if QUICK_MODE:
     SLOW_CONV2D_CASES = [
         ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
     ]
-    FLOAT_DTYPES = [torch.float32]
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
     BIASES = [True]
 else:
     SLOW_CONV2D_CASES = [
@@ -103,25 +70,9 @@ UNSUPPORTED_DTYPES = [
     torch.bool,
 ]
 
-# Value-range coverage deviates from the spec's five ranges: a conv contracts
-# over C_in*kH*kW products, and the candidate (like the native operator)
-# accumulates them in the *input* dtype. Dtype-max inputs overflow that
-# accumulator immediately -- a single product of two ~dtype-max values already
-# exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- so the im2col GEMM
-# saturates to inf (NaN where opposite-sign terms cancel), while the fp64
-# upcast reference stays finite. Measured on this device with fp32 inputs drawn
-# from [0, dtype_max]: the native output is entirely inf and the fp64 reference
-# is entirely finite (max ~6e77, far below the fp64 limit 1.8e308). The two
-# dtype-extreme ranges [0, dtype_max] and [dtype_min, 0] are therefore dropped:
-# the comparison would be dominated by saturation rather than the operator's
-# rounding. The three retained ranges [-1, 1], [0, 1] and [-1, 0] still cover
-# negative, positive, mixed, zero and constant inputs for every dtype.
-_UNSAFE_FOR_REDUCTION = frozenset({"max", "min", "max/2", "min/2"})
-_CONV_VALUE_RANGES = [
-    value_range
-    for value_range in tu.selected_ranges()
-    if not ({value_range[0], value_range[1]} & _UNSAFE_FOR_REDUCTION)
-]
+# Extreme workloads retain their declared bounds. Their oracle uses the original
+# dtype because upcasting changes intermediate overflow and NaN propagation.
+_CONV_VALUE_RANGES = tu.selected_ranges()
 
 # Backward cases stay small (autograd graph + 2x forward/backward passes).
 _BACKWARD_CASES = SLOW_CONV2D_CASES[:3]
@@ -135,31 +86,14 @@ _INPUT_SCALE = 0.1
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. The default stays None
-    # until flag_gems._slow_conv2d_forward is registered; resolution order is:
-    # (1) override, (2) the direct flag_gems._slow_conv2d_forward callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
     )
 
 
-def _slow_conv2d_forward_out_adapter(
-    self, weight, kernel_size, bias, stride, padding, *, output
-):
-    # Fallback implementation of the ".output" overload used when no candidate
-    # override is installed: run the direct forward kernel and write the result
-    # into the caller's out buffer. KernelGen's override of
-    # "_slow_conv2d_forward.output" replaces this adapter and is called directly
-    # with ``output=...`` by the test below.
-    output.copy_(_resolve_gems_op()(self, weight, kernel_size, bias, stride, padding))
-    return output
-
-
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_slow_conv2d_forward.output", _slow_conv2d_forward_out_adapter
+    return tu.resolve_gems_op(
+        "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
     )
 
 
@@ -181,7 +115,7 @@ def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
     return inp, weight, bias
 
 
-def _assert_close(res_out, ref_out, dtype):
+def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     # The reference is computed with an fp64 upcast, so it is exact for the
     # rounded inputs. The torch native op (and any good candidate) accumulates
     # the im2col GEMM in the input dtype: fp16/bf16 tensor cores keep at most
@@ -198,7 +132,7 @@ def _assert_close(res_out, ref_out, dtype):
         atol = 1e-2
     else:
         atol = 1e-4
-    utils.gems_assert_close(res_out, ref_out, dtype, atol=atol)
+    utils.gems_assert_close(res_out, ref_out, dtype, atol=atol, equal_nan=equal_nan)
 
 
 def _reduction_dims(inp_shape, weight_shape, out_shape):
@@ -241,9 +175,9 @@ def test__slow_conv2d_forward(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     ref_out = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -264,22 +198,21 @@ def test__slow_conv2d_forward(
 def test__slow_conv2d_forward_value_ranges(
     inp_shape, weight_shape, kernel_size, stride, padding, value_range, dtype
 ):
-    # The spec value-range sweep (tu.selected_ranges() minus the overflowing
-    # extremes) for every supported dtype and every local conv shape. Bias is
-    # kept on so the value ranges also exercise the bias-add path. The
-    # comparison reuses the dtype-aware _assert_close tolerance because a conv
-    # contracts over C_in*kH*kW terms (tu.assert_result_close's flat
-    # rtol=1e-2/atol=1e-3 is calibrated for pointwise ops and is too tight for
-    # fp16/bf16 on the larger reductions).
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(
+        inp, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_weight = utils.to_reference(
+        weight, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_bias = utils.to_reference(
+        bias_t, not tu.is_extreme_range(value_range), independent=True
+    )
 
     ref_out = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -287,65 +220,66 @@ def test__slow_conv2d_forward_value_ranges(
 
     res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
-@pytest.mark._slow_conv2d_forward
-@pytest.mark.parametrize(
-    "inp_shape, weight_shape, kernel_size, stride, padding", _BACKWARD_CASES
-)
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("bias", BIASES)
-def test__slow_conv2d_forward_backward(
-    inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
-):
-    # aten::_slow_conv2d_forward is differentiable (the autograd engine routes
-    # its backward to _slow_conv2d_backward). The reference gradient is computed
-    # on the fp64 upcast graph with a random grad_output; the candidate forward
-    # must match, and - if the candidate kernel advertises autograd support -
-    # its own gradient must match the fp64 reference too.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+if tu.LEVEL == "all":
 
-    inp, weight, bias_t = _make_conv_inputs(
-        inp_shape, weight_shape, bias, dtype, ["-1", "1"]
+    @pytest.mark._slow_conv2d_forward
+    @pytest.mark.parametrize(
+        "inp_shape, weight_shape, kernel_size, stride, padding", _BACKWARD_CASES
     )
-    inp = (_INPUT_SCALE * inp).requires_grad_()
-    weight = (_INPUT_SCALE * weight).requires_grad_()
-    if bias_t is not None:
-        bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    @pytest.mark.parametrize("bias", BIASES)
+    def test__slow_conv2d_forward_backward(
+        inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
+    ):
+        # aten::_slow_conv2d_forward is differentiable (the autograd engine routes
+        # its backward to _slow_conv2d_backward). The reference gradient is computed
+        # on the fp64 upcast graph with a random grad_output; the candidate forward
+        # must match, and - if the candidate kernel advertises autograd support -
+        # its own gradient must match the fp64 reference too.
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    out_shape = _conv_output_shape(
-        inp_shape, weight_shape, kernel_size, stride, padding
-    )
-    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
-
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
-    ref_grad_out = utils.to_reference(grad_out, True)
-    ref_out = torch.ops.aten._slow_conv2d_forward(
-        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
-    )
-    if ref_bias is None:
-        ref_gi, ref_gw = torch.autograd.grad(
-            ref_out, (ref_inp, ref_weight), ref_grad_out
+        inp, weight, bias_t = _make_conv_inputs(
+            inp_shape, weight_shape, bias, dtype, ["-1", "1"]
         )
-        ref_gb = None
-    else:
-        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-            ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
+        inp = (_INPUT_SCALE * inp).requires_grad_()
+        weight = (_INPUT_SCALE * weight).requires_grad_()
+        if bias_t is not None:
+            bias_t = (_INPUT_SCALE * bias_t).requires_grad_()
+
+        out_shape = _conv_output_shape(
+            inp_shape, weight_shape, kernel_size, stride, padding
         )
+        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias_t, True, independent=True)
+        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_out = torch.ops.aten._slow_conv2d_forward(
+            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
+        )
+        if ref_bias is None:
+            ref_gi, ref_gw = torch.autograd.grad(
+                ref_out, (ref_inp, ref_weight), ref_grad_out
+            )
+            ref_gb = None
+        else:
+            ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+                ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
+            )
 
-    tu.assert_result_close(res_out, ref_out.to(dtype))
+        res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
 
-    in_reduce_dim, out_reduce_dim = _reduction_dims(inp_shape, weight_shape, out_shape)
-    # The candidate forward is only autograd-aware if its wrapper wires the
-    # backward; skip the gradient comparison otherwise (the reference path is
-    # still fully validated above).
-    if res_out.requires_grad:
+        tu.assert_result_close(res_out, ref_out.to(dtype))
+
+        in_reduce_dim, out_reduce_dim = _reduction_dims(
+            inp_shape, weight_shape, out_shape
+        )
+        assert res_out.requires_grad
         if bias_t is None:
             res_gi, res_gw = torch.autograd.grad(res_out, (inp, weight), grad_out)
             res_gb = None
@@ -362,40 +296,42 @@ def test__slow_conv2d_forward_backward(
         )
 
 
-@pytest.mark._slow_conv2d_forward
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test__slow_conv2d_forward_nan_inf(dtype):
-    # nan/inf must propagate through the im2col GEMM. A single nan in the input
-    # makes every overlapping output nan, and a single +inf with a strictly
-    # positive weight makes every overlapping output +inf (no inf + (-inf)
-    # cancellation, so the propagation is deterministic for any accumulation
-    # order). assert_result_close uses equal_nan=True.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+if tu.LEVEL == "all":
 
-    inp_shape, weight_shape, kernel_size, stride, padding = SLOW_CONV2D_CASES[0]
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    inp[0, 0, 1, 1] = float("nan")
-    inp[0, 1, 3, 3] = float("inf")
-    # Strictly positive finite weights: inf * positive = inf (never nan), and
-    # no term is zero so nan/inf never get swallowed by a 0 * inf product.
-    weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
-    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
+    @pytest.mark._slow_conv2d_forward
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    def test__slow_conv2d_forward_nan_inf(dtype):
+        # nan/inf must propagate through the im2col GEMM. A single nan in the input
+        # makes every overlapping output nan, and a single +inf with a strictly
+        # positive weight makes every overlapping output +inf (no inf + (-inf)
+        # cancellation, so the propagation is deterministic for any accumulation
+        # order). assert_result_close uses equal_nan=True.
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias, True)
-    ref_out = torch.ops.aten._slow_conv2d_forward(
-        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
-    ).to(dtype)
+        inp_shape, weight_shape, kernel_size, stride, padding = SLOW_CONV2D_CASES[0]
+        inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+        inp[0, 0, 1, 1] = float("nan")
+        inp[0, 1, 3, 3] = float("inf")
+        # Strictly positive finite weights: inf * positive = inf (never nan), and
+        # no term is zero so nan/inf never get swallowed by a 0 * inf product.
+        weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
+        bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_out = torch.ops.aten._slow_conv2d_forward(
+            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
+        ).to(dtype)
 
-    tu.assert_result_close(res_out, ref_out)
-    # The special values must actually appear in the output (sanity check that
-    # the workload really exercises the nan/inf path).
-    assert torch.isnan(ref_out).any()
-    assert torch.isinf(ref_out).any()
+        res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
+
+        tu.assert_result_close(res_out, ref_out)
+        # The special values must actually appear in the output (sanity check that
+        # the workload really exercises the nan/inf path).
+        assert torch.isnan(ref_out).any()
+        assert torch.isinf(ref_out).any()
 
 
 @pytest.mark._slow_conv2d_forward
@@ -417,9 +353,9 @@ def test__slow_conv2d_forward_out(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     out_shape = _conv_output_shape(
         inp_shape, weight_shape, kernel_size, stride, padding
@@ -447,8 +383,8 @@ def test__slow_conv2d_forward_rejects_kernel_size_mismatch():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp),
-            utils.to_reference(weight),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
             (2, 2),
             None,
             (1, 1),
@@ -466,8 +402,8 @@ def test__slow_conv2d_forward_rejects_kernel_larger_than_input():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp),
-            utils.to_reference(weight),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
             (3, 3),
             None,
             (1, 1),
@@ -484,8 +420,8 @@ def test__slow_conv2d_forward_rejects_channel_mismatch():
     weight = tu.make_input(torch.float32, (1, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp),
-            utils.to_reference(weight),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
             (3, 3),
             None,
             (1, 1),
@@ -502,8 +438,8 @@ def test__slow_conv2d_forward_rejects_non_4d_input():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp),
-            utils.to_reference(weight),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
             (3, 3),
             None,
             (1, 1),
@@ -522,8 +458,8 @@ def test__slow_conv2d_forward_rejects_unsupported_dtype(dtype):
     weight = tu.make_input(dtype, (1, 2, 3, 3), ["0", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp),
-            utils.to_reference(weight),
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
             (3, 3),
             None,
             (1, 1),
@@ -548,7 +484,9 @@ def test__slow_conv2d_forward_rejects_scalar_params(scalar_param):
         bad_kwargs = {"kernel_size": (3, 3), "stride": (1, 1), "padding": 1}
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
+            **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, weight, **bad_kwargs)
@@ -571,7 +509,9 @@ def test__slow_conv2d_forward_rejects_wrong_length_params(bad_kwargs):
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
+            **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, weight, **bad_kwargs)
@@ -593,7 +533,9 @@ def test__slow_conv2d_forward_rejects_invalid_params(bad_kwargs):
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp), utils.to_reference(weight), **bad_kwargs
+            utils.to_reference(inp, independent=True),
+            utils.to_reference(weight, independent=True),
+            **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, weight, **bad_kwargs)

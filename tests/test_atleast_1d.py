@@ -63,15 +63,7 @@ _ATLEAST_1D_BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 
 def _resolve_gems_op():
-    # Resolution order: (1) the process-local override injected by KernelGen,
-    # (2) the direct flag_gems.atleast_1d callable. Resolution is unconditional:
-    # when neither exists resolve_gems_op raises LookupError, so the test fails
-    # loudly rather than silently measuring the PyTorch reference. Both the
-    # .default and .Sequence overloads are resolved through the shared public
-    # operator name "atleast_1d".
-    return flag_gems.testing.resolve_gems_op(
-        "atleast_1d", getattr(flag_gems, "atleast_1d", None)
-    )
+    return tu.resolve_gems_op("atleast_1d", getattr(flag_gems, "atleast_1d", None))
 
 
 def _apply_atleast_1d(inp):
@@ -83,36 +75,11 @@ def _apply_atleast_1d(inp):
 
 
 def _make_input(dtype, shape, value_range):
-    if dtype == torch.uint8:
-        # The shared framework resolves the negative range bound to -1, which
-        # uint8 cannot represent: torch.testing.make_tensor then receives an
-        # empty (clamped) interval and raises. Snap the bounds to the
-        # representable interval; a degenerate range becomes a constant fill.
-        low = max(0, int(tu.resolve_bound(value_range[0], dtype)))
-        high = max(0, int(tu.resolve_bound(value_range[1], dtype)))
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-        )
     return tu.make_input(dtype, shape, value_range)
 
 
 def _assert_result_equal(res_out, ref_out):
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    if res_out.dtype in _FP8_DTYPES:
-        # torch.testing.assert_close cannot compare float8 tensors in this
-        # torch build; upcast and compare the (exactly representable) values.
-        torch.testing.assert_close(
-            res_out.detach().cpu().to(torch.float32),
-            ref_out.detach().cpu().to(torch.float32),
-            rtol=0,
-            atol=0,
-            equal_nan=True,
-        )
-    else:
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.atleast_1d
@@ -121,7 +88,7 @@ def _assert_result_equal(res_out, ref_out):
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_atleast_1d_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.atleast_1d(ref_inp)
     res_out = _apply_atleast_1d(inp)
@@ -131,23 +98,35 @@ def test_atleast_1d_value_ranges(shape, value_range, dtype):
     _assert_result_equal(res_out, ref_out)
 
 
-@pytest.mark.atleast_1d
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_atleast_1d_nan_inf(dtype):
-    # atleast_1d is a view: nan/inf/-inf/+-0.0 must pass through bit-for-bit.
-    inp = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.atleast_1d(ref_inp)
-    res_out = _apply_atleast_1d(inp)
+    @pytest.mark.atleast_1d
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_atleast_1d_nan_inf(dtype):
+        # atleast_1d is a view: nan/inf/-inf/+-0.0 must pass through bit-for-bit.
+        inp = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    assert res_out.data_ptr() == inp.data_ptr()
-    # equal_nan=True is active on both comparison paths.
-    _assert_result_equal(res_out, ref_out)
+        ref_out = torch.ops.aten.atleast_1d(ref_inp)
+        res_out = _apply_atleast_1d(inp)
+
+        assert res_out.data_ptr() == inp.data_ptr()
+        # equal_nan=True is active on both comparison paths.
+        _assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.atleast_1d_sequence
@@ -162,7 +141,7 @@ def test_atleast_1d_sequence(shape, value_range, dtype):
         _make_input(dtype, shape, value_range),
         _make_input(dtype, shape, value_range),
     ]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.atleast_1d.Sequence(ref_inp)
     res_out = _apply_atleast_1d(inp)
@@ -184,26 +163,28 @@ def test_atleast_1d_sequence_empty():
     assert len(res_out) == 0
 
 
-@pytest.mark.atleast_1d_backward
-@pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_atleast_1d_backward(shape, dtype):
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
-    # x's shape on both the shape-changing (0-dim) and identity paths.
-    ref_out = torch.ops.aten.atleast_1d(ref_inp)
-    ref_in_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-    tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
+    @pytest.mark.atleast_1d_backward
+    @pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_atleast_1d_backward(shape, dtype):
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    # The candidate forward must match the reference...
-    res_out = _apply_atleast_1d(inp)
-    _assert_result_equal(res_out, ref_out)
+        # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
+        # x's shape on both the shape-changing (0-dim) and identity paths.
+        ref_out = torch.ops.aten.atleast_1d(ref_inp)
+        ref_in_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
+        tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
 
-    # ...and, if the candidate view is autograd-aware (a compiled kernel that
-    # returns a plain tensor is not), its gradient must match too.
-    if res_out.requires_grad:
+        # The candidate forward must match the reference...
+        res_out = _apply_atleast_1d(inp)
+        _assert_result_equal(res_out, ref_out)
+
+        # ...and, if the candidate view is autograd-aware (a compiled kernel that
+        # returns a plain tensor is not), its gradient must match too.
+        assert res_out.requires_grad
         res_in_grad = torch.autograd.grad(res_out.sum(), inp)[0]
         tu.assert_result_close(res_in_grad, torch.ones_like(inp))
 
@@ -223,3 +204,20 @@ def test_atleast_1d_rejects_non_tensor():
         gems_op(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.atleast_1d
+    @pytest.mark.parametrize(
+        "dtype, scenario", tu.special_value_cases(_SUPPORTED_DTYPES)
+    )
+    def test_atleast_1d_special_scenarios(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        reference = utils.to_reference(inp, independent=True)
+        candidate = tu.resolve_gems_op(
+            "atleast_1d", getattr(flag_gems, "atleast_1d", None)
+        )
+        expected = torch.ops.aten.atleast_1d(reference)
+        actual = candidate(inp)
+        tu.assert_result_equal(actual, expected)

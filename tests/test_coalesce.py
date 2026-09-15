@@ -226,11 +226,7 @@ def _make_nan_inf_values(nnz, dtype):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins.
-    return flag_gems.testing.resolve_gems_op(
-        "coalesce", getattr(flag_gems, "coalesce", None)
-    )
+    return tu.resolve_gems_op("coalesce", getattr(flag_gems, "coalesce", None))
 
 
 def _assert_coalesced(res_out, ref_out, dtype):
@@ -257,7 +253,7 @@ def test_coalesce(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -276,7 +272,7 @@ def test_coalesce_coalesced_input(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype).coalesce()
     assert inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -297,7 +293,7 @@ def test_coalesce_value_ranges(value_range, dtype, case):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range=value_range)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -308,37 +304,41 @@ def test_coalesce_value_ranges(value_range, dtype, case):
     assert not ref_inp.is_coalesced()
 
 
-@pytest.mark.coalesce
-@pytest.mark.parametrize("case", _coalesce_cases())
-@pytest.mark.parametrize(
-    "dtype", [dtype for dtype in _COALESCE_DTYPES if dtype.is_floating_point]
-)
-def test_coalesce_nan_inf(case, dtype):
-    shape, nnz = case
-    inp = _make_input(shape, nnz, dtype)
-    # Rebuild with the same duplicate indices but values drawn from the
-    # nan/inf/-inf pattern (the result pattern is deterministic).
-    inp = torch.sparse_coo_tensor(
-        inp._indices().clone(),
-        _make_nan_inf_values(nnz, dtype),
-        shape,
-        device=flag_gems.device,
+if tu.LEVEL == "all":
+
+    @pytest.mark.coalesce
+    @pytest.mark.parametrize("case", _coalesce_cases())
+    @pytest.mark.parametrize(
+        "dtype", [dtype for dtype in _COALESCE_DTYPES if dtype.is_floating_point]
     )
-    assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone())
+    def test_coalesce_nan_inf(case, dtype):
+        shape, nnz = case
+        inp = _make_input(shape, nnz, dtype)
+        # Rebuild with the same duplicate indices but values drawn from the
+        # nan/inf/-inf pattern (the result pattern is deterministic).
+        inp = torch.sparse_coo_tensor(
+            inp._indices().clone(),
+            _make_nan_inf_values(nnz, dtype),
+            shape,
+            device=flag_gems.device,
+        )
+        assert not inp.is_coalesced()
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    ref_out = torch.ops.aten.coalesce(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+        ref_out = torch.ops.aten.coalesce(ref_inp)
+        res_out = _resolve_gems_op()(inp)
 
-    # .indices() on an uncoalesced tensor raises, so this also proves the
-    # structure is right.
-    assert res_out.is_coalesced()
-    assert ref_out.is_coalesced()
-    utils.gems_assert_equal(res_out.indices(), ref_out.indices())
-    utils.gems_assert_close(res_out.values(), ref_out.values(), dtype, equal_nan=True)
-    assert res_out is not inp
-    assert not inp.is_coalesced()
-    assert not ref_inp.is_coalesced()
+        # .indices() on an uncoalesced tensor raises, so this also proves the
+        # structure is right.
+        assert res_out.is_coalesced()
+        assert ref_out.is_coalesced()
+        utils.gems_assert_equal(res_out.indices(), ref_out.indices())
+        utils.gems_assert_close(
+            res_out.values(), ref_out.values(), dtype, equal_nan=True
+        )
+        assert res_out is not inp
+        assert not inp.is_coalesced()
+        assert not ref_inp.is_coalesced()
 
 
 @pytest.mark.coalesce

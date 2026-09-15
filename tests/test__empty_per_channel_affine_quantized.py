@@ -39,14 +39,7 @@ for _name in (
 
 
 def _resolve(name):
-    # Resolved inside each test (never at import time) so that a process-local
-    # override installed by KernelGen via ``override_gems_op`` for this run
-    # wins. Resolution order is: (1) the process-local override, (2) the direct
-    # flag_gems callable, (3) LookupError. The .out overload is resolved through
-    # the name the KernelGen verify driver registers
-    # (``_empty_per_channel_affine_quantized_out``); the driver also registers
-    # the schema form (``_empty_per_channel_affine_quantized.out``).
-    return flag_gems.testing.resolve_gems_op(name, getattr(flag_gems, name, None))
+    return tu.resolve_gems_op(name, getattr(flag_gems, name, None))
 
 
 # aten::_empty_per_channel_affine_quantized is a quantized-tensor factory: the
@@ -183,12 +176,12 @@ def _assert_per_channel_metadata(
     # (scales widened to float64, zero_points to int64).
     utils.gems_assert_equal(
         res_out.q_per_channel_scales(),
-        utils.to_reference(scales).to(torch.float64),
+        utils.to_reference(scales, independent=True).to(torch.float64),
         equal_nan=equal_nan,
     )
     utils.gems_assert_equal(
         res_out.q_per_channel_zero_points(),
-        utils.to_reference(zero_points).to(torch.int64),
+        utils.to_reference(zero_points, independent=True).to(torch.int64),
         equal_nan=equal_nan,
     )
 
@@ -206,8 +199,8 @@ def test__empty_per_channel_affine_quantized(
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=utils.to_reference(scales),
-        zero_points=utils.to_reference(zero_points),
+        scales=utils.to_reference(scales, independent=True),
+        zero_points=utils.to_reference(zero_points, independent=True),
         axis=axis,
         dtype=quantized_dtype,
         device=ref_device,
@@ -241,8 +234,8 @@ def test__empty_per_channel_affine_quantized_metadata_value_ranges(
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=utils.to_reference(scales),
-        zero_points=utils.to_reference(zero_points),
+        scales=utils.to_reference(scales, independent=True),
+        zero_points=utils.to_reference(zero_points, independent=True),
         axis=axis,
         dtype=quantized_dtype,
         device=ref_device,
@@ -279,10 +272,12 @@ def test__empty_per_channel_affine_quantized_out(
     ref_out_buf = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
         scales=utils.to_reference(
-            torch.tensor([9.0], dtype=torch.float64, device=flag_gems.device)
+            torch.tensor([9.0], dtype=torch.float64, device=flag_gems.device),
+            independent=True,
         ),
         zero_points=utils.to_reference(
-            torch.tensor([9], dtype=torch.int64, device=flag_gems.device)
+            torch.tensor([9], dtype=torch.int64, device=flag_gems.device),
+            independent=True,
         ),
         axis=0,
         dtype=quantized_dtype,
@@ -290,8 +285,8 @@ def test__empty_per_channel_affine_quantized_out(
     )
     ref_ret = torch.ops.aten._empty_per_channel_affine_quantized.out(
         shape,
-        scales=utils.to_reference(scales),
-        zero_points=utils.to_reference(zero_points),
+        scales=utils.to_reference(scales, independent=True),
+        zero_points=utils.to_reference(zero_points, independent=True),
         axis=axis,
         out=ref_out_buf,
     )
@@ -305,7 +300,7 @@ def test__empty_per_channel_affine_quantized_out(
         dtype=quantized_dtype,
         device=flag_gems.device,
     )
-    gems_op = _resolve("_empty_per_channel_affine_quantized_out")
+    gems_op = _resolve("_empty_per_channel_affine_quantized")
     res_ret = gems_op(
         shape, scales=scales, zero_points=zero_points, axis=axis, out=act_out_buf
     )
@@ -314,41 +309,45 @@ def test__empty_per_channel_affine_quantized_out(
     _assert_per_channel_metadata(act_out_buf, ref_out_buf, axis, scales, zero_points)
 
 
-@pytest.mark._empty_per_channel_affine_quantized
-def test__empty_per_channel_affine_quantized_nan_inf_scales():
-    # The factory copies scale values verbatim, so nan/inf/-inf metadata must
-    # survive both the reference and the candidate unchanged. ``equal_nan`` is
-    # required because the exact-equality helpers compare nan != nan by default.
-    shape = (3, 4)
-    scales = torch.tensor(
-        [float("nan"), float("inf"), -float("inf")],
-        dtype=torch.float64,
-        device=flag_gems.device,
-    )
-    zero_points = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
-    ref_device = "cpu" if utils.TO_CPU else flag_gems.device
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
-        shape,
-        scales=utils.to_reference(scales),
-        zero_points=utils.to_reference(zero_points),
-        axis=0,
-        dtype=torch.quint8,
-        device=ref_device,
-    )
+    @pytest.mark._empty_per_channel_affine_quantized
+    def test__empty_per_channel_affine_quantized_nan_inf_scales():
+        # The factory copies scale values verbatim, so nan/inf/-inf metadata must
+        # survive both the reference and the candidate unchanged. ``equal_nan`` is
+        # required because the exact-equality helpers compare nan != nan by default.
+        shape = (3, 4)
+        scales = torch.tensor(
+            [float("nan"), float("inf"), -float("inf")],
+            dtype=torch.float64,
+            device=flag_gems.device,
+        )
+        zero_points = torch.tensor(
+            [0, 1, 2], dtype=torch.int64, device=flag_gems.device
+        )
+        ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
-    res_out = _resolve("_empty_per_channel_affine_quantized")(
-        shape,
-        scales=scales,
-        zero_points=zero_points,
-        axis=0,
-        dtype=torch.quint8,
-        device=flag_gems.device,
-    )
+        ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
+            shape,
+            scales=utils.to_reference(scales, independent=True),
+            zero_points=utils.to_reference(zero_points, independent=True),
+            axis=0,
+            dtype=torch.quint8,
+            device=ref_device,
+        )
 
-    _assert_per_channel_metadata(
-        res_out, ref_out, 0, scales, zero_points, equal_nan=True
-    )
+        res_out = _resolve("_empty_per_channel_affine_quantized")(
+            shape,
+            scales=scales,
+            zero_points=zero_points,
+            axis=0,
+            dtype=torch.quint8,
+            device=flag_gems.device,
+        )
+
+        _assert_per_channel_metadata(
+            res_out, ref_out, 0, scales, zero_points, equal_nan=True
+        )
 
 
 @pytest.mark._empty_per_channel_affine_quantized
@@ -365,8 +364,8 @@ def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=utils.to_reference(scales),
-        zero_points=utils.to_reference(zero_points),
+        scales=utils.to_reference(scales, independent=True),
+        zero_points=utils.to_reference(zero_points, independent=True),
         axis=0,
         dtype=torch.quint8,
         device=ref_device,
@@ -410,8 +409,8 @@ def test__empty_per_channel_affine_quantized_negative_invalid_dtype(invalid_dtyp
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten._empty_per_channel_affine_quantized(
             shape,
-            scales=utils.to_reference(scales),
-            zero_points=utils.to_reference(zero_points),
+            scales=utils.to_reference(scales, independent=True),
+            zero_points=utils.to_reference(zero_points, independent=True),
             axis=1,
             dtype=invalid_dtype,
             device=ref_device,
@@ -439,8 +438,8 @@ def test__empty_per_channel_affine_quantized_negative_non_float_scales(scale_dty
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten._empty_per_channel_affine_quantized(
             shape,
-            scales=utils.to_reference(scales),
-            zero_points=utils.to_reference(zero_points),
+            scales=utils.to_reference(scales, independent=True),
+            zero_points=utils.to_reference(zero_points, independent=True),
             axis=1,
             dtype=torch.quint8,
             device=ref_device,
@@ -475,8 +474,8 @@ def test__empty_per_channel_affine_quantized_negative_metadata_length_mismatch(
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten._empty_per_channel_affine_quantized(
             shape,
-            scales=utils.to_reference(scales),
-            zero_points=utils.to_reference(zero_points),
+            scales=utils.to_reference(scales, independent=True),
+            zero_points=utils.to_reference(zero_points, independent=True),
             axis=1,
             dtype=torch.quint8,
             device=ref_device,

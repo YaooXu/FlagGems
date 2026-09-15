@@ -47,9 +47,7 @@ def _resolve_candidate():
     ``resolve_gems_op`` raises ``LookupError`` and the test fails loudly instead
     of silently measuring the PyTorch reference.
     """
-    return flag_gems.testing.resolve_gems_op(
-        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
-    )
+    return tu.resolve_gems_op("atleast_2d", getattr(flag_gems, "atleast_2d", None))
 
 
 def _run(inp):
@@ -126,7 +124,7 @@ def _assert_close(result, reference, dtype):
         reference = reference.detach().to(torch.float32).cpu()
         torch.testing.assert_close(result, reference, rtol=0, atol=0, equal_nan=True)
     else:
-        tu.assert_result_close(result, reference)
+        tu.assert_result_equal(result, reference)
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +156,7 @@ _SEQUENCE_CASES = [(d, r) for d, r in _VALUE_CASES if d in _SEQUENCE_DTYPES]
 @pytest.mark.parametrize("dtype,value_range", _VALUE_CASES, ids=_VALUE_CASE_IDS)
 def test_atleast_2d_value_ranges(shape, dtype, value_range):
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
     res_out = _run(inp)
@@ -190,7 +188,7 @@ def test_atleast_2d_shape_metadata(shape, expected):
     inp = torch.arange(
         max(1, torch.Size(shape).numel()), dtype=torch.float32, device=flag_gems.device
     ).reshape(shape)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
     res_out = _run(inp)
@@ -198,7 +196,7 @@ def test_atleast_2d_shape_metadata(shape, expected):
     assert tuple(ref_out.shape) == expected
     assert tuple(res_out.shape) == expected
     assert res_out.data_ptr() == inp.data_ptr()
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +223,7 @@ def test_atleast_2d_sequence(shape, dtype, value_range):
         tu.make_input(dtype, (3,), value_range),
         tu.make_input(dtype, shape, value_range),
     ]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.atleast_2d.Sequence(ref_inp)
     res_out = _run(inp)
@@ -266,21 +264,23 @@ _NAN_INF_VALUES = [
 ]
 
 
-@pytest.mark.atleast_2d_nan_inf
-@pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_atleast_2d_nan_inf(shape, dtype):
-    # A pure view must preserve inf / -inf / nan and signed zeros unchanged
-    # (tu.assert_result_close compares with equal_nan=True on the float path).
-    values = _NAN_INF_VALUES[: 1 if shape == () else len(_NAN_INF_VALUES)]
-    inp = torch.tensor(values, dtype=dtype, device=flag_gems.device).reshape(shape)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _run(inp)
+    @pytest.mark.atleast_2d_nan_inf
+    @pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_atleast_2d_nan_inf(shape, dtype):
+        # A pure view must preserve inf / -inf / nan and signed zeros unchanged
+        # (tu.assert_result_close compares with equal_nan=True on the float path).
+        values = _NAN_INF_VALUES[: 1 if shape == () else len(_NAN_INF_VALUES)]
+        inp = torch.tensor(values, dtype=dtype, device=flag_gems.device).reshape(shape)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    assert res_out.data_ptr() == inp.data_ptr()
-    tu.assert_result_close(res_out, ref_out)
+        ref_out = torch.ops.aten.atleast_2d(ref_inp)
+        res_out = _run(inp)
+
+        assert res_out.data_ptr() == inp.data_ptr()
+        tu.assert_result_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ def test_atleast_2d_nan_inf(shape, dtype):
 @pytest.mark.parametrize("dtype", _COMPLEX_DTYPES)
 def test_atleast_2d_complex(shape, dtype, value_range):
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
     res_out = _run(inp)
@@ -302,7 +302,7 @@ def test_atleast_2d_complex(shape, dtype, value_range):
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.data_ptr() == inp.data_ptr()
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------
@@ -312,25 +312,27 @@ def test_atleast_2d_complex(shape, dtype, value_range):
 _BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 
-@pytest.mark.atleast_2d_backward
-@pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_atleast_2d_backward(shape, dtype):
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    # atleast_2d is a view: d(sum(atleast_2d(x)))/dx is all ones in x's shape,
-    # both on the shape-promoting (0-dim/1-dim) and identity paths.
-    ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-    tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
+    @pytest.mark.atleast_2d_backward
+    @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_atleast_2d_backward(shape, dtype):
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    res_out = _run(inp)
-    tu.assert_result_close(res_out, ref_out)
+        # atleast_2d is a view: d(sum(atleast_2d(x)))/dx is all ones in x's shape,
+        # both on the shape-promoting (0-dim/1-dim) and identity paths.
+        ref_out = torch.ops.aten.atleast_2d(ref_inp)
+        ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
+        tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
 
-    # A candidate that returns a plain (non-autograd-aware) tensor cannot be
-    # differentiated; only check the gradient when the graph exists.
-    if res_out.requires_grad:
+        res_out = _run(inp)
+        tu.assert_result_close(res_out, ref_out)
+
+        # A candidate that returns a plain (non-autograd-aware) tensor cannot be
+        # differentiated; only check the gradient when the graph exists.
+        assert res_out.requires_grad
         res_grad = torch.autograd.grad(res_out.sum(), inp)[0]
         tu.assert_result_close(res_grad, torch.ones_like(inp))
 
@@ -356,3 +358,20 @@ def test_atleast_2d_rejects_non_tensor():
         candidate(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         candidate([torch.zeros(2, device=flag_gems.device), 3.14])
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.atleast_2d
+    @pytest.mark.parametrize(
+        "dtype, scenario", tu.special_value_cases(_SUPPORTED_DTYPES)
+    )
+    def test_atleast_2d_special_scenarios(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        reference = utils.to_reference(inp, independent=True)
+        candidate = tu.resolve_gems_op(
+            "atleast_2d", getattr(flag_gems, "atleast_2d", None)
+        )
+        expected = torch.ops.aten.atleast_2d(reference)
+        actual = candidate(inp)
+        tu.assert_result_equal(actual, expected)

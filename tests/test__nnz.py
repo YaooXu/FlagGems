@@ -74,7 +74,9 @@ def _sparse_dtype_probe(op_name, dtype):
         indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
         values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
         inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        return isinstance(torch.ops.aten._nnz(utils.to_reference(inp)), int)
+        return isinstance(
+            torch.ops.aten._nnz(utils.to_reference(inp, independent=True)), int
+        )
     except Exception:
         return False
 
@@ -195,11 +197,7 @@ def _make_csr_input(shape, nnz, dtype, value_range, seed=0):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems._nnz is registered; resolution order
-    # is: (1) override, (2) the direct flag_gems._nnz callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op("_nnz", getattr(flag_gems, "_nnz", None))
+    return tu.resolve_gems_op("_nnz", getattr(flag_gems, "_nnz", None))
 
 
 def _assert_result(res_out, ref_out, nnz):
@@ -220,7 +218,7 @@ def test__nnz_coo_layouts(case, dtype):
     # stored entries, independent of rank, sparsity pattern and value payload.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -240,7 +238,7 @@ def test__nnz_spec_shapes_value_ranges(shape, value_range, dtype):
     # value-range machinery end to end on every rank.
     nnz = _NNZ_SPEC_NNZ
     inp = _make_coo_input(shape, len(shape), nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -256,7 +254,7 @@ def test__nnz_empty(dtype):
     indices = torch.empty(sparse_dim, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -273,7 +271,7 @@ def test__nnz_empty_hybrid(dtype):
     indices = torch.empty(sparse_dim, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, 6, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -292,7 +290,7 @@ def test__nnz_uncoalesced(dtype):
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -315,7 +313,7 @@ def test__nnz_explicit_zeros(dtype):
     else:
         values = torch.tensor([0.0, 1.0, 0.0], dtype=dtype)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -336,7 +334,7 @@ def test__nnz_full_storage(dtype):
     indices = indices.reshape(2, nnz)
     values = tu.make_input(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -344,23 +342,25 @@ def test__nnz_full_storage(dtype):
     _assert_result(res_out, ref_out, nnz)
 
 
-@pytest.mark._nnz
-@pytest.mark.parametrize("dtype", _NNZ_FLOAT_DTYPES)
-def test__nnz_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: all six entries count.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._nnz
+    @pytest.mark.parametrize("dtype", _NNZ_FLOAT_DTYPES)
+    def test__nnz_nan_inf_values_ignored(dtype):
+        # nan/inf/-inf/±0.0 are ordinary stored values: all six entries count.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 6)
+        ref_out = torch.ops.aten._nnz(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 6)
 
 
 @pytest.mark._nnz
@@ -373,7 +373,7 @@ def test__nnz_csr(case, dtype):
     shape = case
     nnz = 5 if len(shape) == 2 else 3
     inp = _make_csr_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -389,7 +389,7 @@ def test__nnz_csr_value_ranges(value_range, dtype):
     # 2-D CSR tensor with a fixed 5-entry crow/col pattern.
     shape, nnz = (4, 4), 5
     inp = _make_csr_input(shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -406,7 +406,7 @@ def test__nnz_spec_shapes_csr(shape, dtype):
     # same per-batch count.
     nnz = 5 if len(shape) == 2 else 3
     inp = _make_csr_input(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -427,7 +427,7 @@ def test__nnz_csr_dense_dims(dtype):
     inp = torch.sparse_csr_tensor(
         crow, col, values, (rows, cols, dense), device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -442,7 +442,7 @@ def test__nnz_dense_raises():
     # silently report a bogus count.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._nnz(utils.to_reference(inp))
+        torch.ops.aten._nnz(utils.to_reference(inp, independent=True))
     with pytest.raises(
         (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
     ):

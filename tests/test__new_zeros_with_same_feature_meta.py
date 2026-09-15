@@ -150,29 +150,7 @@ _MAIN_RANGE = ["-1", "1"]
 
 
 def _make_input(dtype, shape, value_range):
-    """Value-range input builder on ``flag_gems.device``.
-
-    Delegates to the shared ``tu`` helpers for bound resolution and dtype
-    bounds, then clamps the resolved interval into the dtype's representable
-    range so unsigned dtypes (e.g. uint8's ``[-1, 0]``) cannot crash
-    ``torch.testing.make_tensor``; a degenerate interval becomes a constant
-    fill, exactly like ``tu.make_input``.
-    """
-    if dtype == torch.bool:
-        return tu.make_input(dtype, shape, value_range)
-
-    low = tu.resolve_bound(value_range[0], dtype)
-    high = tu.resolve_bound(value_range[1], dtype)
-    bound_low, bound_high = tu.dtype_bounds(dtype)
-    low = max(low, bound_low)
-    high = min(high, bound_high)
-    if not (dtype.is_floating_point or dtype.is_complex):
-        low, high = int(low), int(high)
-    if low >= high:
-        return torch.full(shape, low, device=flag_gems.device, dtype=dtype)
-    return torch.testing.make_tensor(
-        shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-    )
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _nan_inf_tensor(shape, dtype, device):
@@ -212,13 +190,7 @@ def _shape_level_cases():
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins. Order: (1) override,
-    # (2) the direct flag_gems callable, (3) LookupError. One callable per
-    # OPERATOR: the injector registers a single entrypoint under the public
-    # name and dispatches the ``out=`` form itself, so the test never probes
-    # overload-level names such as "..._out".
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_new_zeros_with_same_feature_meta",
         getattr(flag_gems, "_new_zeros_with_same_feature_meta", None),
     )
@@ -254,8 +226,8 @@ def test__new_zeros_with_same_feature_meta(
     # The [-1, 1] range covers negative and positive values in every dtype.
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -278,8 +250,8 @@ def test__new_zeros_with_same_feature_meta_out(
 ):
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     # Pre-sized out tensors with non-zero garbage values: the .out variant must
     # overwrite them in place with zeros and return the same object.
@@ -310,8 +282,8 @@ def test__new_zeros_with_same_feature_meta_shapes(
 ):
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -337,8 +309,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
     # shapes and options.
     self_t = _make_input(dtype, self_shape, value_range)
     other_t = _make_input(dtype, other_shape, value_range)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -357,8 +329,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
 def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dtype):
     self_t = _make_input(self_dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = _make_input(other_dtype, (7, 8), _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
@@ -376,8 +348,8 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     # fresh zero allocation, not an alias of the shared input.
     self_t = _make_input(dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = self_t
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
@@ -388,23 +360,25 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     _assert_zero_output(res_out, ref_out, self_t, other_t, 1)
 
 
-@pytest.mark._new_zeros_with_same_feature_meta
-@pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
-    # nan/inf/-inf are ordinary payloads that the allocation helper ignores;
-    # the output is still an exact zero fill.
-    self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
-        ref_self, ref_other, self_num_batch_dims=0
-    )
-    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
+    @pytest.mark._new_zeros_with_same_feature_meta
+    @pytest.mark.parametrize("shape", tu.selected_shapes())
+    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+    def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
+        # nan/inf/-inf are ordinary payloads that the allocation helper ignores;
+        # the output is still an exact zero fill.
+        self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
+        other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
+        ref_self = utils.to_reference(self_t, independent=True)
+        ref_other = utils.to_reference(other_t, independent=True)
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t, 0)
+        ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
+            ref_self, ref_other, self_num_batch_dims=0
+        )
+        res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
+
+        _assert_zero_output(res_out, ref_out, self_t, other_t, 0)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta

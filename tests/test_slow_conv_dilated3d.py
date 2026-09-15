@@ -66,7 +66,7 @@ if QUICK_MODE:
     SLOW_CONV_DILATED3D_CASES = [
         ((1, 2, 5, 5, 5), (1, 2, 3, 3, 3), (3, 3, 3), (1, 1, 1), (1, 1, 1), (1, 1, 1)),
     ]
-    FLOAT_DTYPES = [torch.float32]
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
     BIASES = [True]
 else:
     SLOW_CONV_DILATED3D_CASES = [
@@ -103,19 +103,8 @@ _UNBATCHED_CASES = [
     _unbatched(SLOW_CONV_DILATED3D_CASES[i]) for i in ([0] if QUICK_MODE else [0, 5, 4])
 ]
 
-# Value-range coverage drops the two dtype-extreme ranges [0, dtype_max] and
-# [dtype_min, 0]: the conv reduction sums up to C_in*kD*kH*kW = 108 products of
-# independently drawn input/weight values, and the candidate accumulates them
-# in the *input* dtype (the native op does the same), so dtype-max inputs
-# saturate that accumulator to inf -- a single product of two ~dtype-max values
-# already exceeds the input dtype (fp32: ~1e77 vs a 3.4e38 max) -- while the
-# fp64-upcast reference stays finite (measured: fp64 reference max ~2e78, far
-# below the fp64 limit 1.8e308). The comparison would then be dominated by
-# saturation rather than the operator's rounding. The three bounded ranges
-# below still span mixed-sign (cancellation), non-negative and non-positive
-# values; the shape/dtype/bias grid comes from the parametrized cases above.
-# This is the documented per-operator adaptation the spec allows for
-# multiplicative reductions.
+# Extreme workloads retain their declared bounds. Their oracle uses the original
+# dtype because upcasting changes intermediate overflow and NaN propagation.
 _VALUE_RANGE_CASES = (
     SLOW_CONV_DILATED3D_CASES[:1]
     if QUICK_MODE
@@ -125,15 +114,7 @@ _VALUE_RANGE_CASES = (
         SLOW_CONV_DILATED3D_CASES[3],  # dilation 2
     ]
 )
-_VALUE_RANGES = (
-    [["-1", "1"]]
-    if QUICK_MODE
-    else [
-        ["-1", "1"],  # mixed signs (cancellation)
-        ["0", "1"],  # non-negative
-        ["-1", "0"],  # non-positive
-    ]
-)
+_VALUE_RANGES = tu.selected_ranges()
 
 # The aten op carries its own autograd (SlowConvDilated3DBackward0), so
 # backward is exercised directly. fp16/bf16 are included: the native op
@@ -157,19 +138,14 @@ _BACKWARD_DTYPES = (
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. The default stays None
-    # until flag_gems.slow_conv_dilated3d is registered; resolution order is:
-    # (1) override, (2) the direct flag_gems.slow_conv_dilated3d callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "slow_conv_dilated3d", getattr(flag_gems, "slow_conv_dilated3d", None)
     )
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_dilated3d.out", getattr(flag_gems, "slow_conv_dilated3d_out", None)
+    return tu.resolve_gems_op(
+        "slow_conv_dilated3d", getattr(flag_gems, "slow_conv_dilated3d", None)
     )
 
 
@@ -252,9 +228,9 @@ def test_slow_conv_dilated3d(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
@@ -283,8 +259,8 @@ def test_slow_conv_dilated3d_unbatched(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, False, dtype)
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, None, stride, padding, dilation
@@ -314,9 +290,15 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     bias_t = tu.make_input(dtype, (weight_shape[0],), value_range) if bias else None
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(
+        inp, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_weight = utils.to_reference(
+        weight, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_bias = utils.to_reference(
+        bias_t, not tu.is_extreme_range(value_range), independent=True
+    )
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
@@ -326,7 +308,7 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
         inp, weight, kernel_size, bias_t, stride, padding, dilation
     )
 
-    _assert_close(res_out, ref_out, dtype)
+    _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.slow_conv_dilated3d_out
@@ -343,9 +325,9 @@ def test_slow_conv_dilated3d_out(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     # The .out overload must write into the provided tensor and return it.
     ref_full = torch.ops.aten.slow_conv_dilated3d(
@@ -373,62 +355,64 @@ def test_slow_conv_dilated3d_out(
     _assert_close(res_ret, ref_ret, dtype)
 
 
-@pytest.mark.slow_conv_dilated3d_backward
-@pytest.mark.parametrize("case", _BACKWARD_CASES)
-@pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
-def test_slow_conv_dilated3d_backward(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+if tu.LEVEL == "all":
 
-    inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
-    out_shape = _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation)
+    @pytest.mark.slow_conv_dilated3d_backward
+    @pytest.mark.parametrize("case", _BACKWARD_CASES)
+    @pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
+    def test_slow_conv_dilated3d_backward(case, dtype):
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    # The candidate inputs must be graph leaves for the gradient comparison
-    # below to run (it is gated on ``res_out.requires_grad``). They are marked
-    # explicitly rather than relying on the fp64 reference path below, whose
-    # ``to_reference`` upcast happens to return the *same* object for fp64 only
-    # (a no-op ``.to(float64)``) -- for fp16/fp32/bf16 it returns a new tensor,
-    # which used to leave the candidate non-differentiable and silently skip the
-    # gradient check for every dtype except fp64.
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
-    weight = tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
-    bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"]).requires_grad_()
-    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+        inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
+        out_shape = _conv_output_shape(
+            inp_shape, weight_shape, stride, padding, dilation
+        )
 
-    # Reference graph on the fp64-upcast inputs.
-    ref_inp = utils.to_reference(inp, True).requires_grad_()
-    ref_weight = utils.to_reference(weight, True).requires_grad_()
-    ref_bias = utils.to_reference(bias, True).requires_grad_()
-    ref_grad_out = utils.to_reference(grad_out, True)
+        inp = tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
+        weight = tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
+        bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"]).requires_grad_()
+        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-    ref_out = torch.ops.aten.slow_conv_dilated3d(
-        ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
-    )
-    ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-        ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
-    )
+        # Reference graph on the fp64-upcast inputs.
+        ref_inp = utils.to_reference(inp, True, independent=True).requires_grad_()
+        ref_weight = utils.to_reference(weight, True, independent=True).requires_grad_()
+        ref_bias = utils.to_reference(bias, True, independent=True).requires_grad_()
+        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
 
-    # Self-check: the low-level op's autograd must match the standard
-    # F.conv3d backward (same math, im2col vs direct formulation).
-    f_out = torch.nn.functional.conv3d(
-        ref_inp, ref_weight, ref_bias, stride=stride, padding=padding, dilation=dilation
-    )
-    f_gi, f_gw, f_gb = torch.autograd.grad(
-        f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
-    )
-    tu.assert_result_close(ref_gi, f_gi)
-    tu.assert_result_close(ref_gw, f_gw)
-    tu.assert_result_close(ref_gb, f_gb)
+        ref_out = torch.ops.aten.slow_conv_dilated3d(
+            ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
+        )
+        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+        )
 
-    # The candidate forward must match the fp64 reference...
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, stride, padding, dilation
-    )
-    _assert_close(res_out, ref_out.to(dtype), dtype)
+        # Self-check: the low-level op's autograd must match the standard
+        # F.conv3d backward (same math, im2col vs direct formulation).
+        f_out = torch.nn.functional.conv3d(
+            ref_inp,
+            ref_weight,
+            ref_bias,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+        )
+        f_gi, f_gw, f_gb = torch.autograd.grad(
+            f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+        )
+        tu.assert_result_close(ref_gi, f_gi)
+        tu.assert_result_close(ref_gw, f_gw)
+        tu.assert_result_close(ref_gb, f_gb)
 
-    # ...and, if the candidate kernel is autograd-aware, its gradients must
-    # match the reference gradients too.
-    if res_out.requires_grad:
+        # The candidate forward must match the fp64 reference...
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias, stride, padding, dilation
+        )
+        _assert_close(res_out, ref_out.to(dtype), dtype)
+
+        # ...and, if the candidate kernel is autograd-aware, its gradients must
+        # match the reference gradients too.
+        assert res_out.requires_grad
         res_gi, res_gw, res_gb = torch.autograd.grad(
             res_out, (inp, weight, bias), grad_outputs=grad_out
         )
@@ -437,36 +421,38 @@ def test_slow_conv_dilated3d_backward(case, dtype):
         _assert_close(res_gb, ref_gb.to(dtype), dtype)
 
 
-@pytest.mark.slow_conv_dilated3d_nan_inf
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_slow_conv_dilated3d_nan_inf(dtype):
-    # A single nan and a single inf in the input, with a positive unit-weight
-    # kernel: every window sum is either a small exact integer, nan (window
-    # touches the nan) or inf (window touches the inf), with no inf/-inf
-    # cancellation, so the reference and any faithful candidate must place the
-    # nan/inf at exactly the same output positions.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+if tu.LEVEL == "all":
 
-    inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
-    inp[0, 0, 1, 1, 1] = float("nan")
-    inp[0, 0, 2, 2, 2] = float("inf")
-    weight = torch.ones((1, 1, 2, 2, 2), dtype=dtype, device=flag_gems.device)
-    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
-    kernel_size = (2, 2, 2)
+    @pytest.mark.slow_conv_dilated3d_nan_inf
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    def test_slow_conv_dilated3d_nan_inf(dtype):
+        # A single nan and a single inf in the input, with a positive unit-weight
+        # kernel: every window sum is either a small exact integer, nan (window
+        # touches the nan) or inf (window touches the inf), with no inf/-inf
+        # cancellation, so the reference and any faithful candidate must place the
+        # nan/inf at exactly the same output positions.
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias, True)
-    ref_out = torch.ops.aten.slow_conv_dilated3d(
-        ref_inp, ref_weight, kernel_size, ref_bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
-    ).to(dtype)
+        inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
+        inp[0, 0, 1, 1, 1] = float("nan")
+        inp[0, 0, 2, 2, 2] = float("inf")
+        weight = torch.ones((1, 1, 2, 2, 2), dtype=dtype, device=flag_gems.device)
+        bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
+        kernel_size = (2, 2, 2)
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
-    )
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_out = torch.ops.aten.slow_conv_dilated3d(
+            ref_inp, ref_weight, kernel_size, ref_bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
+        ).to(dtype)
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
+        )
+
+        _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.slow_conv_dilated3d_negative

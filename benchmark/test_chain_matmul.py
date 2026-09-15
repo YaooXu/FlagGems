@@ -146,13 +146,11 @@ def test_chain_matmul():
 @pytest.mark.chain_matmul_benchmark
 def test_chain_matmul_out():
     bench = ChainMatmulOutBenchmark(
-        op_name="chain_matmul.out",
+        op_name="chain_matmul",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten.chain_matmul.out,
-        # Same override contract as the default overload, registered under the
-        # canonical "chain_matmul.out" name (alias: "chain_matmul_out").
-        gems_op=getattr(flag_gems, "chain_matmul_out", None),
+        gems_op=getattr(flag_gems, "chain_matmul", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

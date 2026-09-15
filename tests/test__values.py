@@ -175,14 +175,7 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems._values is registered; resolution
-    # order is: (1) override, (2) the direct flag_gems._values callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "_values", getattr(flag_gems, "_values", None)
-    )
+    return tu.resolve_gems_op("_values", getattr(flag_gems, "_values", None))
 
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
@@ -220,7 +213,7 @@ def test__values_layouts(case, dtype):
     # set). The returned view must preserve them verbatim for every layout.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -238,7 +231,7 @@ def test__values_value_ranges(case, value_range, dtype):
     # still aliased to the input's values storage.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -257,7 +250,7 @@ def test__values_empty(dtype):
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == 0
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -275,7 +268,7 @@ def test__values_empty_hybrid(dtype):
     values = torch.empty(0, 6, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == 0
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -297,7 +290,7 @@ def test__values_full_storage(dtype):
     values = tu.make_input(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == nnz
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -318,7 +311,7 @@ def test__values_uncoalesced(dtype):
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten._values(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -326,25 +319,27 @@ def test__values_uncoalesced(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-@pytest.mark._values
-@pytest.mark.parametrize("dtype", _VALUES_FLOAT_DTYPES)
-def test__values_nan_inf(dtype):
-    # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
-    # verbatim (equal_nan=True), never sanitized. fp8-e4m3fn has no infinity
-    # encoding, so inf/-inf collapse to nan there (still returned verbatim).
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._values
+    @pytest.mark.parametrize("dtype", _VALUES_FLOAT_DTYPES)
+    def test__values_nan_inf(dtype):
+        # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
+        # verbatim (equal_nan=True), never sanitized. fp8-e4m3fn has no infinity
+        # encoding, so inf/-inf collapse to nan there (still returned verbatim).
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_result(res_out, ref_out, inp, ref_inp)
+        ref_out = torch.ops.aten._values(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +354,7 @@ def test__values_dense_raises():
     # silently returning a bogus tensor.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._values(utils.to_reference(inp))
+        torch.ops.aten._values(utils.to_reference(inp, independent=True))
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -376,7 +371,7 @@ def test__values_csr_raises():
         crow_indices, col_indices, values, (2, 3), device=flag_gems.device
     )
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._values(utils.to_reference(inp))
+        torch.ops.aten._values(utils.to_reference(inp, independent=True))
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 

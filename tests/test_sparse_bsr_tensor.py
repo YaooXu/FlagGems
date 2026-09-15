@@ -302,12 +302,7 @@ def _assert_sparse(res, ref, dtype, equal_nan=False):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.sparse_bsr_tensor is registered;
-    # resolution order is: (1) override, (2) the direct flag_gems callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "sparse_bsr_tensor", getattr(flag_gems, "sparse_bsr_tensor", None)
     )
 
@@ -327,9 +322,9 @@ def test_sparse_bsr_tensor_crow_col_value_size(case, dtype, value_range):
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, dtype, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_out = torch.ops.aten.sparse_bsr_tensor(
         ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
@@ -359,9 +354,9 @@ def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range)
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, dtype, batch=batch, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_out = torch.ops.aten.sparse_bsr_tensor(
         ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
@@ -386,9 +381,9 @@ def test_sparse_bsr_tensor_crow_col_value_size_empty(case, dtype):
     crow_t = torch.zeros(n_row_blocks + 1, dtype=torch.long, device=flag_gems.device)
     col_t = torch.empty(0, dtype=torch.long, device=flag_gems.device)
     values = _make_bsr_values(0, block, dtype, batch=batch)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_out = torch.ops.aten.sparse_bsr_tensor(
         ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
@@ -416,9 +411,9 @@ def test_sparse_bsr_tensor_crow_col_value(case, dtype, value_range):
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, dtype, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_out = torch.ops.aten.sparse_bsr_tensor(
         ref_crow, ref_col, ref_values, dtype=dtype, device=ref_crow.device
@@ -447,9 +442,9 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, dtype, batch=batch, value_range=value_range)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_out = torch.ops.aten.sparse_bsr_tensor(
         ref_crow, ref_col, ref_values, list(size), dtype=dtype, device=ref_crow.device
@@ -464,44 +459,46 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
 
-@pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
-def test_sparse_bsr_tensor_nan_inf_values(dtype):
-    # The nan/inf dimension: non-finite block values are stored verbatim (no
-    # arithmetic touches them). Compare with equal_nan=True so nan positions
-    # match and the inf signs agree exactly.
-    size, block, crow, col = _BSR_2D_CASES[0]
-    nnz = len(col)
-    values = _make_bsr_values(nnz, block, dtype)
-    flat = values.reshape(-1)
-    flat[0] = float("nan")
-    flat[1] = float("inf")
-    flat[2] = float("-inf")
-    flat[-1] = float("nan")
-    values = flat.reshape(values.shape)
-    ref_values = utils.to_reference(values)
+if tu.LEVEL == "all":
 
-    ref_crow = torch.tensor([0, 2, 4], dtype=torch.long, device=ref_values.device)
-    ref_col = torch.tensor([0, 1, 0, 1], dtype=torch.long, device=ref_values.device)
-    ref_out = torch.ops.aten.sparse_bsr_tensor(
-        ref_crow,
-        ref_col,
-        ref_values,
-        list(size),
-        dtype=dtype,
-        device=ref_values.device,
-    )
-    res_out = _resolve_gems_op()(
-        _make_index_tensor([0, 2, 4]),
-        _make_index_tensor([0, 1, 0, 1]),
-        values,
-        list(size),
-        dtype=dtype,
-        device=values.device,
-    )
+    @pytest.mark.sparse_bsr_tensor
+    @pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)
+    def test_sparse_bsr_tensor_nan_inf_values(dtype):
+        # The nan/inf dimension: non-finite block values are stored verbatim (no
+        # arithmetic touches them). Compare with equal_nan=True so nan positions
+        # match and the inf signs agree exactly.
+        size, block, crow, col = _BSR_2D_CASES[0]
+        nnz = len(col)
+        values = _make_bsr_values(nnz, block, dtype)
+        flat = values.reshape(-1)
+        flat[0] = float("nan")
+        flat[1] = float("inf")
+        flat[2] = float("-inf")
+        flat[-1] = float("nan")
+        values = flat.reshape(values.shape)
+        ref_values = utils.to_reference(values, independent=True)
 
-    _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    _assert_sparse(res_out, ref_out, dtype, equal_nan=True)
+        ref_crow = torch.tensor([0, 2, 4], dtype=torch.long, device=ref_values.device)
+        ref_col = torch.tensor([0, 1, 0, 1], dtype=torch.long, device=ref_values.device)
+        ref_out = torch.ops.aten.sparse_bsr_tensor(
+            ref_crow,
+            ref_col,
+            ref_values,
+            list(size),
+            dtype=dtype,
+            device=ref_values.device,
+        )
+        res_out = _resolve_gems_op()(
+            _make_index_tensor([0, 2, 4]),
+            _make_index_tensor([0, 1, 0, 1]),
+            values,
+            list(size),
+            dtype=dtype,
+            device=values.device,
+        )
+
+        _assert_bsr_structure(res_out, size, block, nnz, dtype)
+        _assert_sparse(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_bsr_tensor
@@ -524,7 +521,7 @@ def test_sparse_bsr_tensor_boundary_values(dtype):
         :n_elems
     ]
     values = values.reshape(nnz, block[0], block[1])
-    ref_values = utils.to_reference(values)
+    ref_values = utils.to_reference(values, independent=True)
 
     ref_crow = torch.tensor([0, 2, 4], dtype=torch.long, device=ref_values.device)
     ref_col = torch.tensor([0, 1, 0, 1], dtype=torch.long, device=ref_values.device)
@@ -565,9 +562,9 @@ def test_sparse_bsr_tensor_rejects_dtype_mismatch():
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, torch.float16)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsr_tensor(
@@ -594,9 +591,9 @@ def test_sparse_bsr_tensor_rejects_missing_dtype(dtype):
     crow_t = _make_index_tensor(crow)
     col_t = _make_index_tensor(col)
     values = _make_bsr_values(nnz, block, dtype)
-    ref_crow = utils.to_reference(crow_t)
-    ref_col = utils.to_reference(col_t)
-    ref_values = utils.to_reference(values)
+    ref_crow = utils.to_reference(crow_t, independent=True)
+    ref_col = utils.to_reference(col_t, independent=True)
+    ref_values = utils.to_reference(values, independent=True)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsr_tensor(

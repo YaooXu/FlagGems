@@ -84,17 +84,14 @@ _AUTOGRAD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.data callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op("data", getattr(flag_gems, "data", None))
+    return tu.resolve_gems_op("data", getattr(flag_gems, "data", None))
 
 
 def _assert_close(res_out, ref_out, dtype):
     if dtype in _FP8_DTYPES:
-        utils.gems_assert_close(res_out.float(), ref_out.float(), torch.float32)
+        utils.gems_assert_equal(res_out.float(), ref_out.float(), equal_nan=True)
     elif dtype.is_floating_point or dtype.is_complex:
-        utils.gems_assert_close(res_out, ref_out, dtype)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     else:
         utils.gems_assert_equal(res_out, ref_out)
 
@@ -123,7 +120,7 @@ def test_data(shape, dtype):
     # Shape levels x every supported dtype, with values drawn from the default
     # [-1, 1] range (negative and positive for each dtype).
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -140,7 +137,7 @@ def test_data_value_ranges(shape, value_range, dtype):
     # range sweep (negative, positive, dtype-extreme and degenerate ranges) must
     # round-trip exactly through the aliased shallow copy for every shape level.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -159,7 +156,7 @@ def test_data_non_contiguous(layout, shape, dtype):
     # the same memory layout.
     _, extract = layout
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = extract(base)
     ref_inp = extract(ref_base)
     assert not inp.is_contiguous()
@@ -170,24 +167,26 @@ def test_data_non_contiguous(layout, shape, dtype):
     _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
 
 
-@pytest.mark.data
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-def test_data_special_values(dtype):
-    # data is a pure alias: +inf/-inf/nan/±0.0 round-trip unchanged; the
-    # equal_nan comparison tolerates the nan value.
-    values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(values)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(values)
+    @pytest.mark.data
+    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+    def test_data_special_values(dtype):
+        # data is a pure alias: +inf/-inf/nan/±0.0 round-trip unchanged; the
+        # equal_nan comparison tolerates the nan value.
+        values = torch.tensor(
+            [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(values, independent=True)
 
-    assert res_out.data_ptr() == values.data_ptr()
-    # nan must compare equal to nan (the op must not sanitize it).
-    utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=True)
+        ref_out = torch.ops.aten.data(ref_inp)
+        res_out = _resolve_gems_op()(values)
+
+        assert res_out.data_ptr() == values.data_ptr()
+        # nan must compare equal to nan (the op must not sanitize it).
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
 
 
 @pytest.mark.data
@@ -198,7 +197,7 @@ def test_data_mutation(shape, dtype):
     # must be visible in the original tensor. The reference runs on an
     # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten.data(ref_inp)
@@ -220,7 +219,7 @@ def test_data_autograd_detach(shape, dtype):
     # storage. There is no gradient to compute (the op is not differentiable),
     # so autograd.grad does not apply.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
     if not ref_inp.requires_grad:
         ref_inp.requires_grad_(True)
 
@@ -251,8 +250,21 @@ def test_data_rejects_extra_arguments():
     # aten::data takes exactly one Tensor argument; a second positional argument
     # must be rejected by the reference and by the candidate.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.data(ref_inp, ref_inp)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, inp)
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.data
+    @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(_DATA_DTYPES))
+    def test_data_special_scenarios(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        reference = utils.to_reference(inp, independent=True)
+        candidate = tu.resolve_gems_op("data", getattr(flag_gems, "data", None))
+        expected = torch.ops.aten.data(reference)
+        actual = candidate(inp)
+        tu.assert_result_equal(actual, expected)

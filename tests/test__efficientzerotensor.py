@@ -58,25 +58,9 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
 
 
 def _resolve(name):
-    """Resolve a KernelGen override, or the direct FlagGems callable.
-
-    Resolution happens inside each test (never at import time) so a
-    process-local override installed via ``override_gems_op`` wins.
-    """
-    aliases = [name]
-    if name.endswith("_out"):
-        # KernelGen may register the ``.out`` overload under either the
-        # FlagGems ``<op>_out`` convention or the dotted aten name.
-        aliases.append(name[: -len("_out")] + ".out")
-    last_error = None
-    for alias in aliases:
-        try:
-            return flag_gems.testing.resolve_gems_op(
-                alias, getattr(flag_gems, alias, None)
-            )
-        except LookupError as exc:
-            last_error = exc
-    raise last_error
+    return tu.resolve_gems_op(
+        "_efficientzerotensor", getattr(flag_gems, "_efficientzerotensor", None)
+    )
 
 
 def _reference_device():
@@ -194,7 +178,7 @@ def test__efficientzerotensor_out_range(shape, dtype, value_range):
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
     assert ref_out is ref_buf
 
-    gems_op = _resolve("_efficientzerotensor_out")
+    gems_op = _resolve("_efficientzerotensor")
     res_out = gems_op(shape, out=act_buf)
     assert res_out is act_buf
 
@@ -218,7 +202,7 @@ def test__efficientzerotensor_out_overwrites(shape, dtype):
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
     assert ref_out is ref_buf
 
-    gems_op = _resolve("_efficientzerotensor_out")
+    gems_op = _resolve("_efficientzerotensor")
     res_out = gems_op(shape, out=act_buf)
     assert res_out is act_buf
 

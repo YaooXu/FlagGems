@@ -351,16 +351,14 @@ def _reference_ccol_indices_copy_out(inp, out):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "ccol_indices_copy", getattr(flag_gems, "ccol_indices_copy", None)
     )
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "ccol_indices_copy.out", getattr(flag_gems, "ccol_indices_copy_out", None)
+    return tu.resolve_gems_op(
+        "ccol_indices_copy", getattr(flag_gems, "ccol_indices_copy", None)
     )
 
 
@@ -388,7 +386,7 @@ def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
 def test_ccol_indices_copy(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -415,7 +413,7 @@ def _out_buffer(shape, dtype, device):
 def test_ccol_indices_copy_out(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
@@ -438,7 +436,7 @@ def test_ccol_indices_copy_spec_shapes(case, dtype):
     # size) matters.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -452,7 +450,7 @@ def test_ccol_indices_copy_spec_shapes(case, dtype):
 def test_ccol_indices_copy_out_spec_shapes(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
@@ -475,7 +473,7 @@ def test_ccol_indices_copy_value_ranges(case, value_range, dtype):
     # not perturb the returned ccol array.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -492,7 +490,7 @@ def test_ccol_indices_copy_out_value_ranges(case, value_range, dtype):
     # out must be identical for every per-dtype value range of the storage.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(_expected_ccol_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_ccol_shape(case), torch.long, ref_inp.device)
 
@@ -510,7 +508,7 @@ def test_ccol_indices_copy_empty_bsc(dtype):
     # nnz == 0 for BSC: rows and values are empty, but ccol_indices_copy must
     # still return a (n_col_blocks + 1,) contiguous int64 tensor.
     inp = _make_input("bsc", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -522,7 +520,7 @@ def test_ccol_indices_copy_empty_bsc(dtype):
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
 def test_ccol_indices_copy_out_empty_bsc(dtype):
     inp = _make_input("bsc", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(4, torch.long, inp.device)
     ref_out = _out_buffer(4, torch.long, ref_inp.device)
 
@@ -551,7 +549,7 @@ def _uncoalesced_csc(dtype):
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
 def test_ccol_indices_copy_uncoalesced(dtype):
     inp = _uncoalesced_csc(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = _reference_ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -563,7 +561,7 @@ def test_ccol_indices_copy_uncoalesced(dtype):
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
 def test_ccol_indices_copy_out_uncoalesced(dtype):
     inp = _uncoalesced_csc(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = _out_buffer(5, torch.long, inp.device)
     ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
@@ -589,35 +587,39 @@ def _nan_inf_csc(dtype):
     return torch.sparse_csc_tensor(ccol, rows, values, shape)
 
 
-@pytest.mark.ccol_indices_copy
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_ccol_indices_copy_nan_inf_values(dtype):
-    # nan / +-inf stored values must not perturb the returned ccol copy:
-    # ccol_indices_copy reads only the compressed-index storage, so the copy
-    # must still be bit-exact even when the values contain non-finite entries.
-    inp = _nan_inf_csc(dtype)
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = _reference_ccol_indices_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.ccol_indices_copy
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_ccol_indices_copy_nan_inf_values(dtype):
+        # nan / +-inf stored values must not perturb the returned ccol copy:
+        # ccol_indices_copy reads only the compressed-index storage, so the copy
+        # must still be bit-exact even when the values contain non-finite entries.
+        inp = _nan_inf_csc(dtype)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (5,))
+        ref_out = _reference_ccol_indices_copy(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (5,))
 
 
-@pytest.mark.ccol_indices_copy_out
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_ccol_indices_copy_out_nan_inf_values(dtype):
-    inp = _nan_inf_csc(dtype)
-    ref_inp = utils.to_reference(inp.clone())
-    out = _out_buffer(5, torch.long, inp.device)
-    ref_out = _out_buffer(5, torch.long, ref_inp.device)
+if tu.LEVEL == "all":
 
-    ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    @pytest.mark.ccol_indices_copy_out
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_ccol_indices_copy_out_nan_inf_values(dtype):
+        inp = _nan_inf_csc(dtype)
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        out = _out_buffer(5, torch.long, inp.device)
+        ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
-    assert res_ret is out
-    assert ref_ret is ref_out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
+        ref_ret = _reference_ccol_indices_copy_out(ref_inp, ref_out)
+        res_ret = _resolve_gems_op_out()(inp, out=out)
+
+        assert res_ret is out
+        assert ref_ret is ref_out
+        _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +634,7 @@ def test_ccol_indices_copy_negative_dense():
     # reference and the candidate must reject it.
     inp = torch.randn(3, 4, dtype=torch.float32, device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_ccol_indices_copy(utils.to_reference(inp.clone()))
+        _reference_ccol_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -647,7 +649,7 @@ def test_ccol_indices_copy_negative_csr():
     values = torch.randn(3, dtype=torch.float32)
     inp = torch.sparse_csr_tensor(crow, cols, values, (2, 3), device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_ccol_indices_copy(utils.to_reference(inp.clone()))
+        _reference_ccol_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -660,7 +662,7 @@ def test_ccol_indices_copy_negative_coo():
     values = torch.randn(2, dtype=torch.float32)
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_ccol_indices_copy(utils.to_reference(inp.clone()))
+        _reference_ccol_indices_copy(utils.to_reference(inp.clone(), independent=True))
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -671,7 +673,9 @@ def test_ccol_indices_copy_out_negative_dense():
     inp = torch.randn(3, 4, dtype=torch.float32, device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_ccol_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_ccol_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -684,7 +688,9 @@ def test_ccol_indices_copy_out_negative_csr():
     inp = torch.sparse_csr_tensor(crow, cols, values, (2, 3), device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_ccol_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_ccol_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -696,7 +702,9 @@ def test_ccol_indices_copy_out_negative_coo():
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=inp.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_ccol_indices_copy_out(utils.to_reference(inp.clone()), out)
+        _reference_ccol_indices_copy_out(
+            utils.to_reference(inp.clone(), independent=True), out
+        )
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -706,7 +714,7 @@ def test_ccol_indices_copy_out_negative_wrong_dtype():
     # The .out contract materializes int64 entries into out; an out tensor of a
     # different dtype must be rejected.
     inp = _make_input("csc", (5, 4), 6, None, torch.float32)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     out = torch.empty(5, dtype=torch.float32, device=inp.device)
     ref_out = torch.empty(5, dtype=torch.float32, device=ref_inp.device)
     with pytest.raises(RuntimeError):

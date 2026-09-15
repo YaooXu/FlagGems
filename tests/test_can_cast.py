@@ -84,13 +84,7 @@ def _can_cast_dtypes():
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins. The direct fallback
-    # stays None until flag_gems.can_cast is available; resolution order is
-    # (1) override, (2) the direct flag_gems.can_cast callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "can_cast", getattr(flag_gems, "can_cast", None)
-    )
+    return tu.resolve_gems_op("can_cast", getattr(flag_gems, "can_cast", None))
 
 
 def _as_bool(value):

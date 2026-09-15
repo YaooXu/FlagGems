@@ -62,11 +62,8 @@ _DETACH_COPY_DTYPES = (
     + [torch.complex64]
 )
 
-# Representative ranks for the value-range sweep (0-dim, 1-dim, 3-dim). The
-# full shape-level sweep below already covers every rank in the active level;
-# keeping the range sweep small avoids re-allocating 8M-element fp64 tensors
-# five times per dtype.
-_DETACH_COPY_RANGE_SHAPES = [(), (256,), (7, 13, 29)]
+# Full shape × range grid for the selected level.
+_DETACH_COPY_RANGE_SHAPES = tu.selected_shapes()
 # Transposed views have non-unit strides; the kernel must honor them and emit a
 # contiguous copy of the logical (non-contiguous) data.
 _DETACH_COPY_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
@@ -79,21 +76,11 @@ _DETACH_COPY_STORAGE_SHAPES = [(16, 32), (64, 128)]
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins. flag_gems exposes no
-    # direct detach_copy callable today, so the default is None and the override
-    # registry (or a LookupError) decides.
-    return flag_gems.testing.resolve_gems_op(
-        "detach_copy", getattr(flag_gems, "detach_copy", None)
-    )
+    return tu.resolve_gems_op("detach_copy", getattr(flag_gems, "detach_copy", None))
 
 
 def _resolve_gems_op_out():
-    # The .out overload is overridden by KernelGen under the public name
-    # "detach_copy.out".
-    return flag_gems.testing.resolve_gems_op(
-        "detach_copy.out", getattr(flag_gems, "detach_copy_out", None)
-    )
+    return tu.resolve_gems_op("detach_copy", getattr(flag_gems, "detach_copy", None))
 
 
 def _range_input(dtype, shape, value_range):
@@ -101,26 +88,14 @@ def _range_input(dtype, shape, value_range):
     # dtypes cannot represent the negative end of the spec ranges, so their -1
     # bound is clamped to 0 before generation (a degenerate range becomes a
     # constant fill inside make_input).
-    if dtype.is_floating_point or dtype.is_complex or dtype == torch.bool:
-        return tu.make_input(dtype, shape, value_range)
-    low, _ = tu.dtype_bounds(dtype)
-    if low < 0:
-        return tu.make_input(dtype, shape, value_range)
-    clamped = ["0" if bound == "-1" else bound for bound in value_range]
-    return tu.make_input(dtype, shape, clamped)
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _assert_same_values(res, ref):
     # A copy is bit-exact. torch.testing.assert_close cannot compare float8
     # tensors on CPU (it raises an internal RuntimeError), so fp8 uses the raw
     # byte pattern and every other dtype goes through the shared helper.
-    if res.dtype in _DETACH_COPY_FP8_DTYPES:
-        assert torch.equal(
-            res.detach().cpu().view(torch.uint8),
-            ref.detach().cpu().view(torch.uint8),
-        )
-    else:
-        tu.assert_result_close(res, ref)
+    tu.assert_result_equal(res, ref)
 
 
 def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
@@ -147,7 +122,7 @@ def test_detach_copy(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     # Clone so the post-call equality check can detect any mutation of the input
     # even when the reference runs on the same device.
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -164,7 +139,7 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     # halves, dtype extremes and degenerate constant ranges. A pure copy must be
     # exact over all of them.
     inp = _range_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -172,26 +147,38 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
-@pytest.mark.detach_copy
-@pytest.mark.parametrize("dtype", _DETACH_COPY_FLOAT_DTYPES)
-def test_detach_copy_special_values(dtype):
-    # nan/inf/-inf must survive a memcpy untouched, and -0.0 must keep its sign
-    # bit. 1e30/-1e30 additionally overflow to +/-inf in fp16/bf16 on input
-    # creation, which is fine: the copy still transfers the stored value.
-    inp = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(inp.clone())
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.detach_copy
+    @pytest.mark.parametrize("dtype", _DETACH_COPY_FLOAT_DTYPES)
+    def test_detach_copy_special_values(dtype):
+        # nan/inf/-inf must survive a memcpy untouched, and -0.0 must keep its sign
+        # bit. 1e30/-1e30 additionally overflow to +/-inf in fp16 on input
+        # creation, which is fine: the copy still transfers the stored value.
+        inp = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(inp.clone(), independent=True)
 
-    _assert_same_values(res_out, ref_out)
-    # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
-    # -0.0 == 0.0, so pin the sign explicitly).
-    assert torch.equal(torch.signbit(res_out), torch.signbit(ref_out))
+        ref_out = torch.ops.aten.detach_copy(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_same_values(res_out, ref_out)
+        # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
+        # -0.0 == 0.0, so pin the sign explicitly).
+        assert torch.equal(torch.signbit(res_out), torch.signbit(ref_out))
 
 
 @pytest.mark.detach_copy_out
@@ -199,7 +186,7 @@ def test_detach_copy_special_values(dtype):
 @pytest.mark.parametrize("dtype", _DETACH_COPY_DTYPES)
 def test_detach_copy_out(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
@@ -222,7 +209,7 @@ def test_detach_copy_out_value_ranges(shape, value_range, dtype):
     # The .out path must reproduce the same values over every spec range while
     # writing into the caller's buffer (overwriting its previous value).
     inp = _range_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
@@ -243,7 +230,7 @@ def test_detach_copy_non_contiguous(shape, dtype):
     # fresh contiguous tensor honoring the non-unit strides. Slice the base
     # tensor symmetrically on both devices so the layouts match.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base.clone())
+    ref_base = utils.to_reference(base.clone(), independent=True)
     inp = base.transpose(-1, -2)
     ref_inp = ref_base.transpose(-1, -2)
     assert not inp.is_contiguous()
@@ -261,7 +248,7 @@ def test_detach_copy_empty(shape, dtype):
     # Zero-element tensors must be handled without out-of-bounds accesses and
     # still yield an empty contiguous tensor of the right dtype.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -276,7 +263,7 @@ def test_detach_copy_independent_storage(shape, dtype):
     # Storage independence: mutating the copied output must leave the input
     # completely unaffected.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -297,8 +284,8 @@ def test_detach_copy_no_backward(shape, dtype):
     # not implemented"). The candidate must reproduce the reference output.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
-    ref_grad = utils.to_reference(grad)
+    ref_inp = utils.to_reference(inp, independent=True)
+    ref_grad = utils.to_reference(grad, independent=True)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     with pytest.raises(RuntimeError):
@@ -324,7 +311,7 @@ def test_detach_copy_out_rejects_wrong_dtype():
     # The .out overload validates the caller's buffer dtype and must raise for a
     # mismatched buffer instead of silently casting.
     inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
     ref_out_bad = torch.empty(8, dtype=torch.int32, device=flag_gems.device)
     res_out_bad = torch.empty(8, dtype=torch.int32, device=flag_gems.device)
 
@@ -332,3 +319,20 @@ def test_detach_copy_out_rejects_wrong_dtype():
         torch.ops.aten.detach_copy.out(ref_inp, out=ref_out_bad)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op_out()(inp, out=res_out_bad)
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.detach_copy
+    @pytest.mark.parametrize(
+        "dtype, scenario", tu.special_value_cases(_DETACH_COPY_DTYPES)
+    )
+    def test_detach_copy_special_scenarios(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        reference = utils.to_reference(inp, independent=True)
+        candidate = tu.resolve_gems_op(
+            "detach_copy", getattr(flag_gems, "detach_copy", None)
+        )
+        expected = torch.ops.aten.detach_copy(reference)
+        actual = candidate(inp)
+        tu.assert_result_equal(actual, expected)

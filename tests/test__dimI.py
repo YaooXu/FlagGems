@@ -170,20 +170,7 @@ def _shape_level_cases():
 
 
 def _make_values(dtype, shape, value_range):
-    """Value-range helper that survives the unsigned-dtype snapping of the
-    shared helper (uint8 cannot represent the ``-1`` / ``min`` low bound, which
-    ``torch.testing.make_tensor`` rejects for a non-degenerate range)."""
-    low, high = value_range
-    dtype_min, _ = tu.dtype_bounds(dtype)
-    if dtype_min >= 0 and low in ("-1", "min"):
-        # Unsigned dtype: clamp the negative low bound to the representable set.
-        low = "0"
-    try:
-        return tu.make_input(dtype, shape, [low, high])
-    except RuntimeError:
-        # Any other unrepresentable combination: fall back to the full
-        # non-negative range instead of failing input generation.
-        return tu.make_input(dtype, shape, ["0", "max"])
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _make_coo_input(shape, sparse_dim, dtype, value_range, nnz=8, seed=0):
@@ -217,11 +204,7 @@ def _make_empty_coo(shape, sparse_dim, dtype):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems._dimI is registered; resolution order
-    # is: (1) override, (2) the direct flag_gems._dimI callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op("_dimI", getattr(flag_gems, "_dimI", None))
+    return tu.resolve_gems_op("_dimI", getattr(flag_gems, "_dimI", None))
 
 
 def _assert_result(res_out, ref_out, sparse_dim):
@@ -243,7 +226,7 @@ def test__dimI_coo(case, dtype):
     # layout's sparse dim.
     shape, sparse_dim = case
     inp = _make_coo_input(shape, sparse_dim, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -263,7 +246,7 @@ def test__dimI_shape_value_range_grid(shape, value_range, dtype):
     # dims) x the five required value ranges x every supported dtype. The
     # reported count is exactly len(shape) because dim == sparse_dim here.
     inp = _make_coo_input(shape, len(shape), dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -281,7 +264,7 @@ def test__dimI_hybrid_value_ranges(case, value_range, dtype):
     # payload never changes the reported sparse dim, only the layout does.
     shape, sparse_dim = case
     inp = _make_coo_input(shape, sparse_dim, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -299,7 +282,7 @@ def test__dimI_hybrid_dense_dim_zero(case, dtype):
     # reported count.
     shape, sparse_dim = case
     inp = _make_coo_input(shape, sparse_dim, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -315,7 +298,7 @@ def test__dimI_empty(dtype):
     # are still reported exactly as for a populated tensor.
     shape, sparse_dim = (3, 4), 2
     inp = _make_empty_coo(shape, sparse_dim, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -330,7 +313,7 @@ def test__dimI_empty_hybrid(shape, sparse_dim, dtype):
     # nnz == 0 with dense dimensions: the hybrid layout is preserved and the
     # sparse dims stay exactly as for a populated tensor.
     inp = _make_empty_coo(shape, sparse_dim, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -347,7 +330,7 @@ def test__dimI_single_entry(dtype):
     shape, sparse_dim = (3, 4, 5), 2
     inp = _make_coo_input(shape, sparse_dim, dtype, ["-1", "1"], nnz=1)
     assert inp._nnz() == 1
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -366,7 +349,7 @@ def test__dimI_uncoalesced(dtype):
     values = _make_values(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dimI(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -374,24 +357,26 @@ def test__dimI_uncoalesced(dtype):
     _assert_result(res_out, ref_out, sparse_dim)
 
 
-@pytest.mark._dimI
-@pytest.mark.parametrize("dtype", _DIMI_FLOAT_DTYPES)
-def test__dimI_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
-    # reports the sparse dim of the layout, independent of the payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._dimI(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark._dimI
+    @pytest.mark.parametrize("dtype", _DIMI_FLOAT_DTYPES)
+    def test__dimI_nan_inf_values_ignored(dtype):
+        # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
+        # reports the sparse dim of the layout, independent of the payload.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 1)
+        ref_out = torch.ops.aten._dimI(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 1)
 
 
 # A candidate may legitimately surface the "no sparse layout" failure as a
@@ -413,7 +398,7 @@ def test__dimI_dense_raises():
     # report a bogus count.
     inp = _make_values(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._dimI(utils.to_reference(inp))
+        torch.ops.aten._dimI(utils.to_reference(inp, independent=True))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 
@@ -430,7 +415,7 @@ def test__dimI_csr_raises():
         crow_indices, col_indices, values, (2, 3), device=flag_gems.device
     )
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._dimI(utils.to_reference(inp))
+        torch.ops.aten._dimI(utils.to_reference(inp, independent=True))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 

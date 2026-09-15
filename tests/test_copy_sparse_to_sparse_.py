@@ -226,12 +226,8 @@ _FLOAT_DTYPES = tuple(d for d in _SUPPORTED_DTYPES if d.is_floating_point) or (
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. Order:
-    # (1) override, (2) the direct flag_gems callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "copy_sparse_to_sparse_",
-        getattr(flag_gems, "copy_sparse_to_sparse_", None),
+    return tu.resolve_gems_op(
+        "copy_sparse_to_sparse_", getattr(flag_gems, "copy_sparse_to_sparse_", None)
     )
 
 
@@ -280,8 +276,8 @@ def test_copy_sparse_to_sparse_(layout, dtype, non_blocking):
     shape, sparse_dim, nnz = layout
     src = _make_sparse_input(shape, sparse_dim, nnz, dtype)
     dst = torch.zeros_like(src)
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, non_blocking)
     res_out = _resolve_gems_op()(dst, src, non_blocking)
@@ -311,8 +307,8 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     shape, sparse_dim, nnz = layout
     src = _make_sparse_input(shape, sparse_dim, nnz, dtype, value_range=value_range)
     dst = torch.zeros_like(src)
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -325,33 +321,35 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     _assert_sparse_values_close(dst, src)
 
 
-@pytest.mark.copy_sparse_to_sparse_
-@pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
-def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
-    shape, sparse_dim, nnz = layout
-    base = _make_sparse_input(shape, sparse_dim, nnz, dtype)
-    values_shape = (nnz,) + tuple(shape[sparse_dim:])
-    src = torch.sparse_coo_tensor(
-        base._indices().clone(),
-        _make_nan_inf_values(values_shape, dtype),
-        tuple(shape),
-        device=flag_gems.device,
-    )
-    dst = torch.zeros_like(src)
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    @pytest.mark.copy_sparse_to_sparse_
+    @pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)
+    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+    def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
+        shape, sparse_dim, nnz = layout
+        base = _make_sparse_input(shape, sparse_dim, nnz, dtype)
+        values_shape = (nnz,) + tuple(shape[sparse_dim:])
+        src = torch.sparse_coo_tensor(
+            base._indices().clone(),
+            _make_nan_inf_values(values_shape, dtype),
+            tuple(shape),
+            device=flag_gems.device,
+        )
+        dst = torch.zeros_like(src)
+        ref_src = utils.to_reference(src, independent=True)
+        ref_dst = utils.to_reference(dst.clone(), independent=True)
 
-    assert res_out is dst
-    assert ref_out is ref_dst
-    assert dst._nnz() == src._nnz()
-    # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
-    # uses equal_nan=True.
-    _assert_sparse_values_close(res_out, ref_out)
-    _assert_sparse_values_close(dst, src)
+        ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
+        res_out = _resolve_gems_op()(dst, src, False)
+
+        assert res_out is dst
+        assert ref_out is ref_dst
+        assert dst._nnz() == src._nnz()
+        # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
+        # uses equal_nan=True.
+        _assert_sparse_values_close(res_out, ref_out)
+        _assert_sparse_values_close(dst, src)
 
 
 # ---------------------------------------------------------------------------
@@ -368,8 +366,8 @@ def test_copy_sparse_to_sparse_resizes_self(dtype):
     dst = _make_sparse_input((4, 5), 2, 5, dtype, seed=1)
     assert tuple(dst.shape) == (4, 5)
     assert dst._nnz() == 5
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -390,8 +388,8 @@ def test_copy_sparse_to_sparse_resizes_nnz(dtype):
     src = _make_sparse_input((4, 5), 2, 3, dtype)
     dst = _make_sparse_input((4, 5), 2, 7, dtype, seed=1)
     assert dst._nnz() == 7
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -412,8 +410,8 @@ def test_copy_sparse_to_sparse_grows_dense_dims(dtype):
     src = _make_sparse_input((4, 5, 3), 2, 3, dtype)
     dst = _make_sparse_input((4, 5, 2), 2, 3, dtype, seed=1)
     assert tuple(dst.shape) == (4, 5, 2)
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -440,8 +438,8 @@ def test_copy_sparse_to_sparse_empty_dst_adopts_sparse_dim(dtype):
     dst = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert dst.sparse_dim() == 2
     assert dst._nnz() == 0
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -462,8 +460,8 @@ def test_copy_sparse_to_sparse_empty_src(dtype):
     src = _make_sparse_input((4, 5), 2, 0, dtype)
     dst = _make_sparse_input((4, 5), 2, 3, dtype, seed=1)
     assert dst._nnz() == 3
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)
@@ -488,8 +486,8 @@ def test_copy_sparse_to_sparse_uncoalesced(dtype):
     src = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
     assert not src.is_coalesced()
     dst = torch.zeros_like(src)
-    ref_src = utils.to_reference(src)
-    ref_dst = utils.to_reference(dst.clone())
+    ref_src = utils.to_reference(src, independent=True)
+    ref_dst = utils.to_reference(dst.clone(), independent=True)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     res_out = _resolve_gems_op()(dst, src, False)

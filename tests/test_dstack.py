@@ -230,14 +230,10 @@ def _resolve_named_gems_op(name):
     default = getattr(flag_gems, name.replace(".", "_"), None)
     if default is None:
         default = getattr(flag_gems, name, None)
-    return flag_gems.testing.resolve_gems_op(name, default)
+    return tu.resolve_gems_op(name, default)
 
 
 def _resolve_gems_op():
-    # One candidate per OPERATOR, not per overload: the injector registers a
-    # single callable under the public operator name "dstack" and dispatches the
-    # ``out=`` form itself. The test therefore never probes overload-level names
-    # such as "dstack.out" / "dstack_out".
     return _resolve_named_gems_op("dstack")
 
 
@@ -253,13 +249,7 @@ def _apply_dstack_out(inp, out):
 
 
 def _assert_values(res_out, ref_out, dtype):
-    """Compare values: fp8 through the exact device helper (torch.testing has
-    no CPU fp8 comparison; float8 values are exact in float32), everything else
-    through the tolerance-aware value-range helper (exact for int/bool)."""
-    if dtype in _FP8_DTYPES:
-        utils.gems_assert_equal(res_out.to(torch.float32), ref_out.to(torch.float32))
-    else:
-        tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 def _assert_dstack_output(res_out, ref_out, dtype):
@@ -279,7 +269,7 @@ def test_dstack(shape_set, dtype):
     # non-degenerate [-1,1] range (tu.make_input clamps the negative bound for
     # dtypes that cannot represent it).
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -295,7 +285,7 @@ def test_dstack_value_ranges(shape_set, dtype, value_range):
     # (0/max/min and the degenerate constant ranges included) must round-trip
     # exactly through the depth-axis placement.
     inp = [tu.make_input(dtype, s, value_range) for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -312,7 +302,7 @@ def test_dstack_out(shape_set, dtype):
     # The .out overload must write into the provided out tensor and return it
     # (alias semantics), matching the aten reference bit-for-bit.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_shape = torch.ops.aten.dstack(ref_inp).shape
     ref_out = torch.empty(ref_shape, dtype=dtype, device=ref_inp[0].device)
@@ -337,7 +327,7 @@ def test_dstack_empty_inputs(shape_set, dtype):
     # Zero-sized tensors: 1-D (0,), 2-D (2, 0) and 3-D (0, 3, 4) all produce
     # valid (possibly empty) depth-axis concatenations.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -345,27 +335,39 @@ def test_dstack_empty_inputs(shape_set, dtype):
     _assert_dstack_output(res_out, ref_out, dtype)
 
 
-@pytest.mark.dstack
-@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
-def test_dstack_nan_inf(dtype):
-    # dstack is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the depth axis (assert_result_close uses equal_nan=True on
-    # the float path; 1e30 overflows to inf in fp16/bf16 on both paths
-    # identically).
-    values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    inp = [values, values]
-    ref_inp = [utils.to_reference(t) for t in inp]
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.dstack(ref_inp)
-    res_out = _apply_dstack(inp)
+    @pytest.mark.dstack
+    @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
+    def test_dstack_nan_inf(dtype):
+        # dstack is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
+        # unchanged onto the depth axis (assert_result_close uses equal_nan=True on
+        # the float path; 1e30 overflows to inf in fp16/bf16 on both paths
+        # identically).
+        values = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        inp = [values, values]
+        ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    tu.assert_result_close(res_out, ref_out)
+        ref_out = torch.ops.aten.dstack(ref_inp)
+        res_out = _apply_dstack(inp)
+
+        assert res_out.shape == ref_out.shape
+        assert res_out.dtype == ref_out.dtype
+        tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.dstack
@@ -378,7 +380,7 @@ def test_dstack_complex(dtype):
         tu.make_input(dtype, (4, 5, 6), _MAIN_RANGE),
         tu.make_input(dtype, (4, 5, 7), _MAIN_RANGE),
     ]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -386,36 +388,41 @@ def test_dstack_complex(dtype):
     _assert_dstack_output(res_out, ref_out, dtype)
 
 
-@pytest.mark.dstack_backward
-@pytest.mark.parametrize("shape_set", _DSTACK_BACKWARD_SHAPE_SETS)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_dstack_backward(shape_set, dtype):
-    # dstack = atleast_3d(each input) + cat along dim 2, so grad_i is the slice
-    # of grad_out owned by input i, reshaped back to the input's shape (a pure
-    # gather, no arithmetic). Validate the autograd reference against that
-    # analytic value, then check the candidate forward and - only when the
-    # candidate output is differentiable - its gradient against the reference.
-    inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
-    ref_inp = [utils.to_reference(t.detach().clone()).requires_grad_() for t in inp]
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.dstack(ref_inp)
-    grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)
-    ref_grad = utils.to_reference(grad)
-    ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
+    @pytest.mark.dstack_backward
+    @pytest.mark.parametrize("shape_set", _DSTACK_BACKWARD_SHAPE_SETS)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_dstack_backward(shape_set, dtype):
+        # dstack = atleast_3d(each input) + cat along dim 2, so grad_i is the slice
+        # of grad_out owned by input i, reshaped back to the input's shape (a pure
+        # gather, no arithmetic). Validate the autograd reference against that
+        # analytic value, then check the candidate forward and - only when the
+        # candidate output is differentiable - its gradient against the reference.
+        inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
+        ref_inp = [
+            utils.to_reference(t.detach().clone(), independent=True).requires_grad_()
+            for t in inp
+        ]
 
-    offset = 0
-    for t, g in zip(ref_inp, ref_in_grads):
-        depth = _dstack_depth(t.shape)
-        expected = torch.ops.aten.slice(ref_grad, 2, offset, offset + depth).reshape(
-            t.shape
-        )
-        tu.assert_result_close(g, expected)
-        offset += depth
+        ref_out = torch.ops.aten.dstack(ref_inp)
+        grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)
+        ref_grad = utils.to_reference(grad, independent=True)
+        ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    res_out = _apply_dstack(inp)
-    tu.assert_result_close(res_out, ref_out)
+        offset = 0
+        for t, g in zip(ref_inp, ref_in_grads):
+            depth = _dstack_depth(t.shape)
+            expected = torch.ops.aten.slice(
+                ref_grad, 2, offset, offset + depth
+            ).reshape(t.shape)
+            tu.assert_result_close(g, expected)
+            offset += depth
 
-    if res_out.requires_grad:
+        res_out = _apply_dstack(inp)
+        tu.assert_result_close(res_out, ref_out)
+
+        assert res_out.requires_grad
         res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
         for res_g, ref_g, src in zip(res_in_grads, ref_in_grads, inp):
             assert res_g.shape == ref_g.shape == src.shape
@@ -446,7 +453,7 @@ def test_dstack_mismatched_shapes(shape_set):
     # All dims except dim 2 must match after the atleast_3d view; mismatched
     # non-depth dims must raise on both paths.
     inp = [tu.make_input(torch.float32, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t) for t in inp]
+    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.dstack(ref_inp)

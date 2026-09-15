@@ -37,12 +37,7 @@ for _name in ("_empty_affine_quantized", "_empty_affine_quantized_out"):
 
 
 def _resolve(name):
-    # Resolved inside each test (never at import time) so that a process-local
-    # override installed by KernelGen via ``override_gems_op`` for this run
-    # wins. The default stays None until flag_gems registers the operator;
-    # resolution order is: (1) override, (2) the direct flag_gems callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(name, getattr(flag_gems, name, None))
+    return tu.resolve_gems_op(name, getattr(flag_gems, name, None))
 
 
 # aten::_empty_affine_quantized is a factory: given a size (plus optional
@@ -284,7 +279,7 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
     act_out_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=flag_gems.device, scale=2.5, zero_point=-5
     )
-    res_out = _resolve("_empty_affine_quantized_out")(
+    res_out = _resolve("_empty_affine_quantized")(
         shape, scale=scale, zero_point=zero_point, out=act_out_buf
     )
     assert res_out is act_out_buf
@@ -315,7 +310,7 @@ def test__empty_affine_quantized_out_value_ranges(value_range):
     act_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=torch.quint8, device=flag_gems.device, scale=2.5, zero_point=-5
     )
-    res_out = _resolve("_empty_affine_quantized_out")(
+    res_out = _resolve("_empty_affine_quantized")(
         shape, scale=scale, zero_point=zero_point, out=act_buf
     )
     assert res_out is act_buf
@@ -343,7 +338,7 @@ def test__empty_affine_quantized_out_non_contiguous_view():
         (16, 8), dtype=dtype, device=flag_gems.device, scale=1.0, zero_point=0
     )
     act_sliced = act_base[:, ::2]
-    res_out = _resolve("_empty_affine_quantized_out")(
+    res_out = _resolve("_empty_affine_quantized")(
         (16, 4), scale=0.5, zero_point=3, out=act_sliced
     )
     assert res_out is act_sliced
@@ -449,7 +444,7 @@ def test__empty_affine_quantized_out_rejects_non_quantized_buffer():
 
     act_buf = torch.empty((2, 3), dtype=torch.float32, device=flag_gems.device)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_empty_affine_quantized_out")((2, 3), out=act_buf)
+        _resolve("_empty_affine_quantized")((2, 3), out=act_buf)
 
 
 @pytest.mark._empty_affine_quantized_out
@@ -466,4 +461,4 @@ def test__empty_affine_quantized_out_rejects_shape_mismatch():
     with pytest.raises((NotImplementedError, RuntimeError)):
         torch.ops.aten._empty_affine_quantized.out((4, 6), out=buf)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_empty_affine_quantized_out")((4, 6), out=buf)
+        _resolve("_empty_affine_quantized")((4, 6), out=buf)

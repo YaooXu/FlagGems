@@ -192,14 +192,8 @@ def _nan_inf_tensor(shape, dtype, device):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. ``flag_gems.
-    # _has_same_storage_numel`` may not be registered yet, so getattr supplies a
-    # safe default and resolve_gems_op falls back to the package namespace
-    # before raising LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "_has_same_storage_numel",
-        getattr(flag_gems, "_has_same_storage_numel", None),
+    return tu.resolve_gems_op(
+        "_has_same_storage_numel", getattr(flag_gems, "_has_same_storage_numel", None)
     )
 
 
@@ -258,8 +252,8 @@ def test__has_same_storage_numel_shapes(shape, dtype):
     # every level (0-D scalar through 5-D).
     self_t = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     other_t = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
     res_out = _resolve_gems_op()(self_t, other_t)
@@ -278,8 +272,8 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     # only storage metadata. Same-shape inputs always answer True.
     self_t = tu.make_input(dtype, shape, value_range)
     other_t = tu.make_input(dtype, shape, value_range)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+    ref_self = utils.to_reference(self_t, independent=True)
+    ref_other = utils.to_reference(other_t, independent=True)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
     res_out = _resolve_gems_op()(self_t, other_t)
@@ -288,22 +282,24 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     assert bool(ref_out) is True
 
 
-@pytest.mark._has_same_storage_numel
-@pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", _FLOAT_STORAGE_DTYPES)
-def test__has_same_storage_numel_nan_inf(shape, dtype):
-    # nan/inf/-inf are ordinary payloads that the metadata query must ignore;
-    # the answer is still the storage-numel comparison of the two tensors.
-    self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    other_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    ref_self = utils.to_reference(self_t)
-    ref_other = utils.to_reference(other_t)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    @pytest.mark._has_same_storage_numel
+    @pytest.mark.parametrize("shape", tu.selected_shapes())
+    @pytest.mark.parametrize("dtype", _FLOAT_STORAGE_DTYPES)
+    def test__has_same_storage_numel_nan_inf(shape, dtype):
+        # nan/inf/-inf are ordinary payloads that the metadata query must ignore;
+        # the answer is still the storage-numel comparison of the two tensors.
+        self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
+        other_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
+        ref_self = utils.to_reference(self_t, independent=True)
+        ref_other = utils.to_reference(other_t, independent=True)
 
-    _assert_result(res_out, ref_out)
-    assert bool(ref_out) is True
+        ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
+        res_out = _resolve_gems_op()(self_t, other_t)
+
+        _assert_result(res_out, ref_out)
+        assert bool(ref_out) is True
 
 
 @pytest.mark._has_same_storage_numel

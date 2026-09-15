@@ -127,11 +127,11 @@ def test__empty_affine_quantized():
 @pytest.mark._empty_affine_quantized_out
 def test__empty_affine_quantized_out():
     bench = EmptyAffineQuantizedBenchmark(
-        op_name="_empty_affine_quantized_out",
+        op_name="_empty_affine_quantized",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn_out,
         torch_op=torch.ops.aten._empty_affine_quantized.out,
-        gems_op=getattr(flag_gems, "_empty_affine_quantized_out", None),
+        gems_op=getattr(flag_gems, "_empty_affine_quantized", None),
         dtypes=QUANT_DTYPES,
     )
     bench.run()

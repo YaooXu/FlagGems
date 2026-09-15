@@ -20,23 +20,6 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::abs(Tensor self) -> Tensor computes the elementwise absolute value:
-# negatives flip sign, non-negatives are the identity, and |INT_MIN| == INT_MIN
-# (PyTorch defines no wrap-around). The op is exact for every storage dtype, so
-# the value-range comparisons below are bit-for-bit on the int/bool path and
-# well inside the default float tolerance (equal_nan=True covers the nan/inf
-# cases). The .default overload is resolved through its public name "abs"
-# (KernelGen's override_gems_op("abs", ...) wins over the direct callable), the
-# in-place variant through "abs_", and the .out overload through "abs.out"
-# whose default implementation is the adapter below; KernelGen may override
-# "abs.out" with a real out-kernel.
-#
-# Dtype coverage: the op is defined for every storage dtype. The value-range
-# tests run over the full float (fp16/fp32/bf16/fp64), int
-# (int8/uint8/int16/int32/int64) and bool families. fp8 is deliberately absent:
-# torch.ops.aten.abs raises "abs_cuda" not implemented for Float8E4M3FN/E5M2, so
-# the operator (reference and candidate alike) has no fp8 kernel to test.
-# complex is absent too: the candidate (flag_gems.abs) has no complex kernel.
 _ABS_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 _ABS_INT_DTYPES = utils.ALL_INT_DTYPES + [torch.int8, torch.uint8]
 _ABS_SIGNED_INT_DTYPES = [d for d in _ABS_INT_DTYPES if d.is_signed]
@@ -53,47 +36,19 @@ _ABS_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
 def _make_input(dtype, shape, value_range):
-    """tu.make_input with an unsigned-dtype fallback.
-
-    For unsigned dtypes a negative range bound is clamped to 0 by the shared
-    helper's make_tensor call, which then rejects the degenerate interval
-    (e.g. uint8 over ["-1", "0"] collapses to [0, 0]). Materialize the clamped
-    interval locally instead so every spec range is still exercised.
-    """
-    try:
-        return tu.make_input(dtype, shape, value_range)
-    except RuntimeError:
-        info = torch.iinfo(dtype)
-        low = max(int(tu.resolve_bound(value_range[0], dtype)), info.min)
-        high = min(int(tu.resolve_bound(value_range[1], dtype)), info.max)
-        if low == high:
-            return torch.full(shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=flag_gems.device, low=low, high=high
-        )
+    return tu.make_input(dtype, shape, value_range)
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order:
-    # (1) override, (2) the direct flag_gems.abs callable, (3) LookupError.
-    return flag_gems.testing.resolve_gems_op("abs", flag_gems.abs)
+    return tu.resolve_gems_op("abs", flag_gems.abs)
 
 
 def _resolve_gems_op_inplace():
-    return flag_gems.testing.resolve_gems_op("abs_", flag_gems.abs_)
-
-
-def _abs_out_adapter(self, *, out):
-    # Default implementation of the ".out" overload: run the direct abs kernel
-    # and copy the result into the caller's out buffer. KernelGen's override of
-    # "abs.out" replaces this adapter with a real out-kernel.
-    out.copy_(flag_gems.testing.resolve_gems_op("abs", flag_gems.abs)(self))
-    return out
+    return tu.resolve_gems_op("abs_", flag_gems.abs_)
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op("abs.out", _abs_out_adapter)
+    return tu.resolve_gems_op("abs", getattr(flag_gems, "abs", None))
 
 
 @pytest.mark.abs
@@ -102,7 +57,7 @@ def _resolve_gems_op_out():
 @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
 def test_abs_float_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -116,7 +71,7 @@ def test_abs_float_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", _ABS_INT_DTYPES + utils.BOOL_TYPES)
 def test_abs_int_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -125,22 +80,34 @@ def test_abs_int_value_ranges(shape, value_range, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-@pytest.mark.abs
-@pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
-def test_abs_nan_inf(dtype):
-    # inf/-inf -> +inf, nan -> nan, -0.0 -> 0.0. 1e30/-1e30 also cover the
-    # overflow-to-inf path in fp16/bf16; equal_nan=True tolerates nan outputs.
-    inp = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5, 1e30, -1e30],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.abs
+    @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
+    def test_abs_nan_inf(dtype):
+        # inf/-inf -> +inf, nan -> nan, -0.0 -> 0.0. 1e30/-1e30 also cover the
+        # overflow-to-inf path in fp16 (1e30 remains finite in bf16); equal_nan=True tolerates nan outputs.
+        inp = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    tu.assert_result_close(res_out, ref_out)
+        ref_out = torch.ops.aten.abs(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        tu.assert_result_close(res_out, ref_out)
 
 
 @pytest.mark.abs
@@ -153,7 +120,7 @@ def test_abs_int_min_stays(dtype):
     inp = torch.tensor(
         [min_val, min_val + 1, 0, 1, -1], dtype=dtype, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -166,7 +133,7 @@ def test_abs_int_min_stays(dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_empty(shape, dtype):
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -180,7 +147,7 @@ def test_abs_empty(shape, dtype):
 def test_abs_noncontiguous(shape, dtype):
     # transposed views have non-unit strides; the kernel must honor them.
     inp = _make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -188,32 +155,31 @@ def test_abs_noncontiguous(shape, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-@pytest.mark.abs
-@pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_abs_backward(shape, dtype):
-    inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    grad = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
-    ref_grad = utils.to_reference(grad)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.abs(ref_inp)
-    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    @pytest.mark.abs
+    @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_abs_backward(shape, dtype):
+        inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        grad = _make_input(dtype, shape, ["-1", "1"])
+        ref_inp = utils.to_reference(inp, independent=True)
+        ref_grad = utils.to_reference(grad, independent=True)
 
-    # d|x|/dx == sign(x) (torch defines sign(0) == 0), so the reference
-    # gradient must match the analytic value; this validates the reference
-    # autograd path itself.
-    expected_in_grad = torch.sign(ref_inp) * ref_grad
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
+        ref_out = torch.ops.aten.abs(ref_inp)
+        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    # The candidate forward output must match the reference...
-    res_out = _resolve_gems_op()(inp)
-    tu.assert_result_close(res_out, ref_out)
+        # d|x|/dx == sign(x) (torch defines sign(0) == 0), so the reference
+        # gradient must match the analytic value; this validates the reference
+        # autograd path itself.
+        expected_in_grad = torch.sign(ref_inp) * ref_grad
+        tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-    # ...and, if the candidate kernel advertises autograd support (the current
-    # direct kernel does not: res_out.requires_grad is False), its gradient
-    # must match the analytic value too.
-    if res_out.requires_grad:
+        # The candidate forward output must match the reference...
+        res_out = _resolve_gems_op()(inp)
+        tu.assert_result_close(res_out, ref_out)
+
+        assert res_out.requires_grad
         res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
         tu.assert_result_close(res_in_grad, expected_in_grad)
 
@@ -224,7 +190,7 @@ def test_abs_backward(shape, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs__value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone())
+    ref_inp = utils.to_reference(inp.clone(), independent=True)
 
     ref_out = torch.ops.aten.abs_(ref_inp)
     res_out = _resolve_gems_op_inplace()(inp)
@@ -241,7 +207,7 @@ def test_abs__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_out(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)

@@ -135,11 +135,7 @@ def _diagflat_shapes():
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins.
-    return flag_gems.testing.resolve_gems_op(
-        "diagflat", getattr(flag_gems, "diagflat", None)
-    )
+    return tu.resolve_gems_op("diagflat", getattr(flag_gems, "diagflat", None))
 
 
 def _assert_output(res_out, ref_out, dtype):
@@ -152,9 +148,9 @@ def _assert_output(res_out, ref_out, dtype):
     assert not res_out._is_view()
     if dtype in _FP8_DTYPES:
         # assert_close does not handle fp8 pairs directly; compare in fp32.
-        tu.assert_result_close(res_out.float(), ref_out.float())
+        tu.assert_result_equal(res_out.float(), ref_out.float())
     elif dtype.is_floating_point:
-        utils.gems_assert_close(res_out, ref_out, dtype)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     else:
         utils.gems_assert_equal(res_out, ref_out)
 
@@ -167,7 +163,7 @@ def test_diagflat(shape, offset, dtype):
     # Shape levels x offsets x every supported dtype with values in the default
     # [-1, 1] range (0-D, 1-D, empty, 2-D, 3-D, 4-D and 5-D are all covered).
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -184,7 +180,7 @@ def test_diagflat_value_ranges(shape, value_range, dtype):
     # (including 0/max/min and the degenerate ranges) must round-trip exactly
     # through the diagonal placement.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -201,7 +197,7 @@ def test_diagflat_large_offset(shape, offset, dtype):
     # vector is placed on a diagonal that starts past the main diagonal,
     # leaving extra zero rows/columns around it.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -219,7 +215,7 @@ def test_diagflat_non_contiguous(shape, offset, dtype):
     # Transpose on both the test device and the reference device so the two
     # inputs share the same memory layout.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
     inp = inp.transpose(-1, -2)
     ref_inp = ref_inp.transpose(-1, -2)
 
@@ -238,7 +234,7 @@ def test_diagflat_strided(shape, offset, dtype):
     # in logical view order too, so the candidate must read through the input's
     # actual strides. Slice on both devices so the layouts match.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -249,42 +245,44 @@ def test_diagflat_strided(shape, offset, dtype):
     _assert_output(res_out, ref_out, dtype)
 
 
-@pytest.mark.diagflat
-@pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
-def test_diagflat_nan_inf(dtype):
-    # diagflat is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the diagonal (assert_result_close uses equal_nan=True).
-    # The values that reach the tensor are dtype-dependent: fp16/bf16 overflow
-    # 1e30 to inf, and float8_e4m3fn turns every inf into nan, but both the
-    # candidate and the reference are built from these same stored values, so
-    # the comparison must hold whatever the dtype did to them. fp8 is compared
-    # after casting to fp32 (see _NAN_INF_DTYPES).
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    ref_inp = utils.to_reference(values)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.diagflat(ref_inp, 1)
-    res_out = _resolve_gems_op()(values, 1)
+    @pytest.mark.diagflat
+    @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
+    def test_diagflat_nan_inf(dtype):
+        # diagflat is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
+        # unchanged onto the diagonal (assert_result_close uses equal_nan=True).
+        # The values that reach the tensor are dtype-dependent: fp16/bf16 overflow
+        # 1e30 to inf, and float8_e4m3fn turns every inf into nan, but both the
+        # candidate and the reference are built from these same stored values, so
+        # the comparison must hold whatever the dtype did to them. fp8 is compared
+        # after casting to fp32 (see _NAN_INF_DTYPES).
+        values = torch.tensor(
+            [
+                float("inf"),
+                float("-inf"),
+                float("nan"),
+                0.0,
+                -0.0,
+                1.5,
+                -2.5,
+                1e30,
+                -1e30,
+            ],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        ref_inp = utils.to_reference(values, independent=True)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    if dtype in _FP8_DTYPES:
-        tu.assert_result_close(res_out.float(), ref_out.float())
-    else:
-        tu.assert_result_close(res_out, ref_out)
+        ref_out = torch.ops.aten.diagflat(ref_inp, 1)
+        res_out = _resolve_gems_op()(values, 1)
+
+        assert res_out.shape == ref_out.shape
+        assert res_out.dtype == ref_out.dtype
+        if dtype in _FP8_DTYPES:
+            tu.assert_result_equal(res_out.float(), ref_out.float())
+        else:
+            tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -294,7 +292,7 @@ def test_diagflat_empty_input(offset, dtype):
     # An empty input has no elements to place: offset 0 yields a 0x0 output and
     # |offset| > 0 yields an all-zero |offset| x |offset| matrix.
     inp = tu.make_input(dtype, (0,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -302,34 +300,36 @@ def test_diagflat_empty_input(offset, dtype):
     _assert_output(res_out, ref_out, dtype)
 
 
-@pytest.mark.diagflat
-@pytest.mark.parametrize("shape", _DIAGFLAT_BACKWARD_SHAPES)
-@pytest.mark.parametrize("offset", [-1, 0, 1])
-@pytest.mark.parametrize("dtype", _GRAD_DTYPES)
-def test_diagflat_backward(shape, offset, dtype):
-    # The forward op places flat_inp[k] at out[k, k+offset], so
-    # d(diagflat(x))/dx extracts the offset-th diagonal of grad_output and
-    # reshapes it back to the input shape (a pure gather, no arithmetic).
-    # Validate the autograd reference against that analytic value, then check
-    # the candidate forward output and -- only when the candidate output is
-    # differentiable -- its gradient against the reference gradient.
-    n = _numel(shape)
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    grad = tu.make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
-    ref_grad = utils.to_reference(grad)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    @pytest.mark.diagflat
+    @pytest.mark.parametrize("shape", _DIAGFLAT_BACKWARD_SHAPES)
+    @pytest.mark.parametrize("offset", [-1, 0, 1])
+    @pytest.mark.parametrize("dtype", _GRAD_DTYPES)
+    def test_diagflat_backward(shape, offset, dtype):
+        # The forward op places flat_inp[k] at out[k, k+offset], so
+        # d(diagflat(x))/dx extracts the offset-th diagonal of grad_output and
+        # reshapes it back to the input shape (a pure gather, no arithmetic).
+        # Validate the autograd reference against that analytic value, then check
+        # the candidate forward output and -- only when the candidate output is
+        # differentiable -- its gradient against the reference gradient.
+        n = _numel(shape)
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        grad = tu.make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
+        ref_inp = utils.to_reference(inp, independent=True)
+        ref_grad = utils.to_reference(grad, independent=True)
 
-    if dtype in (torch.float32, torch.float64):
-        expected = torch.ops.aten.diag(ref_grad, offset).reshape(shape)
-        tu.assert_result_close(ref_in_grad, expected)
+        ref_out = torch.ops.aten.diagflat(ref_inp, offset)
+        ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    res_out = _resolve_gems_op()(inp, offset)
-    tu.assert_result_close(res_out, ref_out)
+        if dtype in (torch.float32, torch.float64):
+            expected = torch.ops.aten.diag(ref_grad, offset).reshape(shape)
+            tu.assert_result_close(ref_in_grad, expected)
 
-    if res_out.requires_grad:
+        res_out = _resolve_gems_op()(inp, offset)
+        tu.assert_result_close(res_out, ref_out)
+
+        assert res_out.requires_grad
         res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
         tu.assert_result_close(res_in_grad, ref_in_grad)
 
@@ -351,7 +351,7 @@ def test_diagflat_rejects_non_int_offset():
     # The schema demands an int offset; passing a float must raise on both
     # paths.
     inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.diagflat(ref_inp, 1.5)

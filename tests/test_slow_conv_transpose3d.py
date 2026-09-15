@@ -247,11 +247,7 @@ if not SUPPORTED_DTYPES:
     # complete dtype set; keep it whole rather than narrowing it further.
     SUPPORTED_DTYPES = list(utils.ALL_FLOAT_DTYPES)
 
-FLOAT_DTYPES = (
-    [torch.float32]
-    if QUICK_MODE and torch.float32 in SUPPORTED_DTYPES
-    else list(SUPPORTED_DTYPES)
-)
+FLOAT_DTYPES = list(SUPPORTED_DTYPES)
 
 # Value-range coverage: the transpose-conv output accumulates up to
 # C_in*kD*kH*kW products, so the shared ``tu.selected_ranges()`` extremes
@@ -296,20 +292,14 @@ _BACKWARD_DTYPES = [
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. The default stays None
-    # until flag_gems.slow_conv_transpose3d is registered; resolution order is:
-    # (1) override, (2) the direct flag_gems.slow_conv_transpose3d callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
     )
 
 
 def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose3d.out",
-        getattr(flag_gems, "slow_conv_transpose3d_out", None),
+    return tu.resolve_gems_op(
+        "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
     )
 
 
@@ -401,9 +391,9 @@ def test_slow_conv_transpose3d(
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     ref_out = torch.ops.aten.slow_conv_transpose3d(
         ref_inp,
@@ -432,15 +422,27 @@ def test_slow_conv_transpose3d(
 def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
     _disable_tf32()
 
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        case
-    )
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = case
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     bias_t = tu.make_input(dtype, (weight_shape[1],), value_range) if bias else None
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(
+        inp, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_weight = utils.to_reference(
+        weight, not tu.is_extreme_range(value_range), independent=True
+    )
+    ref_bias = utils.to_reference(
+        bias_t, not tu.is_extreme_range(value_range), independent=True
+    )
 
     ref_out = torch.ops.aten.slow_conv_transpose3d(
         ref_inp,
@@ -484,9 +486,9 @@ def test_slow_conv_transpose3d_out(
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias_t, True)
+    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_bias = utils.to_reference(bias_t, True, independent=True)
 
     # The .out overload must write into the provided tensor and return it.
     ref_full = torch.ops.aten.slow_conv_transpose3d(
@@ -531,75 +533,89 @@ def test_slow_conv_transpose3d_out(
     _assert_close(res_ret, ref_ret, dtype)
 
 
-@pytest.mark.slow_conv_transpose3d_backward
-@pytest.mark.parametrize("case", _BACKWARD_CASES)
-@pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
-def test_slow_conv_transpose3d_backward(case, dtype):
-    _disable_tf32()
+if tu.LEVEL == "all":
 
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        case
-    )
-    out_shape = _conv_transpose_output_shape(
-        inp_shape, weight_shape, stride, padding, output_padding, dilation
-    )
+    @pytest.mark.slow_conv_transpose3d_backward
+    @pytest.mark.parametrize("case", _BACKWARD_CASES)
+    @pytest.mark.parametrize("dtype", _BACKWARD_DTYPES)
+    def test_slow_conv_transpose3d_backward(case, dtype):
+        _disable_tf32()
 
-    inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
-    weight = tu.make_input(dtype, weight_shape, ["-1", "1"])
-    bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
-    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+        (
+            inp_shape,
+            weight_shape,
+            kernel_size,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        ) = case
+        out_shape = _conv_transpose_output_shape(
+            inp_shape, weight_shape, stride, padding, output_padding, dilation
+        )
 
-    # Reference graph on the fp64-upcast inputs. ``detach`` keeps the upcast
-    # tensors leaves so ``requires_grad_`` is legal.
-    ref_inp = utils.to_reference(inp.detach(), True).requires_grad_()
-    ref_weight = utils.to_reference(weight.detach(), True).requires_grad_()
-    ref_bias = utils.to_reference(bias.detach(), True).requires_grad_()
-    ref_grad_out = utils.to_reference(grad_out, True)
+        inp = tu.make_input(dtype, inp_shape, ["-1", "1"])
+        weight = tu.make_input(dtype, weight_shape, ["-1", "1"])
+        bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
+        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-    ref_out = torch.ops.aten.slow_conv_transpose3d(
-        ref_inp,
-        ref_weight,
-        kernel_size,
-        ref_bias,
-        stride,
-        padding,
-        output_padding,
-        dilation,
-    )
-    ref_gi, ref_gw, ref_gb = torch.autograd.grad(
-        ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
-    )
+        # Reference graph on the fp64-upcast inputs. ``detach`` keeps the upcast
+        # tensors leaves so ``requires_grad_`` is legal.
+        ref_inp = utils.to_reference(
+            inp.detach(), True, independent=True
+        ).requires_grad_()
+        ref_weight = utils.to_reference(
+            weight.detach(), True, independent=True
+        ).requires_grad_()
+        ref_bias = utils.to_reference(
+            bias.detach(), True, independent=True
+        ).requires_grad_()
+        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
 
-    # Self-check: the low-level op's autograd must match the standard
-    # F.conv_transpose3d backward (same math, im2col vs direct formulation).
-    f_out = torch.nn.functional.conv_transpose3d(
-        ref_inp,
-        ref_weight,
-        ref_bias,
-        stride=stride,
-        padding=padding,
-        output_padding=output_padding,
-        dilation=dilation,
-    )
-    f_gi, f_gw, f_gb = torch.autograd.grad(
-        f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
-    )
-    tu.assert_result_close(ref_gi, f_gi)
-    tu.assert_result_close(ref_gw, f_gw)
-    tu.assert_result_close(ref_gb, f_gb)
+        ref_out = torch.ops.aten.slow_conv_transpose3d(
+            ref_inp,
+            ref_weight,
+            kernel_size,
+            ref_bias,
+            stride,
+            padding,
+            output_padding,
+            dilation,
+        )
+        ref_gi, ref_gw, ref_gb = torch.autograd.grad(
+            ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+        )
 
-    # The candidate forward must match the fp64 reference...
-    inp.requires_grad_()
-    weight.requires_grad_()
-    bias.requires_grad_()
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
-    )
-    _assert_close(res_out, ref_out.to(dtype), dtype)
+        # Self-check: the low-level op's autograd must match the standard
+        # F.conv_transpose3d backward (same math, im2col vs direct formulation).
+        f_out = torch.nn.functional.conv_transpose3d(
+            ref_inp,
+            ref_weight,
+            ref_bias,
+            stride=stride,
+            padding=padding,
+            output_padding=output_padding,
+            dilation=dilation,
+        )
+        f_gi, f_gw, f_gb = torch.autograd.grad(
+            f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
+        )
+        tu.assert_result_close(ref_gi, f_gi)
+        tu.assert_result_close(ref_gw, f_gw)
+        tu.assert_result_close(ref_gb, f_gb)
 
-    # ...and, if the candidate kernel is autograd-aware, its gradients must
-    # match the reference gradients too.
-    if res_out.requires_grad:
+        # The candidate forward must match the fp64 reference...
+        inp.requires_grad_()
+        weight.requires_grad_()
+        bias.requires_grad_()
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
+        )
+        _assert_close(res_out, ref_out.to(dtype), dtype)
+
+        # ...and, if the candidate kernel is autograd-aware, its gradients must
+        # match the reference gradients too.
+        assert res_out.requires_grad
         res_gi, res_gw, res_gb = torch.autograd.grad(
             res_out, (inp, weight, bias), grad_outputs=grad_out
         )
@@ -608,42 +624,44 @@ def test_slow_conv_transpose3d_backward(case, dtype):
         _assert_close(res_gb, ref_gb.to(dtype), dtype)
 
 
-@pytest.mark.slow_conv_transpose3d_nan_inf
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_slow_conv_transpose3d_nan_inf(dtype):
-    # A single nan and a single inf in the input, with a positive unit 1x1x1
-    # kernel and a unit bias: each output element is the sum of exactly one
-    # input element and one bias term, so the nan/inf land at exactly the same
-    # output positions in the reference and any faithful candidate (no
-    # inf/-inf cancellation).
-    _disable_tf32()
+if tu.LEVEL == "all":
 
-    inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
-    inp[0, 0, 1, 1, 1] = float("nan")
-    inp[0, 0, 2, 2, 2] = float("inf")
-    weight = torch.ones((1, 1, 1, 1, 1), dtype=dtype, device=flag_gems.device)
-    bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
-    kernel_size = (1, 1, 1)
+    @pytest.mark.slow_conv_transpose3d_nan_inf
+    @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+    def test_slow_conv_transpose3d_nan_inf(dtype):
+        # A single nan and a single inf in the input, with a positive unit 1x1x1
+        # kernel and a unit bias: each output element is the sum of exactly one
+        # input element and one bias term, so the nan/inf land at exactly the same
+        # output positions in the reference and any faithful candidate (no
+        # inf/-inf cancellation).
+        _disable_tf32()
 
-    ref_inp = utils.to_reference(inp, True)
-    ref_weight = utils.to_reference(weight, True)
-    ref_bias = utils.to_reference(bias, True)
-    ref_out = torch.ops.aten.slow_conv_transpose3d(
-        ref_inp,
-        ref_weight,
-        kernel_size,
-        ref_bias,
-        (1, 1, 1),
-        (0, 0, 0),
-        (0, 0, 0),
-        (1, 1, 1),
-    ).to(dtype)
+        inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
+        inp[0, 0, 1, 1, 1] = float("nan")
+        inp[0, 0, 2, 2, 2] = float("inf")
+        weight = torch.ones((1, 1, 1, 1, 1), dtype=dtype, device=flag_gems.device)
+        bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
+        kernel_size = (1, 1, 1)
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (0, 0, 0), (1, 1, 1)
-    )
+        ref_inp = utils.to_reference(inp, True, independent=True)
+        ref_weight = utils.to_reference(weight, True, independent=True)
+        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_out = torch.ops.aten.slow_conv_transpose3d(
+            ref_inp,
+            ref_weight,
+            kernel_size,
+            ref_bias,
+            (1, 1, 1),
+            (0, 0, 0),
+            (0, 0, 0),
+            (1, 1, 1),
+        ).to(dtype)
 
-    _assert_close(res_out, ref_out, dtype, equal_nan=True)
+        res_out = _resolve_gems_op()(
+            inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (0, 0, 0), (1, 1, 1)
+        )
+
+        _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.slow_conv_transpose3d_negative

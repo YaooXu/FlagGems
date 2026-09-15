@@ -234,14 +234,7 @@ def _make_empty_csr(shape, dtype):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.dense_dim is registered; resolution
-    # order is: (1) override, (2) the direct flag_gems.dense_dim callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "dense_dim", getattr(flag_gems, "dense_dim", None)
-    )
+    return tu.resolve_gems_op("dense_dim", getattr(flag_gems, "dense_dim", None))
 
 
 def _assert_result(res_out, ref_out, expected):
@@ -258,7 +251,7 @@ def _assert_result(res_out, ref_out, expected):
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_dense_dim_dense(shape, expected, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -272,7 +265,7 @@ def test_dense_dim_dense(shape, expected, dtype):
 def test_dense_dim_empty_dense(shape, expected, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     assert inp.numel() == 0
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -289,7 +282,7 @@ def test_dense_dim_dense_value_ranges(shape, value_range, dtype):
     # extreme and degenerate); the reported dense dims never change because
     # dense_dim reads only layout metadata.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -305,7 +298,7 @@ def test_dense_dim_noncontiguous_dense(dtype):
     base = tu.make_input(dtype, (4, 5, 6), ["-1", "1"])
     inp = base.transpose(0, 2)
     assert not inp.is_contiguous()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -319,7 +312,7 @@ def test_dense_dim_noncontiguous_dense(dtype):
 def test_dense_dim_sparse_coo(case, dtype):
     sparse_shape, dense_shape, nnz = case
     inp = _make_coo(sparse_shape, dense_shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -338,7 +331,7 @@ def test_dense_dim_sparse_coo(case, dtype):
 def test_dense_dim_sparse_coo_value_ranges(case, value_range, dtype):
     sparse_shape, dense_shape, nnz = case
     inp = _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -352,7 +345,7 @@ def test_dense_dim_sparse_coo_value_ranges(case, value_range, dtype):
 def test_dense_dim_sparse_csr(case, dtype):
     shape, nnz = case
     inp = _make_csr(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -370,7 +363,7 @@ def test_dense_dim_sparse_csr(case, dtype):
 def test_dense_dim_sparse_csr_value_ranges(case, value_range, dtype):
     shape, nnz = case
     inp = _make_csr(shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -393,7 +386,7 @@ def test_dense_dim_empty_coo(dtype):
     inp = torch.sparse_coo_tensor(
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -408,7 +401,7 @@ def test_dense_dim_empty_csr(shape, dtype):
     # nnz == 0: the crow/col indices and values are empty, but dense_dim is
     # still reported exactly as for a populated CSR tensor.
     inp = _make_empty_csr(shape, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -429,7 +422,7 @@ def test_dense_dim_uncoalesced_coo(dtype):
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -437,65 +430,71 @@ def test_dense_dim_uncoalesced_coo(dtype):
     _assert_result(res_out, ref_out, len(dense_shape))
 
 
-@pytest.mark.dense_dim
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_dense_dim_nan_inf_dense(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
-    # strided path (CompositeExplicitAutograd default) still reports self.dim().
-    inp = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    ).reshape(2, 3)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.dense_dim
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_dense_dim_nan_inf_dense(dtype):
+        # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
+        # strided path (CompositeExplicitAutograd default) still reports self.dim().
+        inp = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        ).reshape(2, 3)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 2)
+        ref_out = torch.ops.aten.dense_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
 
-
-@pytest.mark.dense_dim
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_dense_dim_nan_inf_coo(dtype):
-    # The same values stored sparsely: dense_dim reports the trailing dense
-    # dims (0 for this all-sparse layout) regardless of the nan/inf payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
-
-    ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
-
-    _assert_result(res_out, ref_out, 0)
+        _assert_result(res_out, ref_out, 2)
 
 
-@pytest.mark.dense_dim
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test_dense_dim_nan_inf_csr(dtype):
-    # The same values stored in CSR form: dense_dim reports 0 (there are no
-    # dense dims in a CSR layout) regardless of the nan/inf payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
-    col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
-    inp = torch.sparse_csr_tensor(
-        crow_indices, col_indices, values, (3, 4), device=flag_gems.device
-    )
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.dense_dim
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_dense_dim_nan_inf_coo(dtype):
+        # The same values stored sparsely: dense_dim reports the trailing dense
+        # dims (0 for this all-sparse layout) regardless of the nan/inf payload.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 0)
+        ref_out = torch.ops.aten.dense_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 0)
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.dense_dim
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test_dense_dim_nan_inf_csr(dtype):
+        # The same values stored in CSR form: dense_dim reports 0 (there are no
+        # dense dims in a CSR layout) regardless of the nan/inf payload.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
+        col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
+        inp = torch.sparse_csr_tensor(
+            crow_indices, col_indices, values, (3, 4), device=flag_gems.device
+        )
+        ref_inp = utils.to_reference(inp, independent=True)
+
+        ref_out = torch.ops.aten.dense_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 0)
 
 
 @pytest.mark.dense_dim

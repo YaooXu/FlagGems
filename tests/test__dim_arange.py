@@ -103,22 +103,10 @@ _VIEW_CASES = [
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. ``flag_gems._dim_arange``
-    # may not be registered yet, so getattr supplies a safe default and
-    # resolve_gems_op falls back to the package namespace before raising.
-    return flag_gems.testing.resolve_gems_op(
-        "_dim_arange", getattr(flag_gems, "_dim_arange", None)
-    )
+    return tu.resolve_gems_op("_dim_arange", getattr(flag_gems, "_dim_arange", None))
 
 
 def _make_like(dtype, shape, value_range):
-    # Unsigned dtypes cannot represent the negative bounds of some spec ranges;
-    # tu.make_input would clamp the low bound to 0 and fail on the resulting
-    # empty interval. The values are irrelevant here, so snap the range to the
-    # representable part and keep the (shape, dim) semantics under test.
-    if dtype == torch.uint8 and tu.resolve_bound(value_range[0], dtype) < 0:
-        value_range = ["0", value_range[1] if value_range[1] != "-1" else "1"]
     return tu.make_input(dtype, shape, value_range)
 
 
@@ -144,7 +132,7 @@ def test__dim_arange_value_ranges(shape, dim, value_range, dtype):
     # spec is exercised here (this doubles as the value-range migration of the
     # original randn-based workload).
     inp = _make_like(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
     res_out = _resolve_gems_op()(inp, dim)
@@ -164,7 +152,7 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     inp = view_fn(base)
     assert not inp.is_contiguous()
     assert tuple(inp.shape) == expected_shape
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
     res_out = _resolve_gems_op()(inp, dim)
@@ -172,21 +160,23 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     _assert_arange_result(res_out, ref_out, inp, expected_len)
 
 
-@pytest.mark._dim_arange
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__dim_arange_nan_inf(dtype):
-    # nan/inf are ordinary storage values for this op and must be ignored: the
-    # result is still the deterministic arange sequence over the selected dim.
-    inp = _make_like(dtype, (4, 8, 6), ["-1", "1"]).clone()
-    inp[0, :, 0] = float("inf")
-    inp[1, :, 1] = float("-inf")
-    inp[2, :, 2] = float("nan")
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
-    res_out = _resolve_gems_op()(inp, 1)
+    @pytest.mark._dim_arange
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test__dim_arange_nan_inf(dtype):
+        # nan/inf are ordinary storage values for this op and must be ignored: the
+        # result is still the deterministic arange sequence over the selected dim.
+        inp = _make_like(dtype, (4, 8, 6), ["-1", "1"]).clone()
+        inp[0, :, 0] = float("inf")
+        inp[1, :, 1] = float("-inf")
+        inp[2, :, 2] = float("nan")
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_arange_result(res_out, ref_out, inp, 8)
+        ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
+        res_out = _resolve_gems_op()(inp, 1)
+
+        _assert_arange_result(res_out, ref_out, inp, 8)
 
 
 @pytest.mark._dim_arange
@@ -196,7 +186,7 @@ def test__dim_arange_no_autograd(dtype):
     # result must never carry a grad_fn (and the op must not mutate ``like``).
     inp = _make_like(dtype, (3, 5), ["-1", "1"])
     before = inp.clone().detach()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
     res_out = _resolve_gems_op()(inp, 1)

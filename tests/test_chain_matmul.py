@@ -31,8 +31,7 @@ Candidate resolution
 The candidate is resolved *inside every test* (never at import time) through
 ``flag_gems.testing.resolve_gems_op`` so KernelGen's ``override_gems_op`` wins.
 The default overload uses the public name ``chain_matmul``; the ``.out`` overload
-uses the canonical dotted name ``chain_matmul.out`` (the harness also registers
-the ``chain_matmul_out`` alias, exposed here as the default callable).
+uses the same public callable with the actual ``out`` keyword.
 
 dtype coverage
 --------------
@@ -47,13 +46,9 @@ Triton matmul path.
 Value ranges
 ------------
 The regular-operator spec's five ranges (``tu.selected_ranges()``) are swept.
-Matrix products amplify magnitude like ``|b| ** k`` for a length-k chain, so the
-two unbounded ranges ``[0, max]`` / ``[min, 0]`` overflow the fp16/bf16/fp32
-accumulators while the fp64 reference stays finite (the comparison would then be
-meaningless). ``_make_chain`` keeps the range's sign structure and relative
-spread but caps the magnitude of those two ranges at ``_EXTREME_MAGNITUDE``
-before the Xavier ``1/sqrt(fan_in)`` scaling, so every entry remains a genuine
-element of the requested range while the chain stays representable.
+Ranges keep their full magnitudes. The reference retains the input dtype at
+each matrix product: a single fp64 upcast removes intermediate rounding and
+overflow, changing the multi-product operator being tested.
 """
 
 import pytest
@@ -69,17 +64,6 @@ from . import test_utils as tu
 # ---------------------------------------------------------------------------
 
 # The spec's required dtype candidates, probed against the real aten op below.
-_CHAIN_DTYPE_CANDIDATES = [
-    torch.int8,
-    torch.uint8,
-    torch.float8_e4m3fn,
-    torch.float8_e5m2,
-    torch.float32,
-    torch.bfloat16,
-    torch.float16,
-    torch.int32,
-    torch.int64,
-]
 
 
 def _probe_chain_dtype(_op_name, dtype):
@@ -98,7 +82,7 @@ def _probe_chain_dtype(_op_name, dtype):
 # float dtype set IS this operator's complete dtype set. The fallback therefore
 # keeps the full (float-only) candidate set rather than dropping any of it.
 _CHAIN_DTYPES = tu.supported_dtypes(
-    "chain_matmul", list(utils.FLOAT_DTYPES), probe=_probe_chain_dtype
+    "chain_matmul", list(utils.ALL_FLOAT_DTYPES), probe=_probe_chain_dtype
 )
 if not _CHAIN_DTYPES:
     _CHAIN_DTYPES = list(utils.FLOAT_DTYPES)
@@ -142,10 +126,8 @@ else:
         [(16, 32), (32, 64), (64, 16)],
     ]
 
-# The two unbounded ranges are magnitude-capped so the candidate's native-dtype
-# accumulation cannot overflow while the fp64 reference stays finite.
-_EXTREME_RANGES = (("0", "max"), ("min", "0"))
-_EXTREME_MAGNITUDE = 4.0
+# Extreme workloads retain their declared bounds. Their oracle uses the original
+# dtype because upcasting changes intermediate overflow and NaN propagation.
 
 
 # ---------------------------------------------------------------------------
@@ -154,79 +136,31 @@ _EXTREME_MAGNITUDE = 4.0
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so the process-local
-    # override installed by KernelGen for this run wins. flag_gems exposes no
-    # direct chain_matmul callable yet, so the default is None and the override
-    # registry (or a LookupError) decides.
-    return flag_gems.testing.resolve_gems_op(
-        "chain_matmul", getattr(flag_gems, "chain_matmul", None)
-    )
+    return tu.resolve_gems_op("chain_matmul", getattr(flag_gems, "chain_matmul", None))
 
 
 def _resolve_gems_op_out():
-    # The ".out" overload is registered by KernelGen under the canonical
-    # "chain_matmul.out" name and the "chain_matmul_out" alias.
-    return flag_gems.testing.resolve_gems_op(
-        "chain_matmul.out", getattr(flag_gems, "chain_matmul_out", None)
-    )
-
-
-def _range_scale(dtype, value_range):
-    """Magnitude scale applied on top of ``tu.make_input`` for a range."""
-    if tuple(value_range) not in _EXTREME_RANGES:
-        return 1.0
-    bound = max(
-        abs(tu.resolve_bound(value_range[0], dtype)),
-        abs(tu.resolve_bound(value_range[1], dtype)),
-    )
-    return _EXTREME_MAGNITUDE / bound
+    return tu.resolve_gems_op("chain_matmul", getattr(flag_gems, "chain_matmul", None))
 
 
 def _make_chain(shapes, dtype, value_range):
-    """Build a chain of rank-2 matrices from ``value_range``.
-
-    Values come from ``tu.make_input`` (so they honour every dtype bound), are
-    magnitude-capped for the unbounded ranges and Xavier-scaled by
-    ``1/sqrt(fan_in)`` so that intermediate products of long chains stay inside
-    the fp16/bf16 range.
-    """
-    scale = _range_scale(dtype, value_range)
-    return [
-        tu.make_input(dtype, shape, value_range) * (scale / (shape[1] ** 0.5))
-        for shape in shapes
-    ]
+    return [tu.make_input(dtype, shape, value_range) for shape in shapes]
 
 
 def _make_noncontig_chain(shapes, dtype, value_range):
-    """Same chain as ``_make_chain`` but every matrix is a transposed view.
-
-    The scaling is applied *before* the transpose so the returned tensor is the
-    non-contiguous ``.t()`` view itself (a tensor produced by an elementwise
-    multiply would be freshly allocated and contiguous).
-    """
-    scale = _range_scale(dtype, value_range)
-    matrices = []
-    for rows, cols in shapes:
-        base = tu.make_input(dtype, (cols, rows), value_range)
-        matrices.append((base * (scale / (cols**0.5))).t())
-    return matrices
+    return [
+        tu.make_input(dtype, (cols, rows), value_range).t() for rows, cols in shapes
+    ]
 
 
 def _to_ref(matrices):
-    return [utils.to_reference(m, m.is_floating_point()) for m in matrices]
+    return [utils.to_reference(m, independent=True) for m in matrices]
 
 
 def _assert_chain_close(res_out, ref_out, shapes, dtype):
     del shapes
     assert res_out.dtype == dtype
     assert res_out.shape == ref_out.shape
-    # The five spec ranges (in particular the unbounded [0, max] / [min, 0]
-    # ones) feed wide-magnitude chains whose long fp32/bf16 reductions exceed
-    # gems_assert_close's fp64-reference tolerances, so the value-range-friendly
-    # spec helper (rtol=1e-2 / atol=1e-3 / equal_nan) performs the comparison;
-    # the exact dtype and shape are still pinned explicitly above. The reference
-    # is rounded to the candidate dtype first (the spec helper compares dtypes
-    # strictly), which mirrors what gems_assert_close does internally.
     ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
     tu.assert_result_close(res_out, ref)
 
@@ -301,31 +235,33 @@ def test_chain_matmul_out(shapes, value_range, dtype):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.chain_matmul
-@pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
-def test_chain_matmul_nan_inf(dtype):
-    # inf @ finite exercises inf * 0 -> nan inside the reduction as well as
-    # inf + inf -> inf and (-inf) + (-inf) -> -inf; the output pattern is
-    # deterministic on both paths and equal_nan=True tolerates the nan entries.
-    m1 = torch.tensor(
-        [[float("inf"), 1.0], [1.0, float("-inf")]],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    m2 = torch.tensor(
-        [[1.0, 0.0], [1.0, 1.0]],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    inp = [m1, m2]
-    ref_inp = _to_ref(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.chain_matmul(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.chain_matmul
+    @pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
+    def test_chain_matmul_nan_inf(dtype):
+        # inf @ finite exercises inf * 0 -> nan inside the reduction as well as
+        # inf + inf -> inf and (-inf) + (-inf) -> -inf; the output pattern is
+        # deterministic on both paths and equal_nan=True tolerates the nan entries.
+        m1 = torch.tensor(
+            [[float("inf"), 1.0], [1.0, float("-inf")]],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        m2 = torch.tensor(
+            [[1.0, 0.0], [1.0, 1.0]],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        inp = [m1, m2]
+        ref_inp = _to_ref(inp)
 
-    assert res_out.dtype == dtype
-    ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
-    tu.assert_result_close(res_out, ref)
+        ref_out = torch.ops.aten.chain_matmul(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        assert res_out.dtype == dtype
+        ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
+        tu.assert_result_close(res_out, ref)
 
 
 # ---------------------------------------------------------------------------
@@ -333,32 +269,31 @@ def test_chain_matmul_nan_inf(dtype):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.chain_matmul
-@pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)
-@pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
-def test_chain_matmul_backward(shapes, dtype):
-    inp = [m.requires_grad_() for m in _make_chain(shapes, dtype, ["-1", "1"])]
-    grad = tu.make_input(dtype, (shapes[0][0], shapes[-1][1]), ["-1", "1"])
+if tu.LEVEL == "all":
 
-    ref_inp = []
-    for matrix in inp:
-        ref_matrix = utils.to_reference(matrix.detach(), True)
-        ref_inp.append(ref_matrix.requires_grad_())
-    ref_grad = utils.to_reference(grad, True)
+    @pytest.mark.chain_matmul
+    @pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)
+    @pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
+    def test_chain_matmul_backward(shapes, dtype):
+        inp = [m.requires_grad_() for m in _make_chain(shapes, dtype, ["-1", "1"])]
+        grad = tu.make_input(dtype, (shapes[0][0], shapes[-1][1]), ["-1", "1"])
 
-    ref_out = torch.ops.aten.chain_matmul(ref_inp)
-    ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
-    for ref_g, shape in zip(ref_grads, shapes):
-        assert ref_g.shape == shape
+        ref_inp = []
+        for matrix in inp:
+            ref_matrix = utils.to_reference(matrix.detach(), independent=True)
+            ref_inp.append(ref_matrix.requires_grad_())
+        ref_grad = utils.to_reference(grad, independent=True)
 
-    # The candidate forward must match the fp64 reference...
-    res_out = _resolve_gems_op()(inp)
-    _assert_chain_close(res_out, ref_out, shapes, dtype)
+        ref_out = torch.ops.aten.chain_matmul(ref_inp)
+        ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
+        for ref_g, shape in zip(ref_grads, shapes):
+            assert ref_g.shape == shape
 
-    # ...and, if the candidate advertises autograd support (a plain fused kernel
-    # does not: res_out.requires_grad is False), its gradients must match the
-    # fp64 reference gradients as well.
-    if res_out.requires_grad:
+        # The candidate forward must match the native-dtype reference...
+        res_out = _resolve_gems_op()(inp)
+        _assert_chain_close(res_out, ref_out, shapes, dtype)
+
+        assert res_out.requires_grad
         res_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
         for res_g, ref_g in zip(res_grads, ref_grads):
             assert res_g.dtype == dtype

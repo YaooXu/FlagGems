@@ -89,8 +89,6 @@ _REMOVE_BATCH_DIM_DTYPES = (
 # floating dtype); the view is bit-exact so the upcast changes nothing.
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
-# The spec's [-1, 0] range has no representable unsigned counterpart (it
-# collapses to the empty [0, 0) interval), so it is skipped for uint8.
 _UNSIGNED_INT_DTYPES = (torch.uint8,)
 
 # (shape, out_dim, batch_size) grid. Every combination is a valid expand:
@@ -146,11 +144,7 @@ _NON_CONTIGUOUS_CASES = [
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at import time) so that the process-local
-    # override installed by KernelGen for this run wins. Resolution order is:
-    # (1) override, (2) the direct flag_gems._remove_batch_dim callable, (3)
-    # LookupError.
-    return flag_gems.testing.resolve_gems_op(
+    return tu.resolve_gems_op(
         "_remove_batch_dim", getattr(flag_gems, "_remove_batch_dim", None)
     )
 
@@ -170,12 +164,7 @@ def _as_comparable(t):
 def _assert_values_close(res, ref):
     # int/bool must match bit-exactly; floating point uses the shared tolerance
     # with equal_nan=True (the broadcast view repeats the stored values exactly).
-    res_c = _as_comparable(res)
-    ref_c = _as_comparable(ref)
-    if res_c.dtype == torch.bool or not res_c.is_floating_point():
-        utils.gems_assert_equal(res_c, ref_c)
-    else:
-        utils.gems_assert_close(res_c, ref_c, res_c.dtype, equal_nan=True)
+    tu.assert_result_equal(res, ref)
 
 
 def _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype):
@@ -203,7 +192,7 @@ def test__remove_batch_dim(shape, out_dim, batch_size, level, dtype):
     # keeps every storage dtype valid); the dedicated value-range test below
     # sweeps the full spec ranges. ``level`` must never change the result.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
@@ -221,7 +210,7 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     # shape rank semantics; the broadcast case below covers true data broadcast.
     out_dim, batch_size = 0, 1
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
@@ -229,20 +218,22 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
 
 
-@pytest.mark._remove_batch_dim
-@pytest.mark.parametrize("dtype, value_range", _dtype_range_pairs())
-def test__remove_batch_dim_value_ranges_broadcast(dtype, value_range):
-    # A true broadcast insert: batch_size=2 at out_dim=1 of (2, 19, 7) targets
-    # (2, 2, 19, 7), so the whole tensor is repeated along the new stride-0 batch
-    # dim and every value range must round-trip exactly.
-    shape, out_dim, batch_size = (2, 19, 7), 1, 2
-    inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
+    @pytest.mark._remove_batch_dim
+    @pytest.mark.parametrize("dtype, value_range", _dtype_range_pairs())
+    def test__remove_batch_dim_value_ranges_broadcast(dtype, value_range):
+        # A true broadcast insert: batch_size=2 at out_dim=1 of (2, 19, 7) targets
+        # (2, 2, 19, 7), so the whole tensor is repeated along the new stride-0 batch
+        # dim and every value range must round-trip exactly.
+        shape, out_dim, batch_size = (2, 19, 7), 1, 2
+        inp = tu.make_input(dtype, shape, value_range)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
+        ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
+        res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
+
+        _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
 
 
 @pytest.mark._remove_batch_dim
@@ -255,7 +246,7 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     # device so the two inputs share the same memory layout. The sliced shape is
     # what out_dim/batch_size must be valid for.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base)
+    ref_base = utils.to_reference(base, independent=True)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -266,56 +257,60 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     _assert_output(res_out, ref_out, inp.shape, out_dim, batch_size, dtype)
 
 
-@pytest.mark._remove_batch_dim
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__remove_batch_dim_nan_inf(dtype):
-    # The view never performs arithmetic, so nan/inf/-inf and signed zeros pass
-    # through the broadcast untouched (equal_nan=True in the float comparison).
-    vals = [
-        float("inf"),
-        float("-inf"),
-        float("nan"),
-        0.0,
-        -0.0,
-        1.5,
-        -2.5,
-        1e30,
-        -1e30,
-    ]
-    inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device).reshape(3, 3)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, 4, 0)
-    res_out = _resolve_gems_op()(inp, 0, 4, 0)
+    @pytest.mark._remove_batch_dim
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test__remove_batch_dim_nan_inf(dtype):
+        # The view never performs arithmetic, so nan/inf/-inf and signed zeros pass
+        # through the broadcast untouched (equal_nan=True in the float comparison).
+        vals = [
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            0.0,
+            -0.0,
+            1.5,
+            -2.5,
+            1e30,
+            -1e30,
+        ]
+        inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device).reshape(3, 3)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_values_close(res_out, ref_out)
+        ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, 4, 0)
+        res_out = _resolve_gems_op()(inp, 0, 4, 0)
+
+        _assert_values_close(res_out, ref_out)
 
 
-@pytest.mark._remove_batch_dim
-@pytest.mark.parametrize("shape, out_dim, batch_size", _BACKWARD_CASES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
-def test__remove_batch_dim_backward(shape, out_dim, batch_size, dtype):
-    # expand is differentiable: the gradient of the broadcast view is the
-    # sum-reduction of grad_output over every broadcast (stride-0) dim. The
-    # candidate gradient must match aten's, including the reduction.
-    level = 0
-    inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
-    out_shape = _expected_shape(shape, out_dim, batch_size)
-    grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
-    ref_grad_out = utils.to_reference(grad_out)
+if tu.LEVEL == "all":
 
-    inp.requires_grad_(True)
-    ref_inp.requires_grad_(True)
+    @pytest.mark._remove_batch_dim
+    @pytest.mark.parametrize("shape, out_dim, batch_size", _BACKWARD_CASES)
+    @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+    def test__remove_batch_dim_backward(shape, out_dim, batch_size, dtype):
+        # expand is differentiable: the gradient of the broadcast view is the
+        # sum-reduction of grad_output over every broadcast (stride-0) dim. The
+        # candidate gradient must match aten's, including the reduction.
+        level = 0
+        inp = tu.make_input(dtype, shape, ["-1", "1"])
+        ref_inp = utils.to_reference(inp, independent=True)
+        out_shape = _expected_shape(shape, out_dim, batch_size)
+        grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
+        ref_grad_out = utils.to_reference(grad_out, independent=True)
 
-    ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
+        inp.requires_grad_(True)
+        ref_inp.requires_grad_(True)
 
-    res_grad = torch.autograd.grad(res_out, inp, grad_out)[0]
-    ref_grad = torch.autograd.grad(ref_out, ref_inp, ref_grad_out)[0]
+        ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
+        res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
 
-    assert res_grad.shape == ref_grad.shape == inp.shape
-    _assert_values_close(res_grad, ref_grad)
+        res_grad = torch.autograd.grad(res_out, inp, grad_out)[0]
+        ref_grad = torch.autograd.grad(ref_out, ref_inp, ref_grad_out)[0]
+
+        assert res_grad.shape == ref_grad.shape == inp.shape
+        _assert_values_close(res_grad, ref_grad)
 
 
 @pytest.mark._remove_batch_dim
@@ -350,3 +345,20 @@ def test__remove_batch_dim_rejects_non_tensor():
         torch.ops.aten._remove_batch_dim(3.14, 0, 1, 0)
     with pytest.raises((RuntimeError, TypeError, ValueError, AttributeError)):
         _resolve_gems_op()(3.14, 0, 1, 0)
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark._remove_batch_dim
+    @pytest.mark.parametrize(
+        "dtype, scenario", tu.special_value_cases(_REMOVE_BATCH_DIM_DTYPES)
+    )
+    def test__remove_batch_dim_special_scenarios(dtype, scenario):
+        inp = tu.make_special_input(dtype, scenario)
+        reference = utils.to_reference(inp, independent=True)
+        candidate = tu.resolve_gems_op(
+            "_remove_batch_dim", getattr(flag_gems, "_remove_batch_dim", None)
+        )
+        expected = torch.ops.aten._remove_batch_dim(reference, 0, 4, 0)
+        actual = candidate(inp, 0, 4, 0)
+        tu.assert_result_equal(actual, expected)

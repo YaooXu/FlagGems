@@ -71,7 +71,9 @@ def _sparse_dtype_probe(op_name, dtype):
         indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
         values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
         inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        return isinstance(torch.ops.aten.sparse_dim(utils.to_reference(inp)), int)
+        return isinstance(
+            torch.ops.aten.sparse_dim(utils.to_reference(inp, independent=True)), int
+        )
     except Exception:
         return False
 
@@ -282,14 +284,7 @@ def _make_empty_csr(shape, dtype):
 
 
 def _resolve_gems_op():
-    # Resolved inside each test (never at module import time) so the
-    # process-local override injected by KernelGen for this run wins. The
-    # default stays None until flag_gems.sparse_dim is registered; resolution
-    # order is: (1) override, (2) the direct flag_gems.sparse_dim callable,
-    # (3) LookupError.
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_dim", getattr(flag_gems, "sparse_dim", None)
-    )
+    return tu.resolve_gems_op("sparse_dim", getattr(flag_gems, "sparse_dim", None))
 
 
 def _assert_result(res_out, ref_out, expected):
@@ -309,7 +304,7 @@ def _assert_result(res_out, ref_out, expected):
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_dense_layouts(shape, expected, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -323,7 +318,7 @@ def test_sparse_dim_dense_layouts(shape, expected, dtype):
 def test_sparse_dim_empty_dense(shape, expected, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     assert inp.numel() == 0
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -341,7 +336,7 @@ def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
     # the result (always 0 sparse dims), but they exercise the value-range
     # machinery end to end.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -358,7 +353,7 @@ def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
 def test_sparse_dim_coo_layouts(case, dtype):
     sparse_shape, dense_shape, nnz = case
     inp = _make_coo(sparse_shape, dense_shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -378,7 +373,7 @@ def test_sparse_dim_coo_spec_shapes_value_ranges(shape, value_range, dtype):
     # Shared spec shape set mapped onto all-sparse COO (sparse_dim == rank)
     # crossed with the five spec value ranges.
     inp = _make_coo_all_sparse(shape, _SPEC_NNZ, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -393,7 +388,7 @@ def test_sparse_dim_coo_spec_shapes_value_ranges(shape, value_range, dtype):
 def test_sparse_dim_coo_value_ranges(case, value_range, dtype):
     sparse_shape, dense_shape, nnz = case
     inp = _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -416,7 +411,7 @@ def test_sparse_dim_empty_coo(dtype):
     inp = torch.sparse_coo_tensor(
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -437,7 +432,7 @@ def test_sparse_dim_uncoalesced_coo(dtype):
         indices, values, sparse_shape + dense_shape, device=flag_gems.device
     )
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -454,7 +449,7 @@ def test_sparse_dim_uncoalesced_coo(dtype):
 def test_sparse_dim_csr_layouts(case, dtype):
     shape, nnz = case
     inp = _make_csr(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -473,7 +468,7 @@ def test_sparse_dim_csr_value_ranges(value_range, dtype):
     # 2-D CSR tensor with a fixed 5-entry crow/col pattern.
     shape, nnz = (4, 4), 5
     inp = _make_csr(shape, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -490,7 +485,7 @@ def test_sparse_dim_csr_dense_dims(value_range, dtype):
     inp = _make_csr_with_dense_dims(dtype, value_range)
     assert inp.sparse_dim() == 2
     assert inp.dense_dim() == 1
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -506,7 +501,7 @@ def test_sparse_dim_empty_csr(shape, dtype):
     # still 2-D sparse, so sparse_dim is reported exactly as for a populated
     # tensor.
     inp = _make_empty_csr(shape, dtype)
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -522,7 +517,7 @@ def test_sparse_dim_csr_spec_shapes(shape, dtype):
     # batched 3-D).
     nnz = 5 if len(shape) == 2 else 3
     inp = _make_csr(shape, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp)
+    ref_inp = utils.to_reference(inp, independent=True)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -533,66 +528,72 @@ def test_sparse_dim_csr_spec_shapes(shape, dtype):
 # ---------------------------------------------------------------------------
 # nan/inf payload
 # ---------------------------------------------------------------------------
-@pytest.mark.sparse_dim
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
-def test_sparse_dim_nan_inf_dense(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
-    # strided path still reports 0 sparse dims.
-    inp = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    ).reshape(2, 3)
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.sparse_dim
+    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+    def test_sparse_dim_nan_inf_dense(dtype):
+        # nan/inf/-inf/±0.0 are ordinary stored values for a metadata query: the
+        # strided path still reports 0 sparse dims.
+        inp = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        ).reshape(2, 3)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 0)
+        ref_out = torch.ops.aten.sparse_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
 
-
-@pytest.mark.sparse_dim
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
-def test_sparse_dim_nan_inf_coo(dtype):
-    # The same values stored sparsely: sparse_dim reports the number of sparse
-    # dims of the layout (1 for this 1-D layout) regardless of the nan/inf
-    # payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-    ref_inp = utils.to_reference(inp)
-
-    ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
-
-    _assert_result(res_out, ref_out, 1)
+        _assert_result(res_out, ref_out, 0)
 
 
-@pytest.mark.sparse_dim
-@pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
-def test_sparse_dim_nan_inf_csr(dtype):
-    # The same values stored in CSR form: sparse_dim reports 2 for the
-    # compressed 2-D sparse layout regardless of the nan/inf payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
-    crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
-    col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
-    inp = torch.sparse_csr_tensor(
-        crow_indices, col_indices, values, (3, 4), device=flag_gems.device
-    )
-    ref_inp = utils.to_reference(inp)
+if tu.LEVEL == "all":
 
-    ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    @pytest.mark.sparse_dim
+    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+    def test_sparse_dim_nan_inf_coo(dtype):
+        # The same values stored sparsely: sparse_dim reports the number of sparse
+        # dims of the layout (1 for this 1-D layout) regardless of the nan/inf
+        # payload.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
+        inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
+        ref_inp = utils.to_reference(inp, independent=True)
 
-    _assert_result(res_out, ref_out, 2)
+        ref_out = torch.ops.aten.sparse_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 1)
+
+
+if tu.LEVEL == "all":
+
+    @pytest.mark.sparse_dim
+    @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
+    def test_sparse_dim_nan_inf_csr(dtype):
+        # The same values stored in CSR form: sparse_dim reports 2 for the
+        # compressed 2-D sparse layout regardless of the nan/inf payload.
+        values = torch.tensor(
+            [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
+            dtype=dtype,
+            device=flag_gems.device,
+        )
+        crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
+        col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
+        inp = torch.sparse_csr_tensor(
+            crow_indices, col_indices, values, (3, 4), device=flag_gems.device
+        )
+        ref_inp = utils.to_reference(inp, independent=True)
+
+        ref_out = torch.ops.aten.sparse_dim(ref_inp)
+        res_out = _resolve_gems_op()(inp)
+
+        _assert_result(res_out, ref_out, 2)
 
 
 # ---------------------------------------------------------------------------
