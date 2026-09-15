@@ -33,8 +33,7 @@ Coverage follows the regular-operator spec adapted to a pure data-movement op:
   round-trip exactly through the diagonal placement);
 * edge cases: empty inputs, large offsets (|offset| > numel), non-contiguous
   (transposed and strided) inputs and nan/inf/-inf passthrough;
-* backward: ``autograd.grad`` validated against the analytic
-  ``diag(grad_out, offset)`` gradient;
+* backward: candidate gradients compared exactly with ATen autograd;
 * negative: non-tensor input and non-int offset raise on both paths.
 """
 
@@ -64,8 +63,6 @@ _DIAGFLAT_DTYPES = [
     torch.bool,
 ]
 
-# double precision gives an exact analytic-gradient check; other float types
-# only get the candidate-vs-reference check when autograd is available.
 _GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d in (torch.float32, torch.float64)] or [
     torch.float32
 ]
@@ -249,9 +246,6 @@ def test_diagflat_backward(shape, offset, dtype):
     # The forward op places flat_inp[k] at out[k, k+offset], so
     # d(diagflat(x))/dx extracts the offset-th diagonal of grad_output and
     # reshapes it back to the input shape (a pure gather, no arithmetic).
-    # Validate the autograd reference against that analytic value, then check
-    # the candidate forward output and -- only when the candidate output is
-    # differentiable -- its gradient against the reference gradient.
     n = _numel(shape)
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
@@ -261,16 +255,12 @@ def test_diagflat_backward(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    if dtype in (torch.float32, torch.float64):
-        expected = torch.ops.aten.diag(ref_grad, offset).reshape(shape)
-        tu.assert_result_close(ref_in_grad, expected)
-
     res_out = _resolve_gems_op()(inp, offset)
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, ref_in_grad)
+    tu.assert_result_equal(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.diagflat

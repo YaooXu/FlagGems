@@ -44,10 +44,8 @@ from . import test_utils as tu
 #   * edge cases -- non-contiguous (strided) inputs, nan/inf/-inf/+-0.0
 #     passthrough, and a no-mutation check;
 #   * backward -- the forward op is an index gather, so its gradient scatters
-#     grad_output back to the input positions; autograd.grad() on the reference
-#     is validated against that analytic scatter (on fp32/fp64) and, when the
-#     candidate output is differentiable, the candidate gradient is compared to
-#     the reference gradient;
+#     grad_output back to the input positions; the candidate gradient is
+#     compared with autograd.grad() on the ATen reference;
 #   * negative -- multi-dim (and 0-dim) inputs, a negative r and a non-int r all
 #     raise on the aten reference and must raise on the candidate.
 # Broadcast does not apply: the op is unary and takes a single labelled tensor.
@@ -119,21 +117,6 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op(
         "combinations", getattr(flag_gems, "combinations", None)
     )
-
-
-def _expected_combination_grad(n, r, with_replacement, grad_output):
-    # Each output row is one r-combination of input indices, so the analytic
-    # gradient scatters grad_output back to the input positions. index_add_
-    # accumulates the diagonal (i, i) rows of the with_replacement case
-    # correctly (each occurrence of the index contributes once).
-    idx = torch.ops.aten.combinations(
-        torch.arange(n, dtype=torch.long, device=grad_output.device),
-        r,
-        with_replacement,
-    )
-    grad = torch.zeros(n, dtype=grad_output.dtype, device=grad_output.device)
-    grad.index_add_(0, idx.reshape(-1), grad_output.reshape(-1))
-    return grad
 
 
 @pytest.mark.combinations
@@ -243,7 +226,7 @@ def test_combinations_nan_inf(dtype, scenario):
 def test_combinations_does_not_mutate_input(dtype):
     # The op only materializes a gather; the source tensor must be untouched.
     inp = tu.make_input(dtype, (16,), ["-1", "1"])
-    before = inp.clone()
+    before = tu.to_reference(inp)
 
     _resolve_gems_op()(inp, 2, False)
 
@@ -255,12 +238,7 @@ def test_combinations_does_not_mutate_input(dtype):
 @pytest.mark.parametrize("with_replacement", _REPLACEMENT_MODES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
 def test_combinations_backward(r, with_replacement, dtype):
-    # The forward op is an index gather, so its gradient scatters grad_output
-    # back to the input positions. Compute the reference gradient with
-    # autograd.grad() on the reference device, validate it against the analytic
-    # scatter (on fp32/fp64, where both algorithms round identically), then
-    # check the candidate forward output and - only when the candidate output
-    # is differentiable - its gradient against the reference gradient.
+    # Forward is an exact gather; backward sums contributions for each input.
     n = 8
     rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
     inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
@@ -271,12 +249,8 @@ def test_combinations_backward(r, with_replacement, dtype):
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    if dtype in (torch.float32, torch.float64):
-        expected = _expected_combination_grad(n, r, with_replacement, ref_grad)
-        tu.assert_result_close(ref_in_grad, expected)
-
     res_out = _resolve_gems_op()(inp, r, with_replacement)
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]

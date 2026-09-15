@@ -482,3 +482,38 @@ def test_quantization_params_reject_boolean_zero_point():
     with testing.override_gems_op("_choose_qparams_per_tensor", invalid):
         with pytest.raises(AssertionError):
             cases.test__choose_qparams_per_tensor_constant(0.0, torch.float32, False)
+
+
+@pytest.mark.parametrize("operator", ["combinations", "diagflat"])
+def test_gather_backward_cases_reject_small_forward_errors(operator):
+    from . import test_combinations as combinations
+    from . import test_diagflat as diagflat
+
+    def corrupted(*args, **kwargs):
+        return getattr(torch.ops.aten, operator)(*args, **kwargs) + 1e-6
+
+    with testing.override_gems_op(operator, corrupted):
+        with pytest.raises(AssertionError):
+            if operator == "combinations":
+                combinations.test_combinations_backward(2, False, torch.float32)
+            else:
+                diagflat.test_diagflat_backward((3, 4), 1, torch.float32)
+
+
+def test_diagflat_rejects_small_gradient_errors():
+    from . import test_diagflat as cases
+
+    class CorruptedGradient(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, inp, offset):
+            ctx.shape = inp.shape
+            ctx.offset = offset
+            return torch.ops.aten.diagflat(inp, offset)
+
+        @staticmethod
+        def backward(ctx, grad):
+            return torch.ops.aten.diag(grad, ctx.offset).reshape(ctx.shape) + 1e-6, None
+
+    with testing.override_gems_op("diagflat", CorruptedGradient.apply):
+        with pytest.raises(AssertionError):
+            cases.test_diagflat_backward((3, 4), 1, torch.float32)

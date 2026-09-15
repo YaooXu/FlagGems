@@ -121,31 +121,12 @@ def _resolve_gems_op():
     )
 
 
-def _expected_grads(grad_output, sizes):
-    """Analytic gradient of a pure gather per input.
-
-    Input element ``i`` appears in exactly one position along its own dim of the
-    flattened combination index, so the gradient is ``grad_output[:, i]``
-    viewed as the full size tuple and summed over every other dim. A single
-    input is returned as-is, so its gradient is the grad output verbatim.
-    """
-    if len(sizes) == 1:
-        return [grad_output]
-    grads = []
-    for i in range(len(sizes)):
-        view = grad_output[:, i].view(*sizes)
-        dims = tuple(d for d in range(len(sizes)) if d != i)
-        grads.append(view.sum(dim=dims))
-    return grads
-
-
 @pytest.mark.cartesian_prod
 @pytest.mark.parametrize("sizes", _CARTESIAN_PROD_SIZES)
 @pytest.mark.parametrize("dtype,value_range", _RANGE_PAIRS)
 def test_cartesian_prod(sizes, dtype, value_range):
     # Full grid: every supported dtype x every value range x every shape level.
     inp = [tu.make_input(dtype, (size,), value_range) for size in sizes]
-    inp_before = [t.clone() for t in inp]
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
@@ -155,8 +136,8 @@ def test_cartesian_prod(sizes, dtype, value_range):
     tu.assert_result_equal(res_out, ref_out)
 
     # cartesian_prod is a pure gather: the inputs must not be mutated.
-    for t, before in zip(inp, inp_before):
-        utils.gems_assert_equal(t, tu.to_reference(before))
+    for t, ref_t in zip(inp, ref_inp):
+        tu.assert_result_equal(t, ref_t)
 
 
 @pytest.mark.cartesian_prod
@@ -232,23 +213,17 @@ def test_cartesian_prod_backward(sizes, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
     ref_grad = tu.to_reference(grad)
 
-    # The analytic gradient must match autograd on the aten reference...
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
-    expected = _expected_grads(ref_grad, sizes)
-    for got, exp in zip(ref_in_grads, expected):
-        tu.assert_result_close(got, exp)
 
-    # ...the candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
 
-    # ...and, if the candidate output is differentiable, its gradient must match
-    # the analytic value too.
+    # Backward sums repeated appearances of each input value.
     assert res_out.requires_grad
     res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
-    for got, exp in zip(res_in_grads, expected):
-        tu.assert_result_close(got, exp)
+    for res_grad, ref_grad in zip(res_in_grads, ref_in_grads):
+        tu.assert_result_close(res_grad, ref_grad)
 
 
 @pytest.mark.cartesian_prod
