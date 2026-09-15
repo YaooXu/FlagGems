@@ -473,6 +473,55 @@ def test_version_accepts_integral_tensor_results(dtype):
         cases.test__version_fresh((4,), torch.float32)
 
 
+_BOOL_METADATA_CASES = [
+    ("can_cast", "test_can_cast", (torch.float32, torch.float32)),
+    ("can_cast", "test_can_cast", (torch.float32, torch.int32)),
+    (
+        "_has_same_storage_numel",
+        "test__has_same_storage_numel_layouts",
+        (("plain", (4,)), ("plain", (4,)), torch.float32),
+    ),
+    (
+        "_has_same_storage_numel",
+        "test__has_same_storage_numel_layouts",
+        (("plain", (4,)), ("plain", (2,)), torch.float32),
+    ),
+]
+
+
+@pytest.mark.parametrize("operator,test_name,args", _BOOL_METADATA_CASES)
+@pytest.mark.parametrize("result_kind", ["list", "tuple", "vector", "matrix"])
+def test_bool_metadata_rejects_container_results(
+    operator, test_name, args, result_kind
+):
+    cases = importlib.import_module(f"tests.test_{operator}")
+
+    def invalid(*inputs):
+        value = getattr(torch.ops.aten, operator)(*inputs)
+        if result_kind == "list":
+            return [value]
+        if result_kind == "tuple":
+            return (value,)
+        shape = (1,) if result_kind == "vector" else (1, 1)
+        return torch.full(shape, value, dtype=torch.bool, device=flag_gems.device)
+
+    with testing.override_gems_op(operator, invalid):
+        with pytest.raises(AssertionError):
+            getattr(cases, test_name)(*args)
+
+
+@pytest.mark.parametrize("operator,test_name,args", _BOOL_METADATA_CASES)
+def test_bool_metadata_accepts_scalar_bool_tensors(operator, test_name, args):
+    cases = importlib.import_module(f"tests.test_{operator}")
+
+    def valid(*inputs):
+        value = getattr(torch.ops.aten, operator)(*inputs)
+        return torch.tensor(value, dtype=torch.bool, device=flag_gems.device)
+
+    with testing.override_gems_op(operator, valid):
+        getattr(cases, test_name)(*args)
+
+
 def test_quantization_params_reject_boolean_zero_point():
     from . import test__choose_qparams_per_tensor as cases
 

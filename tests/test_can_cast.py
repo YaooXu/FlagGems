@@ -74,9 +74,7 @@ _ALL_CAN_CAST_DTYPES = _torch_dtypes(_REQUIRED_DTYPE_NAMES + _EXTRA_DTYPE_NAMES)
 
 
 def _can_cast_dtypes():
-    # The op touches no memory, so the "quick" level keeps the mandated dtype
-    # set while "all" widens it to every ScalarType the runtime exposes. Both
-    # levels clear the spec's tu.MIN_CASES budget.
+    # Quick keeps the required dtype set; default also covers the extra types.
     if tu.QUICK_MODE:
         return list(_REQUIRED_CAN_CAST_DTYPES)
     return list(_ALL_CAN_CAST_DTYPES)
@@ -88,23 +86,14 @@ def _resolve_gems_op():
     )
 
 
-def _as_bool(value):
-    # The reference returns a plain Python bool; a candidate may equivalently
-    # return a 0-dim bool tensor. Normalize both before comparing.
-    if isinstance(value, torch.Tensor):
-        assert value.numel() == 1
-        assert value.dtype == torch.bool
-        return bool(value.item())
-    return bool(value)
-
-
 def _assert_result(res_out, ref_out):
-    # can_cast returns a plain Python bool, so exact equality is required and no
-    # tolerance is involved.
-    assert isinstance(res_out, (bool, torch.Tensor))
-    res_bool = _as_bool(res_out)
-    ref_bool = _as_bool(ref_out)
-    assert res_bool == ref_bool
+    # Accept a Python bool or an equivalent 0-dim bool tensor.
+    if isinstance(res_out, torch.Tensor):
+        assert res_out.ndim == 0
+        assert res_out.dtype == torch.bool
+        res_out = res_out.item()
+    assert type(res_out) is bool
+    assert res_out == ref_out
 
 
 @pytest.mark.can_cast
@@ -115,7 +104,7 @@ def test_can_cast(from_dtype, to_dtype):
     # (from_, to) pair is one workload; the expected outcome comes from the
     # reference and the candidate must agree on both True (same-family
     # widening, bool -> float, fp8 <-> float, complex widening) and False
-    # (float -> int, int -> float16, complex -> float) cases.
+    # (float -> int, complex -> float) cases.
     ref_out = torch.ops.aten.can_cast(from_dtype, to_dtype)
     res_out = _resolve_gems_op()(from_dtype, to_dtype)
 

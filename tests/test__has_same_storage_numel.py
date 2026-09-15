@@ -171,11 +171,13 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out):
-    # The op returns a plain Python bool; a candidate may equivalently return a
-    # 0-dim bool tensor. The comparison is exact (no tolerance involved).
-    res_t = torch.as_tensor(res_out).detach().cpu().reshape(())
-    assert res_t.dtype == torch.bool
-    utils.gems_assert_equal(res_t, torch.tensor(ref_out, dtype=torch.bool))
+    # Accept a Python bool or an equivalent 0-dim bool tensor.
+    if isinstance(res_out, torch.Tensor):
+        assert res_out.ndim == 0
+        assert res_out.dtype == torch.bool
+        res_out = res_out.item()
+    assert type(res_out) is bool
+    utils.gems_assert_equal(res_out, ref_out)
 
 
 @pytest.mark._has_same_storage_numel
