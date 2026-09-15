@@ -19,65 +19,27 @@ import flag_gems
 
 from . import test_utils as tu
 
-# aten::can_cast(ScalarType from_, ScalarType to) -> bool answers whether a value
-# of ScalarType ``from_`` can be cast to ScalarType ``to`` under aten's
-# cast-safety rules. It is a pure dtype-metadata query: no tensor is created,
-# the device is never touched, and the result is a plain Python bool.
-#
-# Regular-operator spec dimension applicability:
-#   * value ranges -- N/A: the op takes two ScalarType arguments and never a
-#     tensor, so there is no payload to sweep (tu.make_input / selected_ranges
-#     do not apply). The (from_, to) dtype cross product below is the analogue:
-#     it covers every family pair (bool / integral / floating / complex / fp8)
-#     in both directions, including the diagonal (every type casts to itself)
-#     and the asymmetric cases such as float -> int.
-#   * shape levels -- N/A: no tensor shapes exist for the op.
-#   * broadcast    -- N/A: the op is a scalar dtype-pair function.
-#   * backward     -- N/A: the op is not differentiable and builds no graph.
-#   * negative     -- covered: non-ScalarType arguments (str/None/float/list)
-#     raise on the reference and must raise on the candidate too.
-#   * nan/inf      -- N/A: no tensor payload.
-#
-# Case budget: since a call is O(1) and allocates nothing, even the quick level
-# runs the full required-dtype cross product. Quick = 11 dtypes x 11 dtypes +
-# 8 negative cases = 129 cases; full = 15 x 15 + 8 = 233, both well above
-# tu.MIN_CASES.
-_REQUIRED_DTYPE_NAMES = (
-    "bool",
-    "int8",
-    "uint8",
-    "float8_e4m3fn",
-    "float8_e5m2",
-    "float32",
-    "bfloat16",
-    "float16",
-    "int32",
-    "int64",
-    "complex64",
-)
-_EXTRA_DTYPE_NAMES = ("int16", "float64", "complex32", "complex128")
+# Check cast compatibility for dtype pairs; there is no tensor payload.
+_CAN_CAST_DTYPES = [
+    torch.bool,
+    torch.int8,
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float32,
+    torch.bfloat16,
+    torch.float16,
+    torch.int32,
+    torch.int64,
+    torch.complex64,
+] + tu.selected_cases([torch.int16, torch.float64, torch.complex32, torch.complex128])
 
-
-def _torch_dtypes(names):
-    # Resolve only the ScalarTypes the running PyTorch actually exposes (fp8
-    # and complex32 are absent on some builds).
-    resolved = []
-    for name in names:
-        dtype = getattr(torch, name, None)
-        if isinstance(dtype, torch.dtype):
-            resolved.append(dtype)
-    return resolved
-
-
-_REQUIRED_CAN_CAST_DTYPES = _torch_dtypes(_REQUIRED_DTYPE_NAMES)
-_ALL_CAN_CAST_DTYPES = _torch_dtypes(_REQUIRED_DTYPE_NAMES + _EXTRA_DTYPE_NAMES)
-
-
-def _can_cast_dtypes():
-    # Quick keeps the required dtype set; default also covers the extra types.
-    if tu.QUICK_MODE:
-        return list(_REQUIRED_CAN_CAST_DTYPES)
-    return list(_ALL_CAN_CAST_DTYPES)
+_INVALID_SCALARTYPE_CASES = [
+    pytest.param("float32", id="str"),
+    pytest.param(None, id="none"),
+    pytest.param(3.14, id="float"),
+    pytest.param([1, 2], id="list"),
+]
 
 
 def _resolve_gems_op():
@@ -87,7 +49,7 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out):
-    # Accept a Python bool or an equivalent 0-dim bool tensor.
+    # Accept a Python bool or a zero-dimensional bool tensor.
     if isinstance(res_out, torch.Tensor):
         assert res_out.ndim == 0
         assert res_out.dtype == torch.bool
@@ -97,36 +59,18 @@ def _assert_result(res_out, ref_out):
 
 
 @pytest.mark.can_cast
-@pytest.mark.parametrize("from_dtype", _can_cast_dtypes())
-@pytest.mark.parametrize("to_dtype", _can_cast_dtypes())
+@pytest.mark.parametrize("from_dtype", _CAN_CAST_DTYPES)
+@pytest.mark.parametrize("to_dtype", _CAN_CAST_DTYPES)
 def test_can_cast(from_dtype, to_dtype):
-    # Cross product over every standard ScalarType in both directions. Each
-    # (from_, to) pair is one workload; the expected outcome comes from the
-    # reference and the candidate must agree on both True (same-family
-    # widening, bool -> float, fp8 <-> float, complex widening) and False
-    # (float -> int, complex -> float) cases.
     ref_out = torch.ops.aten.can_cast(from_dtype, to_dtype)
     res_out = _resolve_gems_op()(from_dtype, to_dtype)
 
     _assert_result(res_out, ref_out)
 
 
-# Non-ScalarType arguments: the aten schema requires ScalarType (an int at the
-# dispatcher level) for both arguments; str/None/float/list hit the invalid
-# argument-combination path and raise RuntimeError on the reference.
-_INVALID_SCALARTYPE_CASES = [
-    pytest.param("float32", id="str"),
-    pytest.param(None, id="none"),
-    pytest.param(3.14, id="float"),
-    pytest.param([1, 2], id="list"),
-]
-
-
 @pytest.mark.can_cast
 @pytest.mark.parametrize("bad_arg", _INVALID_SCALARTYPE_CASES)
 def test_can_cast_rejects_non_scalartype_from(bad_arg):
-    # A candidate must fail loudly on a non-ScalarType ``from_`` instead of
-    # silently returning a bogus bool.
     with pytest.raises(RuntimeError):
         torch.ops.aten.can_cast(bad_arg, torch.float32)
     # A plain-Python candidate naturally raises TypeError/ValueError (or an
@@ -138,7 +82,6 @@ def test_can_cast_rejects_non_scalartype_from(bad_arg):
 @pytest.mark.can_cast
 @pytest.mark.parametrize("bad_arg", _INVALID_SCALARTYPE_CASES)
 def test_can_cast_rejects_non_scalartype_to(bad_arg):
-    # Same contract for the ``to`` argument.
     with pytest.raises(RuntimeError):
         torch.ops.aten.can_cast(torch.float32, bad_arg)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):

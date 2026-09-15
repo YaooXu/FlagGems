@@ -20,14 +20,13 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-_ADD_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 _ADD_INT_DTYPES = utils.ALL_INT_DTYPES + [torch.int8, torch.uint8]
-_ADD_DTYPES = _ADD_FLOAT_DTYPES + _ADD_INT_DTYPES + utils.BOOL_TYPES
-_ADD_COMPLEX_DTYPES = [torch.complex64, torch.complex128]
-_ADD_COMPLEX32_DTYPES = [torch.complex32]
 
-# Broadcast pairs cover the spec's canonical set in both operand orders plus a
-# couple of higher-rank right-operand reductions.
+_ADD_DTYPES = utils.ALL_FLOAT_DTYPES + _ADD_INT_DTYPES + utils.BOOL_TYPES
+
+_ADD_COMPLEX_DTYPES = [torch.complex64, torch.complex128]
+
+# Broadcast pairs in both operand orders.
 _ADD_BROADCAST_PAIRS = [
     ((20, 320, 15), (15,)),
     ((20, 320, 15), (20, 1, 15)),
@@ -37,24 +36,13 @@ _ADD_BROADCAST_PAIRS = [
     ((1, 320, 1), (20, 320, 15)),
 ]
 
-# In-place add_ requires the self tensor to be the broadcast target, so only
-# the pairs whose first operand is the larger shape are valid here.
+# In-place addition requires self to have the broadcast result shape.
 _ADD_INPLACE_BROADCAST_PAIRS = _ADD_BROADCAST_PAIRS[:3]
 
-# Shapes that exercise 0-dim scalars, degenerate/empty tensors and
-# non-contiguous strides (the pointwise kernel must honor the input strides).
-_ADD_EMPTY_SHAPES = [(0,), (4, 0), (2, 0, 3)]
-_ADD_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
+# Integral inputs require an integral alpha.
+_ADD_INT_ALPHAS = tu.selected_cases([0, 1, 2, -3], quick=[1])
 
-# Backward shapes stay small to keep both autograd graphs inexpensive.
-_ADD_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
-
-# aten requires an integral alpha for integral inputs; 2 and -3 exercise both
-# signs of the scale factor on the int path.
-_ADD_INT_ALPHAS = [1] if tu.QUICK_MODE else [0, 1, 2, -3]
-
-# Scalar-scalar add: (a, b, alpha, expected dtype). Both aten and the candidate
-# promote the Python scalars to a 0-dim tensor of the natural dtype.
+# (a, b, alpha, expected dtype).
 _ADD_SCALAR_SCALAR_CASES = [
     (1.5, -2.5, 0.5, torch.float32),
     (-0.001, 100.001, 2.0, torch.float32),
@@ -74,7 +62,7 @@ def _resolve_gems_op_inplace():
 @pytest.mark.add
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _ADD_FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_add_tensor_tensor_float_value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
@@ -191,8 +179,6 @@ def test_add_scalar_tensor(shape, scalar, alpha, dtype):
 @pytest.mark.add
 @pytest.mark.parametrize("a,b,alpha,dtype", tu.selected_cases(_ADD_SCALAR_SCALAR_CASES))
 def test_add_scalar_scalar(a, b, alpha, dtype):
-    # Scalar-scalar add is a pure Python-level promotion: both sides produce a
-    # 0-dim tensor of the natural dtype.
     ref_out = torch.ops.aten.add(a, b, alpha=alpha)
     res_out = _resolve_gems_op()(a, b, alpha=alpha)
 
@@ -255,8 +241,6 @@ def test_add_complex_value_ranges(shape, value_range, complex_dtype):
 @pytest.mark.parametrize("complex_dtype", _ADD_COMPLEX_DTYPES)
 @pytest.mark.parametrize("other_type", ["float_tensor", "int_tensor", "int_scalar"])
 def test_add_complex_mixed(shape, complex_dtype, other_type):
-    # Complex self with real/float tensors and int scalars exercises the
-    # candidate's real-view path against mixed promotion rules.
     inp = tu.make_input(complex_dtype, shape, ["-1", "1"])
     if other_type == "float_tensor":
         float_dtype = (
@@ -287,7 +271,7 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
     reason="Issues #3897: TX81 does not support complex32 dtype",
 )
 @pytest.mark.parametrize("shape", [(2, 19, 7)])
-@pytest.mark.parametrize("complex_dtype", _ADD_COMPLEX32_DTYPES)
+@pytest.mark.parametrize("complex_dtype", [torch.complex32])
 @pytest.mark.parametrize(
     "other_type",
     (
@@ -297,8 +281,7 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
     ),
 )
 def test_add_complex32(shape, complex_dtype, other_type):
-    # complex32 (fp16 complex) has no CPU kernel, so the reference is upcast to
-    # complex128 before comparing (gems_assert_close casts back internally).
+    # Upcast the reference to complex128; gems_assert_close casts back for comparison.
     inp = tu.make_input(complex_dtype, shape, ["-1", "1"])
     if other_type == "complex":
         other = tu.make_input(complex_dtype, shape, ["-1", "1"])
@@ -321,7 +304,7 @@ def test_add_complex32(shape, complex_dtype, other_type):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("shape", _ADD_EMPTY_SHAPES)
+@pytest.mark.parametrize("shape", [(0,), (4, 0), (2, 0, 3)])
 @pytest.mark.parametrize("dtype", _ADD_DTYPES)
 def test_add_empty(shape, dtype):
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
@@ -336,10 +319,9 @@ def test_add_empty(shape, dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("shape", _ADD_NONCONTIG_SHAPES)
+@pytest.mark.parametrize("shape", [(17, 33), (5, 7, 9)])
 @pytest.mark.parametrize("dtype", _ADD_DTYPES)
 def test_add_noncontiguous(shape, dtype):
-    # transposed views have non-unit strides; the kernel must honor them.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     other = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     ref_inp = tu.to_reference(inp)
@@ -352,7 +334,7 @@ def test_add_noncontiguous(shape, dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("shape", _ADD_BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(16, 64), (7, 13, 29)])
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_add_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
@@ -522,8 +504,6 @@ def test_add_rejects_non_numeric_scalar():
 
 @pytest.mark.add_negative
 def test_add_requires_two_operands():
-    # A single argument hits no overload on either path (the all-scalar form
-    # still needs both operands).
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.add(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):

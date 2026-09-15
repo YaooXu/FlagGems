@@ -20,18 +20,11 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-_ABS_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 _ABS_INT_DTYPES = utils.ALL_INT_DTYPES + [torch.int8, torch.uint8]
+
 _ABS_SIGNED_INT_DTYPES = [d for d in _ABS_INT_DTYPES if d.is_signed]
-_ABS_DTYPES = _ABS_FLOAT_DTYPES + _ABS_INT_DTYPES + utils.BOOL_TYPES
 
-# Shapes that exercise 0-dim scalars, degenerate/empty tensors and
-# non-contiguous strides (the pointwise kernel must honor the input strides).
-_ABS_EMPTY_SHAPES = [(0,), (4, 0), (2, 0, 3)]
-_ABS_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
-
-# Backward shapes stay small to keep both autograd graphs inexpensive.
-_ABS_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
+_ABS_DTYPES = utils.ALL_FLOAT_DTYPES + _ABS_INT_DTYPES + utils.BOOL_TYPES
 
 
 def _resolve_gems_op():
@@ -45,7 +38,7 @@ def _resolve_gems_op_inplace():
 @pytest.mark.abs
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
+@pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_abs_float_value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
@@ -88,9 +81,7 @@ def test_abs_nan_inf(dtype, scenario):
 @pytest.mark.abs
 @pytest.mark.parametrize("dtype", _ABS_SIGNED_INT_DTYPES)
 def test_abs_int_min_stays(dtype):
-    # |INT_MIN| == INT_MIN in PyTorch (no wrap-around); pin this contract.
-    # Unsigned dtypes have no negative minimum, so only the signed path is
-    # meaningful here.
+    # The absolute value of the signed minimum remains INT_MIN.
     min_val = torch.iinfo(dtype).min
     inp = torch.tensor(
         [min_val, min_val + 1, 0, 1, -1], dtype=dtype, device=flag_gems.device
@@ -104,7 +95,7 @@ def test_abs_int_min_stays(dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("shape", _ABS_EMPTY_SHAPES)
+@pytest.mark.parametrize("shape", [(0,), (4, 0), (2, 0, 3)])
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_empty(shape, dtype):
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
@@ -117,10 +108,9 @@ def test_abs_empty(shape, dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("shape", _ABS_NONCONTIG_SHAPES)
+@pytest.mark.parametrize("shape", [(17, 33), (5, 7, 9)])
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_noncontiguous(shape, dtype):
-    # transposed views have non-unit strides; the kernel must honor them.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     ref_inp = tu.to_reference(inp)
 
@@ -131,7 +121,7 @@ def test_abs_noncontiguous(shape, dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(16, 64), (7, 13, 29)])
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_abs_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
@@ -189,9 +179,6 @@ def test_abs_out(shape, value_range, dtype):
 
 @pytest.mark.abs_negative
 def test_abs_rejects_non_tensor():
-    # The aten op requires a Tensor (a Python float hits a different overload
-    # and raises); the candidate must fail too rather than silently accept
-    # scalars.
     with pytest.raises(RuntimeError):
         torch.ops.aten.abs(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
@@ -200,7 +187,6 @@ def test_abs_rejects_non_tensor():
 
 @pytest.mark.abs_negative
 def test_abs_rejects_string():
-    # A non-numeric, non-tensor argument must be rejected, not coerced.
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.abs("not-a-tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
