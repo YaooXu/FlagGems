@@ -105,8 +105,6 @@ _EXTRA_DTYPE_CANDIDATES = _dedup(
 )
 _VERSION_DTYPES = _dedup(_GRID_DTYPES + _EXTRA_DTYPE_CANDIDATES)
 
-# nan / inf / -inf need a dtype with an inf value (fp8 has none).
-_FLOAT_VALUE_DTYPES = [dtype for dtype in _VERSION_DTYPES if dtype.is_floating_point]
 
 # Dtypes that accept an in-place ``add_`` bump (bool and fp8 reject it on the
 # CUDA backend), used by the mutation / alias workloads.
@@ -157,19 +155,13 @@ def _make_value_tensor(dtype, shape, value_range, device):
     )
 
 
-def _nan_inf_tensor(shape, dtype, device):
-    """Build ``shape`` holding a nan / inf / -inf payload cycle.
-
-    The values are ignored by the query, but the layout stays plain and
-    contiguous.
-    """
+def _special_tensor(shape, dtype, scenario, device):
     numel = 1
     for dim in shape:
         numel *= dim
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf")], dtype=dtype, device=device
-    )
-    return values.repeat((numel + 2) // 3)[:numel].reshape(shape)
+    values = tu.make_special_input(dtype, scenario).to(device)
+    repeats = (numel + values.numel() - 1) // values.numel()
+    return values.repeat(repeats)[:numel].reshape(shape)
 
 
 def _default_gems_op():
@@ -238,13 +230,13 @@ def test__version_value_ranges(shape, value_range, dtype):
 
 @pytest.mark._version
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_VALUE_DTYPES))
-def test__version_nan_inf(shape, dtype):
-    # nan / inf / -inf are ordinary payloads the metadata query must ignore; a
-    # freshly built tensor holding them still reports version 0.
-    inp = _nan_inf_tensor(shape, dtype, flag_gems.device)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_VERSION_DTYPES))
+)
+def test__version_nan_inf(shape, dtype, scenario):
+    inp = _special_tensor(shape, dtype, scenario, flag_gems.device)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
-    ref_inp = _nan_inf_tensor(shape, dtype, ref_device)
+    ref_inp = _special_tensor(shape, dtype, scenario, ref_device)
 
     ref_out = torch.ops.aten._version(ref_inp)
     res_out = _resolve_gems_op()(inp)

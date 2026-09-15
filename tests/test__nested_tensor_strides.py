@@ -80,7 +80,6 @@ _COMPONENT_DTYPE_CANDIDATES = (
 
 
 _COMPONENT_DTYPES = list(dict.fromkeys(_COMPONENT_DTYPE_CANDIDATES))
-_FLOAT_COMPONENT_DTYPES = [d for d in _COMPONENT_DTYPES if d.is_floating_point]
 
 
 def _make_nested(
@@ -328,23 +327,19 @@ def test__nested_tensor_strides_transposed(dtype):
 
 
 @pytest.mark._nested_tensor_strides
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_COMPONENT_DTYPES))
-def test__nested_tensor_strides_nan_inf_values(dtype):
-    # nan/inf/-inf component values are ordinary storage: the strides metadata is
-    # derived only from component shapes, so every row still reports the true
-    # component strides (4, 1).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COMPONENT_DTYPES))
+)
+def test__nested_tensor_strides_nan_inf_values(dtype, scenario):
     num_tensors, num_dims = 4, 2
     gen = torch.Generator("cpu").manual_seed(3)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
-    # fp8 e4m3fn has nan but no inf representation (assigning inf overflows), so
-    # the inf/-inf writes are guarded; nan is always covered.
-    has_inf = dtype != torch.float8_e4m3fn
+    special = tu.make_special_input(dtype, scenario)
     components = []
     for length in lengths:
-        values = tu.make_input(dtype, (length, 4), _VALUE_RANGE)
-        values[0, 0] = float("nan")
-        values[0, 1] = float("inf") if has_inf else float("nan")
-        values[-1, -1] = float("-inf") if has_inf else float("nan")
+        numel = length * 4
+        repeats = (numel + special.numel() - 1) // special.numel()
+        values = special.repeat(repeats)[:numel].reshape(length, 4)
         components.append(values)
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)

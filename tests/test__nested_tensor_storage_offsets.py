@@ -80,13 +80,6 @@ _COMPONENT_DTYPES = list(
         + utils.BOOL_TYPES
     )
 )
-# nan/inf are only representable by some floating dtypes (float8_e4m3fn has no
-# inf), so the nan/inf workload is restricted to the ones that can hold them.
-_NAN_INF_DTYPES = [
-    dtype
-    for dtype in _COMPONENT_DTYPES
-    if dtype.is_floating_point and dtype != torch.float8_e4m3fn
-]
 
 
 def _make_input(num_tensors, num_dims, dtype, seed=0, value_range=_DEFAULT_VALUE_RANGE):
@@ -271,24 +264,20 @@ def test__nested_tensor_storage_offsets_value_ranges(dtype, value_range):
 
 
 @pytest.mark._nested_tensor_storage_offsets
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test__nested_tensor_storage_offsets_nan_inf(dtype):
-    # Regular-operator spec: nan/inf coverage. Components containing
-    # nan/inf/-inf must not perturb the storage-offset metadata (a candidate
-    # that derives offsets from the stored values would produce bogus offsets).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COMPONENT_DTYPES))
+)
+def test__nested_tensor_storage_offsets_nan_inf(dtype, scenario):
     num_tensors = 4
     gen = torch.Generator("cpu").manual_seed(0)
     lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
+    special = tu.make_special_input(dtype, scenario)
     components = []
     for length in lengths:
-        comp = tu.make_input(dtype, (length, 4), _DEFAULT_VALUE_RANGE)
-        flat = comp.reshape(-1)
-        flat[0] = float("nan")
-        if flat.numel() > 1:
-            flat[1] = float("inf")
-        if flat.numel() > 2:
-            flat[2] = float("-inf")
-        components.append(comp)
+        numel = length * 4
+        repeats = (numel + special.numel() - 1) // special.numel()
+        values = special.repeat(repeats)[:numel].reshape(length, 4)
+        components.append(values)
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
 

@@ -78,11 +78,6 @@ _HAS_SAME_STORAGE_NUMEL_DTYPES = list(
 )
 
 
-# Floating storage families used for the nan/inf payload case.
-_FLOAT_STORAGE_DTYPES = [
-    d for d in _HAS_SAME_STORAGE_NUMEL_DTYPES if d.is_floating_point
-]
-
 # ---------------------------------------------------------------------------
 # Layout cases -- the semantic core of the operator
 # ---------------------------------------------------------------------------
@@ -160,16 +155,13 @@ def _make_tensor(spec, dtype, device):
     raise ValueError(f"Unknown tensor spec kind: {kind!r}")
 
 
-def _nan_inf_tensor(shape, dtype, device):
-    """Build ``shape`` filled with a nan/inf/-inf payload the query ignores."""
-    t = torch.zeros(shape, dtype=dtype, device=device)
-    n = t.numel()
-    if n > 0:
-        vals = torch.tensor(
-            [float("nan"), float("inf"), float("-inf")], dtype=dtype, device=device
-        )
-        t = vals[torch.arange(n, device=device) % 3].reshape(shape)
-    return t
+def _special_tensor(shape, dtype, scenario):
+    numel = 1
+    for dim in shape:
+        numel *= dim
+    values = tu.make_special_input(dtype, scenario)
+    repeats = (numel + values.numel() - 1) // values.numel()
+    return values.repeat(repeats)[:numel].reshape(shape)
 
 
 def _resolve_gems_op():
@@ -261,12 +253,13 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
 
 @pytest.mark._has_same_storage_numel
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_STORAGE_DTYPES))
-def test__has_same_storage_numel_nan_inf(shape, dtype):
-    # nan/inf/-inf are ordinary payloads that the metadata query must ignore;
-    # the answer is still the storage-numel comparison of the two tensors.
-    self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    other_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
+@pytest.mark.parametrize(
+    "dtype,scenario",
+    tu.selected_cases(tu.special_value_cases(_HAS_SAME_STORAGE_NUMEL_DTYPES)),
+)
+def test__has_same_storage_numel_nan_inf(shape, dtype, scenario):
+    self_t = _special_tensor(shape, dtype, scenario)
+    other_t = _special_tensor(shape, dtype, scenario)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 

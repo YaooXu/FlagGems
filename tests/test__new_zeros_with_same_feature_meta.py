@@ -143,17 +143,13 @@ _VALUE_RANGE_CASES = [
 _MAIN_RANGE = ["-1", "1"]
 
 
-def _nan_inf_tensor(shape, dtype, device):
-    """Build ``shape`` filled with nan/inf/-inf payloads (values the op
-    ignores; the layout is plain and contiguous)."""
-    t = torch.zeros(shape, dtype=dtype, device=device)
-    n = t.numel()
-    if n > 0:
-        vals = torch.tensor(
-            [float("nan"), float("inf"), float("-inf")], dtype=dtype, device=device
-        )
-        t = vals[torch.arange(n, device=device) % 3].reshape(shape)
-    return t
+def _special_tensor(shape, dtype, scenario):
+    numel = 1
+    for dim in shape:
+        numel *= dim
+    values = tu.make_special_input(dtype, scenario)
+    repeats = (numel + values.numel() - 1) // values.numel()
+    return values.repeat(repeats)[:numel].reshape(shape)
 
 
 def _shape_level_cases():
@@ -338,12 +334,13 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
 
 @pytest.mark._new_zeros_with_same_feature_meta
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
-    # nan/inf/-inf are ordinary payloads that the allocation helper ignores;
-    # the output is still an exact zero fill.
-    self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
-    other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
+@pytest.mark.parametrize(
+    "dtype,scenario",
+    tu.selected_cases(tu.special_value_cases(_NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES)),
+)
+def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype, scenario):
+    self_t = _special_tensor(shape, dtype, scenario)
+    other_t = _special_tensor((4, 5), dtype, scenario)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
