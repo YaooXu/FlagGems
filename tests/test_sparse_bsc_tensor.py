@@ -56,10 +56,6 @@ _BSC_DTYPES = list(
     )
 )
 
-# Construction preserves stored values. The shared exact comparison handles
-# FP8 and matching NaNs without densifying or accumulating duplicate entries.
-_BSC_FLOAT_DTYPES = [dtype for dtype in _BSC_DTYPES if dtype.is_floating_point]
-_BSC_NAN_INF_DTYPES = list(_BSC_FLOAT_DTYPES)
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
 # (logical matrix shape, block size, nnz) structural cases: 2x2 row/col blocks
@@ -264,36 +260,11 @@ def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
 
 
 @pytest.mark.sparse_bsc_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(_BSC_NAN_INF_DTYPES))
-def test_sparse_bsc_tensor_nan_inf(dtype):
-    # The factory copies the raw block values and performs no arithmetic on
-    # them, so inf/-inf/nan/-0.0 survive the construction unchanged (and
-    # 1e30/-1e30 cover the overflow-to-inf path in fp16 (1e30 remains finite in bf16)). equal_nan
-    # tolerates the nan outputs in every comparison below.
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-            float("-inf"),
-            float("inf"),
-            float("nan"),
-            -1.5,
-            2.5,
-            0.0,
-            -0.0,
-            -1e30,
-            1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    ).reshape(2, 3, 3)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_BSC_DTYPES))
+)
+def test_sparse_bsc_tensor_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(4)[:18].reshape(2, 3, 3)
     ccol = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
 

@@ -484,22 +484,13 @@ def test_sparse_csr_tensor_shape_levels(case, dtype, value_range):
 
 
 @pytest.mark.sparse_csr_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(_BOUNDARY_CSR_DTYPES))
-def test_sparse_csr_tensor_nan_inf_values(dtype):
-    # The nan/inf dimension: non-finite values are stored verbatim (no
-    # arithmetic touches them). Compare with equal_nan=True so nan positions
-    # match and the inf signs agree exactly.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CSR_DTYPES))
+)
+def test_sparse_csr_tensor_nan_inf_values(dtype, scenario):
     size, crow, col = _CSR_2D_CASES[0]
     nnz = len(col)
-    values = _make_csr_values(nnz, dtype).clone()
-    values[0] = float("nan")
-    values[-1] = float("nan")
-    if dtype != torch.float8_e4m3fn:
-        # float8_e4m3fn saturates at its finite max (no inf representation);
-        # the other float storages, including float8_e5m2, carry both signed
-        # infinities.
-        values[1] = float("inf")
-        values[2] = float("-inf")
+    values = tu.make_special_input(dtype, scenario)[:nnz]
     ref_values = tu.to_reference(values)
 
     crow_t = _make_index_tensor([0, 2, 4, 4, 4])

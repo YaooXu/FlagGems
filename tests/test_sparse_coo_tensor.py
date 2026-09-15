@@ -68,8 +68,7 @@ from . import test_utils as tu
 #     dims, dense dims, nnz == 0 and a zero-extent logical dim;
 #   * dtypes -- all nine required dtypes plus float64 / int16 / bool,
 #     one workload per dtype;
-#   * nan / inf -- float dtypes over nan / +-inf / huge-magnitude values (the
-#     factory copies values verbatim, so the comparison uses equal_nan=True);
+#   * nan / inf -- independent representable NaN, Inf and mixed scenarios;
 #   * negative -- malformed indices / size / values, the wrong layout and a
 #     mismatched ``.size_out`` buffer must raise, with the candidate held to
 #     the same contract;
@@ -137,22 +136,11 @@ _COO_VALUE_CASES = [
     ("indices", (2, 3, 4), [[0, 1, 1], [2, 0, 2]], (4,)),
 ]
 
-# nan / inf / huge-magnitude cases: (size, indices).
+# Special-value layouts: (size, indices).
 _NAN_INF_CASES = [
     ((5,), [[0, 2, 4]]),
     ((2, 3), [[0, 1, 1], [2, 0, 2]]),
     ((4, 5, 6), [[0, 1, 1], [2, 0, 2]]),
-]
-
-_NAN_INF_PATTERN = [
-    float("nan"),
-    float("inf"),
-    float("-inf"),
-    0.0,
-    -0.0,
-    1e30,
-    -1e30,
-    1.5,
 ]
 
 
@@ -173,7 +161,6 @@ _COO_DTYPES = [
 ]
 
 
-_FLOAT_COO_DTYPES = [dtype for dtype in _COO_DTYPES if dtype.is_floating_point]
 _EXACT_COO_DTYPES = [dtype for dtype in _COO_DTYPES if not dtype.is_floating_point]
 
 
@@ -208,18 +195,13 @@ def _make_values(nnz, dense_shape, dtype, value_range=None):
     return tu.make_input(dtype, shape, value_range).to(flag_gems.device)
 
 
-def _make_nan_inf_values(shape, dtype):
-    # Repeating pattern of nan / +inf / -inf / huge magnitudes. The factory
-    # stores the entries verbatim, so the pattern is fully determined by the
-    # value multiset and the reference and the candidate agree under
-    # equal_nan=True (fp8_e4m3fn additionally collapses inf / 1e30 to nan, and
-    # both sides observe the very same cast tensor).
-    base = torch.tensor(_NAN_INF_PATTERN, dtype=torch.float64)
+def _make_special_values(shape, dtype, scenario):
+    base = tu.make_special_input(dtype, scenario)
     numel = 1
     for extent in shape:
         numel *= int(extent)
     repeats = (numel + base.numel() - 1) // base.numel()
-    return base.repeat(repeats)[:numel].reshape(shape).to(dtype).to(flag_gems.device)
+    return base.repeat(repeats)[:numel].reshape(shape)
 
 
 def _make_out_buffer(size, dtype, device, nnz):
@@ -498,18 +480,16 @@ def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
 
 @pytest.mark.sparse_coo_tensor
 @pytest.mark.parametrize("case", _NAN_INF_CASES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_COO_DTYPES))
-def test_sparse_coo_tensor_nan_inf(case, dtype):
-    # The factory copies the raw stored values and performs no arithmetic on
-    # them, so inf / -inf / nan / -0.0 and huge 1e30 magnitudes survive the
-    # construction unchanged. 1e30 overflows to inf in fp16 and stays finite
-    # in bf16; equal_nan permits matching nan outputs.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COO_DTYPES))
+)
+def test_sparse_coo_tensor_nan_inf(case, dtype, scenario):
     size, indices = case
     sparse_dim = len(indices)
     dense_shape = tuple(size[sparse_dim:])
     nnz = len(indices[0])
     indices_t = _make_index_tensor(indices)
-    values = _make_nan_inf_values((nnz,) + dense_shape, dtype)
+    values = _make_special_values((nnz,) + dense_shape, dtype, scenario)
 
     ref_out = _call_reference(indices_t, values, size, dtype)
     res_out = _call_candidate(indices_t, values, size, dtype)

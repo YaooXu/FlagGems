@@ -580,17 +580,11 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
 
 
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOATISH_CSC_DTYPES))
-def test_sparse_csc_tensor_nan_inf_values(dtype):
-    # Non-finite values are stored verbatim; comparison uses equal_nan=True so
-    # matching NaNs and infinities are accepted. For
-    # float8_e4m3fn the +/-inf inputs saturate to nan, which the equal_nan
-    # comparison still matches.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 1.5, -0.0],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CSC_DTYPES))
+)
+def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     ccol = torch.tensor([0, 2, 5], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 1, 0, 1, 0], dtype=torch.int64, device=flag_gems.device)
 

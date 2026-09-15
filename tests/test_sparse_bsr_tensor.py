@@ -410,20 +410,13 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
 
 
 @pytest.mark.sparse_bsr_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_VALUE_DTYPES))
-def test_sparse_bsr_tensor_nan_inf_values(dtype):
-    # The nan/inf dimension: non-finite block values are stored verbatim (no
-    # arithmetic touches them). Compare with equal_nan=True so nan positions
-    # match and the inf signs agree exactly.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_VALUE_DTYPES))
+)
+def test_sparse_bsr_tensor_nan_inf_values(dtype, scenario):
     size, block, crow, col = _BSR_2D_CASES[0]
     nnz = len(col)
-    values = _make_bsr_values(nnz, block, dtype)
-    flat = values.reshape(-1)
-    flat[0] = float("nan")
-    flat[1] = float("inf")
-    flat[2] = float("-inf")
-    flat[-1] = float("nan")
-    values = flat.reshape(values.shape)
+    values = tu.make_special_input(dtype, scenario).repeat(4)[:16].reshape(nnz, *block)
     ref_values = tu.to_reference(values)
 
     ref_crow = torch.tensor([0, 2, 4], dtype=torch.long, device=ref_values.device)
@@ -446,7 +439,9 @@ def test_sparse_bsr_tensor_nan_inf_values(dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
+    tu.assert_result_equal(res_out.crow_indices(), ref_out.crow_indices())
+    tu.assert_result_equal(res_out.col_indices(), ref_out.col_indices())
+    tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_bsr_tensor

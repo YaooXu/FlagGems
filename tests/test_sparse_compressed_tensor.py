@@ -462,22 +462,18 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
 
 
 @pytest.mark.sparse_compressed_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test_sparse_compressed_tensor_nan_inf_values(dtype):
-    # nan/inf/-inf and signed zeros are ordinary stored values: the factory
-    # copies them verbatim (it performs no arithmetic on the payload), so the
-    # constructed tensor must preserve them bit-for-bit (equal_nan=True).
+@pytest.mark.parametrize(
+    "dtype,scenario",
+    tu.selected_cases(tu.special_value_cases(_SPARSE_COMPRESSED_DTYPES)),
+)
+def test_sparse_compressed_tensor_nan_inf_values(dtype, scenario):
     layout = torch.sparse_csr
     shape = (3, 4)
     crow_t = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
     col_t = torch.tensor(
         [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
     )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     ref_crow = tu.to_reference(crow_t)
     ref_col = tu.to_reference(col_t)
     ref_values = tu.to_reference(values)
@@ -524,9 +520,8 @@ def test_sparse_compressed_tensor_backward(dtype):
     compressed, plain, values = _make_input(layout, shape, nnz, dtype)
     ref_compressed = tu.to_reference(compressed)
     ref_plain = tu.to_reference(plain)
-    ref_values = tu.to_reference(values).detach().clone().requires_grad_(True)
-
-    values_in = values.detach().clone().requires_grad_(True)
+    values.requires_grad_(True)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -541,7 +536,7 @@ def test_sparse_compressed_tensor_backward(dtype):
     res_out = gems_op(
         compressed,
         plain,
-        values_in,
+        values,
         list(shape),
         dtype=dtype,
         layout=layout,
@@ -551,8 +546,11 @@ def test_sparse_compressed_tensor_backward(dtype):
     _assert_result(res_out, ref_out, dtype, layout, torch.int64)
 
     weights = torch.linspace(-1.0, 1.0, 7, dtype=dtype, device=flag_gems.device)
-    grad_ref = torch.autograd.grad((ref_out.values() * weights).sum(), ref_values)[0]
-    grad_res = torch.autograd.grad((res_out.values() * weights).sum(), values_in)[0]
+    ref_weights = tu.to_reference(weights)
+    grad_ref = torch.autograd.grad((ref_out.values() * ref_weights).sum(), ref_values)[
+        0
+    ]
+    grad_res = torch.autograd.grad((res_out.values() * weights).sum(), values)[0]
     utils.gems_assert_close(grad_res, grad_ref, dtype)
 
 
