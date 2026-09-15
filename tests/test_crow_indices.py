@@ -21,106 +21,73 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::crow_indices(Tensor(a) self) -> Tensor(a) returns the compressed row
-# index array of a CSR or BSR tensor. Its last dimension counts compressed
-# rows plus the sentinel, and its dtype follows the stored int32/int64 index
-# array. The result aliases that array and ignores the values payload.
-#
-# Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * dtype coverage: the 9 required spec dtypes (int8, uint8, float8_e4m3fn,
-#     float8_e5m2, float32, bfloat16, float16, int32, int64) plus float64,
-#     int16 and bool; the operator reads only the crow metadata regardless
-#     of storage dtype;
-#   * shape levels: crow_indices accepts rank >= 2 CSR/BSR layouts, so the
-#     spec's 0-dim/1-dim levels are represented by their nearest CSR-valid
-#     analogues -- ((1, 1)) for the scalar/single-element boundary and ((1, 6))
-#     for the single-row boundary -- together with the 2-D (256, 256) /
-#     (1024, 1024), 3-D (20, 320, 15), 4-D (16, 128, 64, 60) and 5-D
-#     (16, 7, 57, 32, 29) regular levels and higher-rank multi-batch-dims
-#     layouts, all from the quick/default levels;
-#   * value ranges: tu.selected_ranges() over representative layouts, so every
-#     supported storage dtype is exercised with negative, positive, extreme and
-#     degenerate value ranges (the returned crow is identical for all of them);
-#   * edge cases: empty (nnz == 0, unbatched and batched), single row
-#     (nrows == 1), uncoalesced (duplicate column entries inside a row),
-#     fully-dense CSR storage, and nan/inf/-0.0 values (all ignored by the
-#     accessor);
-#   * negative cases: dense tensors, CSC tensors, COO tensors and non-tensor
-#     inputs are rejected.
-#
-# No broadcast/backward dimensions apply: the operator is unary, returns a view
-# of the input's own storage (there is nothing to broadcast against) and its
-# result is an integer metadata tensor (nothing to differentiate).
+# crow_indices returns a view of the compressed row pointers in CSR/BSR storage.
+_CSR_DTYPES = (
+    utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + [torch.bool, torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
+)
 
-# (shape, nnz) layouts covering the CSR-valid analogues of the seven spec shape
-# levels (single element, single row, 2-D regular, 3-D, 4-D, 5-D) plus a large
-# 2-D layout.
-_CSR_CASES_CORE = [
-    ((1, 1), 1),
-    ((1, 6), 4),
-    ((5, 4), 7),
-    ((256, 256), 512),
-    ((1024, 1024), 4096),
-    ((3, 5, 4), 7),
-    ((20, 320, 15), 100),
-    ((16, 128, 64, 60), 50),
-    ((16, 7, 57, 32, 29), 5),
+# CSR: (shape, nnz), including multiple batch dimensions.
+_CSR_CASES = tu.selected_cases(
+    [
+        ((1, 1), 1),
+        ((1, 6), 4),
+        ((5, 4), 7),
+        ((256, 256), 512),
+        ((1024, 1024), 4096),
+        ((3, 5, 4), 7),
+        ((20, 320, 15), 100),
+        ((16, 128, 64, 60), 50),
+        ((16, 7, 57, 32, 29), 5),
+        ((3, 8), 16),
+        ((8, 3), 12),
+        ((4, 4), 16),
+        ((2, 4, 6), 12),
+        ((2, 3, 4, 5), 8),
+        ((12, 9, 3, 6), 9),
+        ((3, 6, 4, 4, 6, 5), 11),
+        ((7, 3, 12, 4, 2, 15), 10),
+        ((3, 4, 2, 5, 3, 4, 2), 13),
+    ],
+    quick=[((2, 19, 7), 8)],
+)
+
+# Value-range layouts: plain and batched CSR.
+_CSR_RANGE_CASES = tu.selected_cases(
+    [
+        ((5, 4), 7),
+        ((3, 5, 4), 7),
+        ((3, 6, 4, 4, 6, 5), 11),
+    ],
+    quick=[((2, 19, 7), 8)],
+)
+
+# (layout, matrix_shape, values_shape, compressed_indices, plain_indices).
+_INDEX_LAYOUT_CASES = [
+    (torch.sparse_csr, (4, 6), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
+    (torch.sparse_bsr, (4, 6), (3, 2, 3), [0, 2, 3], [0, 1, 1]),
+    (torch.sparse_csr, (4, 6), (0,), [0, 0, 0, 0, 0], []),
+    (torch.sparse_bsr, (4, 6), (0, 2, 3), [0, 0, 0], []),
 ]
-
-# Higher-rank / batched layouts for default mode (no --quick): 2-D all-sparse
-# variations, 3-D/4-D batched and ranks up to 7-D.
-_CSR_CASES_ALL = [
-    ((3, 8), 16),
-    ((8, 3), 12),
-    ((4, 4), 16),
-    ((2, 4, 6), 12),
-    ((2, 3, 4, 5), 8),
-    ((12, 9, 3, 6), 9),
-    ((3, 6, 4, 4, 6, 5), 11),
-    ((7, 3, 12, 4, 2, 15), 10),
-    ((3, 4, 2, 5, 3, 4, 2), 13),
-]
-
-
-def _csr_cases():
-    """(shape, nnz) layouts selected by pytest --quick (quick) vs default."""
-    if tu.QUICK_MODE:
-        return [((2, 19, 7), 8)]
-    return _CSR_CASES_CORE + _CSR_CASES_ALL
-
-
-def _csr_value_range_cases():
-    """Representative 2-D + batched layouts for the value-range sweep."""
-    if tu.QUICK_MODE:
-        return [((2, 19, 7), 8)]
-    return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
-
-
-# Every spec dtype (int8/uint8/fp8 are hard requirements) plus the float/int/bool
-# families from accuracy_utils: the operator only reads CSR index metadata.
-_CSR_DTYPES = list(
-    dict.fromkeys(
-        utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-        + [
-            torch.int8,
-            torch.uint8,
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
-        ]
-    )
+_INDEX_CASES = tu.selected_cases(
+    [
+        (case, batch_shape, dense_shape)
+        for case in _INDEX_LAYOUT_CASES
+        for batch_shape in [(), (2,), (2, 3)]
+        for dense_shape in [(), (2,)]
+    ],
+    quick=[
+        (_INDEX_LAYOUT_CASES[0], (), ()),
+        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
+        (_INDEX_LAYOUT_CASES[2], (), ()),
+        (_INDEX_LAYOUT_CASES[3], (2,), ()),
+    ],
 )
 
 
 def _make_input(shape, nnz, dtype, value_range, seed=0):
-    # Deterministic CPU-side (row, col) generation; the values tensor comes
-    # from the shared value-range helper (which clamps a negative bound into the
-    # dtype's range, realizing ``["-1", "0"]`` on uint8 as a constant zero fill)
-    # and the sparse tensor is created on the test device. Duplicate entries are
-    # allowed and merely leave the tensor uncoalesced (covered explicitly
-    # below). The crow pointer array is built with a (vectorized, per-batch)
-    # row-wise bincount, so it is always a valid CSR structure.
+    # Sort seeded coordinates, allowing duplicates, then count entries per batch.
     gen = torch.Generator("cpu").manual_seed(seed)
     nrows, ncols = shape[-2], shape[-1]
     batch = shape[:-2]
@@ -157,49 +124,15 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
-    # crow_indices returns a view of the input's internal
-    # batch_dims + (n_compressed_rows + 1,) index tensor. The entries
-    # are exact, and the schema annotation Tensor(a) self -> Tensor(a) requires
-    # the result to alias the input's crow storage.
+    # Check exact output, storage aliasing and unchanged input metadata/values.
     tu.assert_result_equal(res_out, ref_out)
-    # Alias semantics: the returned tensor shares storage with the input's
-    # internal crow tensor (both on the candidate and the reference).
     assert res_out.data_ptr() == torch.ops.aten.crow_indices(inp).data_ptr()
-    # The accessor must not mutate the input: ref_inp is a pre-call snapshot
-    # (a clone, moved to CPU when TO_CPU is set), so its crow, col indices and
-    # values still match the (untouched) input storage after the calls. Values
-    # may legitimately hold nan/inf, so compare them with equal_nan for float
-    # storage.
     utils.gems_assert_equal(inp.crow_indices(), ref_inp.crow_indices())
     utils.gems_assert_equal(inp.col_indices(), ref_inp.col_indices())
     if inp.dtype.is_floating_point:
         utils.gems_assert_equal(inp.values(), ref_inp.values(), equal_nan=True)
     else:
         utils.gems_assert_equal(inp.values(), ref_inp.values())
-
-
-# Preserve the actual index dtype across plain/block, batched/hybrid and empty
-# layouts. Values use the full declared storage dtype set independently.
-_INDEX_LAYOUT_CASES = [
-    (torch.sparse_csr, (4, 6), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
-    (torch.sparse_bsr, (4, 6), (3, 2, 3), [0, 2, 3], [0, 1, 1]),
-    (torch.sparse_csr, (4, 6), (0,), [0, 0, 0, 0, 0], []),
-    (torch.sparse_bsr, (4, 6), (0, 2, 3), [0, 0, 0], []),
-]
-_INDEX_CASES = tu.selected_cases(
-    [
-        (case, batch_shape, dense_shape)
-        for case in _INDEX_LAYOUT_CASES
-        for batch_shape in [(), (2,), (2, 3)]
-        for dense_shape in [(), (2,)]
-    ],
-    quick=[
-        (_INDEX_LAYOUT_CASES[0], (), ()),
-        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
-        (_INDEX_LAYOUT_CASES[2], (), ()),
-        (_INDEX_LAYOUT_CASES[3], (2,), ()),
-    ],
-)
 
 
 @pytest.mark.crow_indices
@@ -228,13 +161,9 @@ def test_crow_indices_index_layouts(case, batch_shape, dense_shape, dtype, index
 
 
 @pytest.mark.crow_indices
-@pytest.mark.parametrize("case", _csr_cases())
+@pytest.mark.parametrize("case", _CSR_CASES)
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_layouts(case, dtype):
-    # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every declared storage dtype (bool/int snap the range to the
-    # representable set). The returned (batch_dims + (nrows + 1,)) crow view
-    # must match the reference exactly and alias the input's crow storage.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -246,13 +175,10 @@ def test_crow_indices_layouts(case, dtype):
 
 
 @pytest.mark.crow_indices
-@pytest.mark.parametrize("case", _csr_value_range_cases())
+@pytest.mark.parametrize("case", _CSR_RANGE_CASES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_value_ranges(case, value_range, dtype):
-    # The stored values sweep the full spec range set (positive, negative,
-    # extreme and degenerate); the returned crow view never changes because
-    # crow_indices reads only layout metadata, not the values payload.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range)
     ref_inp = tu.to_reference(inp)
@@ -266,8 +192,6 @@ def test_crow_indices_value_ranges(case, value_range, dtype):
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_empty(dtype):
-    # nnz == 0: cols and values are empty, but crow_indices must still return a
-    # (nrows + 1,) int64 tensor (not a dense or wrongly-shaped tensor).
     shape = (4, 5)
     crow = torch.zeros(5, dtype=torch.long, device=flag_gems.device)
     cols = torch.empty(0, dtype=torch.long, device=flag_gems.device)
@@ -284,8 +208,6 @@ def test_crow_indices_empty(dtype):
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_empty_batched(dtype):
-    # nnz == 0 with batch dims: the returned crow preserves the batch_dims and
-    # has shape batch_dims + (nrows + 1,).
     shape = (2, 4, 5)
     crow = torch.zeros(2, 5, dtype=torch.long, device=flag_gems.device)
     cols = torch.empty(2, 0, dtype=torch.long, device=flag_gems.device)
@@ -302,8 +224,6 @@ def test_crow_indices_empty_batched(dtype):
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_single_row(dtype):
-    # nrows == 1: the returned crow has the degenerate shape (2,) with
-    # crow[0] == 0 and crow[1] == nnz.
     shape, nnz = (1, 7), 5
     inp = _make_input(shape, nnz, dtype, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -317,11 +237,6 @@ def test_crow_indices_single_row(dtype):
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_uncoalesced(dtype):
-    # The (0, 0) entry is duplicated (cols[0] == cols[1] in row 0), which
-    # leaves the tensor uncoalesced; crow_indices must still return exactly the
-    # stored crow tensor (never a coalesced/sorted copy). Row 0 holds 3 entries
-    # for columns [0, 0, 2], so a coalescing implementation would visibly
-    # change the stored structure.
     shape = (4, 3)
     crow = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
@@ -339,8 +254,6 @@ def test_crow_indices_uncoalesced(dtype):
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_full_storage(dtype):
-    # Fully-dense CSR storage: every logical position is stored, so the crow
-    # pointer array lists the cumulative counts of every row.
     shape = (2, 3)
     crow = torch.tensor([0, 3, 6], dtype=torch.long, device=flag_gems.device)
     cols = torch.arange(3).repeat(2).to(flag_gems.device)  # [0, 1, 2, 0, 1, 2]
@@ -377,9 +290,6 @@ def test_crow_indices_nan_inf_values_ignored(dtype, scenario):
 
 @pytest.mark.crow_indices
 def test_crow_indices_dense_raises():
-    # crow_indices dispatches only on the SparseCsr (CSR) backend key; dense
-    # tensors have no implementation and raise. The candidate must fail too
-    # rather than silently return a bogus crow tensor.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises((RuntimeError, NotImplementedError)):
         torch.ops.aten.crow_indices(tu.to_reference(inp))
@@ -389,9 +299,6 @@ def test_crow_indices_dense_raises():
 
 @pytest.mark.crow_indices
 def test_crow_indices_csc_raises():
-    # SparseCsr is a distinct compressed layout from SparseCsc; crow_indices
-    # has no SparseCsc implementation and raises. The candidate must reject it
-    # too.
     ccol = torch.tensor([0, 2, 4, 6], dtype=torch.long, device=flag_gems.device)
     row_indices = torch.tensor(
         [0, 1, 0, 1, 0, 1], dtype=torch.long, device=flag_gems.device
@@ -408,8 +315,6 @@ def test_crow_indices_csc_raises():
 
 @pytest.mark.crow_indices
 def test_crow_indices_coo_raises():
-    # Sparse (COO) is a distinct backend key from SparseCsr (CSR); crow_indices
-    # has no Sparse implementation and raises. The candidate must reject it too.
     inp = torch.randn(3, 4, device=flag_gems.device).to_sparse_coo()
     with pytest.raises((RuntimeError, NotImplementedError)):
         torch.ops.aten.crow_indices(tu.to_reference(inp))
@@ -419,8 +324,6 @@ def test_crow_indices_coo_raises():
 
 @pytest.mark.crow_indices
 def test_crow_indices_rejects_non_tensor():
-    # The aten schema requires a Tensor; a Python scalar hits the invalid
-    # combination of arguments path and raises.
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.crow_indices(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
