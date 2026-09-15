@@ -54,15 +54,15 @@ setattr(
 #
 # Regular-operator spec mapping:
 #   * Value ranges -- all five spec ranges ([-1,1], [0,1], [-1,0], [0,max],
-#     [min,0]) over a representative dtype family (``_VALUE_RANGE_DTYPES``);
+#     [min,0]) over every declared storage dtype;
 #     the op ignores values, so the output is identical for every range.
 #   * Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) are
 #     placed in both the self and other position, with N = 0, 1 and 2 where
 #     valid; the main grid also covers full-rank shape concatenation.
 #   * Broadcast -- N/A: the op concatenates shapes, it does not compute on
 #     values, so there is nothing to broadcast.
-#   * Backward -- N/A: the result is a constant zero tensor that is not a
-#     differentiable function of either input (autograd has no formula for it).
+#   * Backward -- the result has no autograd graph, even when either input
+#     requires gradients.
 #   * nan/inf -- the payloads are ignored; a nan/inf/-inf filled input still
 #     yields an exact zero output.
 #   * Negative cases -- N < 0, non-tensor arguments and a wrong-dtype .out
@@ -92,38 +92,16 @@ _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES = [
 # The op performs no arithmetic: it only reads shapes/options and allocates a
 # zero-filled tensor, so every storage dtype family the runtime supports is
 # exercised. The required spec dtypes (int8 / uint8 / float8_e4m3fn /
-# float8_e5m2 / float32 / bfloat16 / float16 / int32 / int64) are probed as
-# supported and are all present.
-_NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES = (
-    utils.ALL_FLOAT_DTYPES
-    + utils.ALL_INT_DTYPES
-    + utils.BOOL_TYPES
-    + utils.COMPLEX_DTYPES
-    + [
-        torch.int8,
-        torch.uint8,
-        torch.float8_e4m3fn,
-        torch.float8_e5m2,
-    ]
+# float8_e5m2 / float32 / bfloat16 / float16 / int32 / int64) are all present.
+_NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES = list(
+    dict.fromkeys(
+        tu.REQUIRED_DTYPES
+        + utils.ALL_FLOAT_DTYPES
+        + utils.ALL_INT_DTYPES
+        + utils.BOOL_TYPES
+        + utils.COMPLEX_DTYPES
+    )
 )
-
-# Representative dtype subset for the shape-level sweep: floats, an int and
-# bool. The full dtype matrix already runs over the main cases.
-_SHAPE_LEVEL_DTYPES = utils.FLOAT_DTYPES + [torch.int8, torch.bool]
-
-# Representative dtypes for the value-range sweep (the op ignores values).
-# uint8/fp8 are included so the spec's 9 required dtypes all appear across a
-# value-range workload.
-_VALUE_RANGE_DTYPES = [
-    torch.float32,
-    torch.bfloat16,
-    torch.float16,
-    torch.int8,
-    torch.uint8,
-    torch.float8_e4m3fn,
-    torch.int32,
-    torch.bool,
-]
 
 # Pairs pinning down the "output options follow other" contract: the output
 # dtype must be other.dtype even when self and other disagree.
@@ -177,16 +155,20 @@ def _resolve_gems_op():
     )
 
 
-def _assert_zero_output(res_out, ref_out, self_t, other_t):
+def _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other):
     assert isinstance(res_out, torch.Tensor)
-    assert res_out.dtype == other_t.dtype
-    assert res_out.is_contiguous()
-    assert res_out.storage_offset() == 0
-    # A fresh allocation, not an alias of either input.
-    assert res_out is not self_t and res_out is not other_t
-    # The reference is all zeros, so exact equality also proves the candidate
-    # produced a zero-filled tensor of the right shape and dtype.
-    utils.gems_assert_equal(res_out, ref_out)
+    assert res_out.device == other_t.device
+    assert res_out.stride() == ref_out.stride()
+    assert res_out.storage_offset() == ref_out.storage_offset()
+    assert res_out.requires_grad == ref_out.requires_grad
+    tu.assert_result_equal(res_out, ref_out)
+    # Default returns fresh storage. Explicit .out may alias an input, in
+    # which case its writes and aliasing must agree with ATen.
+    for inp, ref_inp in ((self_t, ref_self), (other_t, ref_other)):
+        assert torch._C._is_alias_of(res_out, inp) == torch._C._is_alias_of(
+            ref_out, ref_inp
+        )
+        tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -211,7 +193,7 @@ def test__new_zeros_with_same_feature_meta(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta_out
@@ -243,14 +225,14 @@ def test__new_zeros_with_same_feature_meta_out(
 
     # The .out variant must write into and return the out tensor itself.
     assert res_ret is res_out
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
 @pytest.mark.parametrize(
     "self_shape, other_shape, self_num_batch_dims", _shape_level_cases()
 )
-@pytest.mark.parametrize("dtype", _SHAPE_LEVEL_DTYPES)
+@pytest.mark.parametrize("dtype", _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES)
 def test__new_zeros_with_same_feature_meta_shapes(
     self_shape, other_shape, self_num_batch_dims, dtype
 ):
@@ -266,7 +248,120 @@ def test__new_zeros_with_same_feature_meta_shapes(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
+
+
+@pytest.mark._new_zeros_with_same_feature_meta_out
+@pytest.mark.parametrize(
+    "base_shape,stride,offset",
+    [
+        pytest.param((5, 4), (1, 4), 0, id="transposed"),
+        pytest.param((4, 10), (10, 2), 0, id="strided"),
+        pytest.param((5, 5), (5, 1), 5, id="offset"),
+    ],
+)
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES, quick=utils.FLOAT_DTYPES
+    ),
+)
+def test__new_zeros_with_same_feature_meta_out_layouts(
+    base_shape, stride, offset, dtype
+):
+    self_t = tu.make_input(dtype, (4, 10), _MAIN_RANGE)[:, ::2]
+    other_t = tu.make_input(dtype, (8, 5), _MAIN_RANGE)[::2]
+    ref_self, ref_other = tu.to_reference(self_t), tu.to_reference(other_t)
+    res_base = torch.full(base_shape, 7, dtype=dtype, device=other_t.device)
+    ref_base = torch.full(base_shape, 7, dtype=dtype, device=ref_other.device)
+    res_out = res_base.as_strided((4, 5), stride, offset)
+    ref_out = ref_base.as_strided((4, 5), stride, offset)
+
+    torch.ops.aten._new_zeros_with_same_feature_meta.out(
+        ref_self, ref_other, self_num_batch_dims=0, out=ref_out
+    )
+    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0, out=res_out)
+
+    assert res_ret is res_out
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
+    # The gaps and prefix outside the output view must remain untouched.
+    tu.assert_result_equal(res_base, ref_base)
+
+
+@pytest.mark._new_zeros_with_same_feature_meta_out
+@pytest.mark.parametrize("out_shape", [(0,), (1,)])
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES, quick=utils.FLOAT_DTYPES
+    ),
+)
+def test__new_zeros_with_same_feature_meta_out_resize(out_shape, dtype):
+    self_t = tu.make_input(dtype, (2, 3), _MAIN_RANGE)
+    other_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE)
+    ref_self, ref_other = tu.to_reference(self_t), tu.to_reference(other_t)
+    res_out = torch.full(out_shape, 7, dtype=dtype, device=other_t.device)
+    ref_out = torch.full(out_shape, 7, dtype=dtype, device=ref_other.device)
+
+    torch.ops.aten._new_zeros_with_same_feature_meta.out(
+        ref_self, ref_other, self_num_batch_dims=1, out=ref_out
+    )
+    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1, out=res_out)
+
+    assert res_ret is res_out
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
+
+
+@pytest.mark._new_zeros_with_same_feature_meta_out
+@pytest.mark.parametrize("alias_self", [True, False])
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES, quick=utils.FLOAT_DTYPES
+    ),
+)
+def test__new_zeros_with_same_feature_meta_out_alias(alias_self, dtype):
+    self_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE)
+    other_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE)
+    ref_self, ref_other = tu.to_reference(self_t), tu.to_reference(other_t)
+    res_out = self_t if alias_self else other_t
+    ref_out = ref_self if alias_self else ref_other
+
+    torch.ops.aten._new_zeros_with_same_feature_meta.out(
+        ref_self, ref_other, self_num_batch_dims=0, out=ref_out
+    )
+    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0, out=res_out)
+
+    assert res_ret is res_out
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
+
+
+@pytest.mark._new_zeros_with_same_feature_meta
+@pytest.mark.parametrize(
+    "self_grad,other_grad", [(True, False), (False, True), (True, True)]
+)
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        [
+            dtype
+            for dtype in _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES
+            if dtype.is_floating_point or dtype.is_complex
+        ],
+        quick=utils.FLOAT_DTYPES,
+    ),
+)
+def test__new_zeros_with_same_feature_meta_no_autograd(self_grad, other_grad, dtype):
+    self_t = tu.make_input(dtype, (2, 3), _MAIN_RANGE).requires_grad_(self_grad)
+    other_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE).requires_grad_(other_grad)
+    ref_self, ref_other = tu.to_reference(self_t), tu.to_reference(other_t)
+
+    ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
+        ref_self, ref_other, self_num_batch_dims=1
+    )
+    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
+
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -274,7 +369,7 @@ def test__new_zeros_with_same_feature_meta_shapes(
     "self_shape, other_shape, self_num_batch_dims", _VALUE_RANGE_CASES
 )
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _VALUE_RANGE_DTYPES)
+@pytest.mark.parametrize("dtype", _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES)
 def test__new_zeros_with_same_feature_meta_value_ranges(
     self_shape, other_shape, self_num_batch_dims, value_range, dtype
 ):
@@ -293,7 +388,7 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -311,7 +406,7 @@ def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dt
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -329,7 +424,7 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -349,7 +444,7 @@ def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype, scenario
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t)
+    _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta

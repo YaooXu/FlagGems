@@ -473,6 +473,83 @@ def test_version_accepts_integral_tensor_results(dtype):
         cases.test__version_fresh((4,), torch.float32)
 
 
+@pytest.mark.parametrize("source", ["self", "other"])
+def test_new_zeros_rejects_input_aliases(source):
+    from . import test__new_zeros_with_same_feature_meta as cases
+
+    def aliased(self_t, other_t, **kwargs):
+        return (self_t if source == "self" else other_t).view_as(other_t)
+
+    with testing.override_gems_op("_new_zeros_with_same_feature_meta", aliased):
+        with pytest.raises(AssertionError):
+            cases.test__new_zeros_with_same_feature_meta_value_ranges(
+                (4, 5), (4, 5), 0, ["0", "0"], torch.float32
+            )
+
+
+@pytest.mark.parametrize("source", ["self", "other"])
+def test_new_zeros_rejects_input_mutation(source):
+    from . import test__new_zeros_with_same_feature_meta as cases
+
+    def mutated(self_t, other_t, **kwargs):
+        result = torch.ops.aten._new_zeros_with_same_feature_meta(
+            self_t, other_t, **kwargs
+        )
+        (self_t if source == "self" else other_t).fill_(float("nan"))
+        return result
+
+    with testing.override_gems_op("_new_zeros_with_same_feature_meta", mutated):
+        with pytest.raises(AssertionError):
+            cases.test__new_zeros_with_same_feature_meta(
+                (4, 5), (4, 5), 0, torch.float32
+            )
+
+
+def test_new_zeros_checks_output_device_with_cpu_reference(monkeypatch):
+    from . import test__new_zeros_with_same_feature_meta as cases
+
+    monkeypatch.setattr(utils, "TO_CPU", True)
+
+    def wrong_device(*args, **kwargs):
+        return torch.ops.aten._new_zeros_with_same_feature_meta(*args, **kwargs).cpu()
+
+    with testing.override_gems_op("_new_zeros_with_same_feature_meta", wrong_device):
+        with pytest.raises(AssertionError):
+            cases.test__new_zeros_with_same_feature_meta(
+                (4, 5), (4, 5), 0, torch.float32
+            )
+
+
+def test_new_zeros_rejects_spurious_autograd():
+    from . import test__new_zeros_with_same_feature_meta as cases
+
+    def differentiable(*args, **kwargs):
+        return torch.ops.aten._new_zeros_with_same_feature_meta(
+            *args, **kwargs
+        ).requires_grad_()
+
+    with testing.override_gems_op("_new_zeros_with_same_feature_meta", differentiable):
+        with pytest.raises(AssertionError):
+            cases.test__new_zeros_with_same_feature_meta(
+                (4, 5), (4, 5), 0, torch.float32
+            )
+
+
+def test_new_zeros_out_preserves_storage_outside_the_view():
+    from . import test__new_zeros_with_same_feature_meta as cases
+
+    def overwritten(self_t, other_t, *, out, **kwargs):
+        storage_size = out.untyped_storage().nbytes() // out.element_size()
+        out.as_strided((storage_size,), (1,), 0).zero_()
+        return out
+
+    with testing.override_gems_op("_new_zeros_with_same_feature_meta", overwritten):
+        with pytest.raises(AssertionError):
+            cases.test__new_zeros_with_same_feature_meta_out_layouts(
+                (4, 10), (10, 2), 0, torch.float32
+            )
+
+
 _BOOL_METADATA_CASES = [
     ("can_cast", "test_can_cast", (torch.float32, torch.float32)),
     ("can_cast", "test_can_cast", (torch.float32, torch.int32)),
