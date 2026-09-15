@@ -22,17 +22,16 @@ from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # aten::crow_indices(Tensor(a) self) -> Tensor(a) returns the compressed row
-# index tensor of a sparse CSR tensor: shape batch_dims + (nrows + 1,) with
-# dtype int64. The result is an alias of the input's internal crow storage
-# (Tensor(a) -> Tensor(a)) and never depends on the stored values, so every
-# workload below feeds a sparse CSR tensor.
+# index array of a CSR or BSR tensor. Its last dimension counts compressed
+# rows plus the sentinel, and its dtype follows the stored int32/int64 index
+# array. The result aliases that array and ignores the values payload.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtype coverage: the 9 required spec dtypes (int8, uint8, float8_e4m3fn,
 #     float8_e5m2, float32, bfloat16, float16, int32, int64) plus float64,
 #     int16 and bool; the operator reads only the crow metadata regardless
 #     of storage dtype;
-#   * shape levels: crow_indices only accepts rank >= 2 CSR layouts, so the
+#   * shape levels: crow_indices accepts rank >= 2 CSR/BSR layouts, so the
 #     spec's 0-dim/1-dim levels are represented by their nearest CSR-valid
 #     analogues -- ((1, 1)) for the scalar/single-element boundary and ((1, 6))
 #     for the single-row boundary -- together with the 2-D (256, 256) /
@@ -51,7 +50,7 @@ from . import test_utils as tu
 #
 # No broadcast/backward dimensions apply: the operator is unary, returns a view
 # of the input's own storage (there is nothing to broadcast against) and its
-# result is an int64 metadata tensor (nothing to differentiate).
+# result is an integer metadata tensor (nothing to differentiate).
 
 # (shape, nnz) layouts covering the CSR-valid analogues of the seven spec shape
 # levels (single element, single row, 2-D regular, 3-D, 4-D, 5-D) plus a large
@@ -68,7 +67,7 @@ _CSR_CASES_CORE = [
     ((16, 7, 57, 32, 29), 5),
 ]
 
-# Higher-rank / batched layouts for the "all" level (no --quick): 2-D all-sparse
+# Higher-rank / batched layouts for default mode (no --quick): 2-D all-sparse
 # variations, 3-D/4-D batched and ranks up to 7-D.
 _CSR_CASES_ALL = [
     ((3, 8), 16),
@@ -159,7 +158,7 @@ def _resolve_gems_op():
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
     # crow_indices returns a view of the input's internal
-    # batch_dims + (nrows + 1,) int64 compressed row index tensor. The entries
+    # batch_dims + (n_compressed_rows + 1,) index tensor. The entries
     # are exact, and the schema annotation Tensor(a) self -> Tensor(a) requires
     # the result to alias the input's crow storage.
     tu.assert_result_equal(res_out, ref_out)
@@ -177,6 +176,55 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
         utils.gems_assert_equal(inp.values(), ref_inp.values(), equal_nan=True)
     else:
         utils.gems_assert_equal(inp.values(), ref_inp.values())
+
+
+# Preserve the actual index dtype across plain/block, batched/hybrid and empty
+# layouts. Values use the full declared storage dtype set independently.
+_INDEX_LAYOUT_CASES = [
+    (torch.sparse_csr, (4, 6), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
+    (torch.sparse_bsr, (4, 6), (3, 2, 3), [0, 2, 3], [0, 1, 1]),
+    (torch.sparse_csr, (4, 6), (0,), [0, 0, 0, 0, 0], []),
+    (torch.sparse_bsr, (4, 6), (0, 2, 3), [0, 0, 0], []),
+]
+_INDEX_CASES = tu.selected_cases(
+    [
+        (case, batch_shape, dense_shape)
+        for case in _INDEX_LAYOUT_CASES
+        for batch_shape in [(), (2,), (2, 3)]
+        for dense_shape in [(), (2,)]
+    ],
+    quick=[
+        (_INDEX_LAYOUT_CASES[0], (), ()),
+        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
+        (_INDEX_LAYOUT_CASES[2], (), ()),
+        (_INDEX_LAYOUT_CASES[3], (2,), ()),
+    ],
+)
+
+
+@pytest.mark.crow_indices
+@pytest.mark.parametrize("case,batch_shape,dense_shape", _INDEX_CASES)
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", _CSR_DTYPES)
+def test_crow_indices_index_layouts(case, batch_shape, dense_shape, dtype, index_dtype):
+    layout, matrix_shape, values_shape, compressed, plain = case
+    compressed = torch.tensor(compressed, dtype=index_dtype, device=flag_gems.device)
+    plain = torch.tensor(plain, dtype=index_dtype, device=flag_gems.device)
+    compressed = compressed.expand(batch_shape + compressed.shape).contiguous()
+    plain = plain.expand(batch_shape + plain.shape).contiguous()
+    values = tu.make_input(dtype, batch_shape + values_shape + dense_shape, ["-1", "1"])
+    inp = torch.sparse_compressed_tensor(
+        compressed,
+        plain,
+        values,
+        size=batch_shape + matrix_shape + dense_shape,
+        layout=layout,
+        check_invariants=True,
+    )
+    ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.crow_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.crow_indices

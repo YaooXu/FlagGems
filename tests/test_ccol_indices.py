@@ -21,10 +21,9 @@ from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # aten::ccol_indices(Tensor(a) self) -> Tensor(a) returns the compressed column
-# index tensor of a sparse CSC tensor: shape batch_dims + (ncols + 1,) (the
-# unbatched 2-D case has batch_dims == ()) with dtype int64. The result is an
-# alias of the input's internal ccol storage and never depends on the stored
-# values, so every workload below feeds a sparse CSC tensor.
+# index array of a CSC or BSC tensor. Its last dimension counts compressed
+# columns plus the sentinel, and its dtype follows the stored int32/int64
+# index array. The result aliases that array and ignores the values payload.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtypes: the spec's required int8 / uint8 / float8_e4m3fn / float8_e5m2
@@ -46,7 +45,7 @@ from . import test_utils as tu
 #
 # No broadcast/backward dimensions apply: the operator is unary, returns a view
 # of the input's own storage (there is nothing to broadcast against) and its
-# result is an int64 metadata tensor (nothing to differentiate).
+# result is an integer metadata tensor (nothing to differentiate).
 
 # Required dtypes first, then the shared float/int/bool sets, deduplicated.
 _CSC_DTYPES = list(
@@ -74,7 +73,7 @@ _CSC_CASES_CORE = [
     ((2, 3, 4, 5), 8),
 ]
 
-# Higher-rank layouts for the "all" level (no --quick): 4-D and batched
+# Higher-rank layouts for default mode (no --quick): 4-D and batched
 # ranks up to 7-D.
 _CSC_CASES_ALL = [
     ((12, 9, 3, 6), 9),
@@ -159,7 +158,7 @@ def _resolve_gems_op():
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
     # ccol_indices returns a fresh view of the input's internal
-    # batch_dims + (ncols + 1,) int64 compressed column index tensor. The
+    # batch_dims + (n_compressed_columns + 1,) index tensor. The
     # entries are exact, and the schema annotation Tensor(a) self -> Tensor(a)
     # requires the result to alias the input's ccol storage.
     tu.assert_result_equal(res_out, ref_out)
@@ -177,6 +176,55 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
         utils.gems_assert_equal(inp.values(), ref_inp.values(), equal_nan=True)
     else:
         utils.gems_assert_equal(inp.values(), ref_inp.values())
+
+
+# Preserve the actual index dtype across plain/block, batched/hybrid and empty
+# layouts. Values use the full declared storage dtype set independently.
+_INDEX_LAYOUT_CASES = [
+    (torch.sparse_csc, (6, 4), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
+    (torch.sparse_bsc, (6, 4), (3, 3, 2), [0, 2, 3], [0, 1, 1]),
+    (torch.sparse_csc, (6, 4), (0,), [0, 0, 0, 0, 0], []),
+    (torch.sparse_bsc, (6, 4), (0, 3, 2), [0, 0, 0], []),
+]
+_INDEX_CASES = tu.selected_cases(
+    [
+        (case, batch_shape, dense_shape)
+        for case in _INDEX_LAYOUT_CASES
+        for batch_shape in [(), (2,), (2, 3)]
+        for dense_shape in [(), (2,)]
+    ],
+    quick=[
+        (_INDEX_LAYOUT_CASES[0], (), ()),
+        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
+        (_INDEX_LAYOUT_CASES[2], (), ()),
+        (_INDEX_LAYOUT_CASES[3], (2,), ()),
+    ],
+)
+
+
+@pytest.mark.ccol_indices
+@pytest.mark.parametrize("case,batch_shape,dense_shape", _INDEX_CASES)
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", _CSC_DTYPES)
+def test_ccol_indices_index_layouts(case, batch_shape, dense_shape, dtype, index_dtype):
+    layout, matrix_shape, values_shape, compressed, plain = case
+    compressed = torch.tensor(compressed, dtype=index_dtype, device=flag_gems.device)
+    plain = torch.tensor(plain, dtype=index_dtype, device=flag_gems.device)
+    compressed = compressed.expand(batch_shape + compressed.shape).contiguous()
+    plain = plain.expand(batch_shape + plain.shape).contiguous()
+    values = tu.make_input(dtype, batch_shape + values_shape + dense_shape, ["-1", "1"])
+    inp = torch.sparse_compressed_tensor(
+        compressed,
+        plain,
+        values,
+        size=batch_shape + matrix_shape + dense_shape,
+        layout=layout,
+        check_invariants=True,
+    )
+    ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.ccol_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices

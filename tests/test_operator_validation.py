@@ -591,3 +591,27 @@ def test_nested_metadata_stays_on_cpu_with_cpu_reference(operator, monkeypatch):
     with testing.override_gems_op(operator, misplaced):
         with pytest.raises(AssertionError):
             getattr(cases, f"test_{operator}_nan_inf_values")(torch.float32, "nan")
+
+
+@pytest.mark.parametrize(
+    "operator",
+    [
+        "ccol_indices",
+        "crow_indices",
+        "col_indices",
+        "ccol_indices_copy",
+        "crow_indices_copy",
+        "col_indices_copy",
+    ],
+)
+def test_compressed_indices_reject_widened_index_dtype(operator):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
+
+    def widened(inp):
+        return getattr(torch.ops.aten, operator)(inp).to(torch.int64)
+
+    with testing.override_gems_op(operator, widened):
+        with pytest.raises(AssertionError):
+            getattr(cases, f"test_{operator}_index_layouts")(
+                cases._INDEX_LAYOUT_CASES[0], (), (), torch.float32, torch.int32
+            )

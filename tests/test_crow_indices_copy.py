@@ -23,7 +23,7 @@ from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # aten::crow_indices_copy(Tensor self) -> Tensor materializes the
-# batch_dims + (n_compressed + 1,) int64 compressed-row index array of a sparse
+# batch_dims + (n_compressed + 1,) int32/int64 compressed-row index array of a sparse
 # row-compressed tensor (CSR or BSR) as a fresh, contiguous, independent copy.
 # It is the view_copy counterpart of aten::crow_indices, whose native body is
 # ``crow_indices(self).clone(contiguous)``: unlike aten::crow_indices the result
@@ -48,11 +48,11 @@ from . import test_utils as tu
 #   * negative: dense, CSC, COO tensors, non-tensor inputs and a wrong-dtype
 #     ``out`` tensor are rejected.
 #   * broadcast / backward: not applicable -- the operator is unary and returns
-#     a fresh int64 metadata tensor, so there is nothing to broadcast against or
+#     a fresh integer metadata tensor, so there is nothing to broadcast against or
 #     to differentiate.
 #
 # Copy semantics are checked on every case: the result must equal the raw crow
-# array, must be a fresh contiguous int64 tensor that does NOT alias the input's
+# array, must be a fresh contiguous integer tensor that does NOT alias the input's
 # internal crow storage, and the input must not be mutated.
 
 # (layout, size, nnz, blocks) core cases: 2-D CSR (incl. single-row and
@@ -75,7 +75,7 @@ _CROW_CORE = [
     ("bsr_batch", (2, 4, 6), 6, (2, 2)),
 ]
 
-# Higher-rank / wider layouts for the "all" level (default, no --quick):
+# Higher-rank / wider layouts for default mode (no --quick):
 # multi-batch-dim CSR, a BSR whose blocks do not divide the matrix, and a
 # batched BSR with a bigger block.
 _CROW_ALL = [
@@ -243,9 +243,9 @@ def _make_csr_batch(size, nnz, dtype, gen, device, value_range):
 def _make_bsr(size, nnz, blocks, dtype, gen, device, value_range):
     n_rows, n_cols = size
     block_rows, block_cols = blocks
-    # ceil keeps the compressed extents valid for blocks that do not divide the
-    # matrix dims; torch.sparse_bsr_tensor infers the block size from the
-    # trailing dims of the values tensor and pads the logical size internally.
+    # Legacy non-divisible fixtures retain ceil-sized index arrays. The
+    # constructor stores these arrays with invariant checks disabled; it does
+    # not pad the logical matrix. The accessor reads the stored metadata.
     n_row_blocks = int(math.ceil(n_rows / block_rows))
     n_col_blocks = int(math.ceil(n_cols / block_cols))
     crow = _random_crow(n_row_blocks, nnz, gen)
@@ -315,7 +315,7 @@ def _resolve_gems_op():
 
 def _assert_copy_semantics(res, ref, inp, ref_inp):
     # crow_indices_copy returns a fresh contiguous batch_dims +
-    # (n_compressed + 1,) int64 tensor holding the input's raw crow array. The
+    # (n_compressed + 1,) tensor with the input's index dtype and raw crow array. The
     # result must not alias the input's internal crow storage (unlike
     # aten::crow_indices) and the input must not be mutated.
     assert res.is_contiguous()
@@ -330,6 +330,79 @@ def _assert_copy_semantics(res, ref, inp, ref_inp):
     # equal_nan=True keeps the non-mutation check valid for inputs whose stored
     # values contain nan / +-inf.
     utils.gems_assert_equal(inp, ref_inp, equal_nan=True)
+
+
+# Preserve the actual index dtype across plain/block, batched/hybrid and empty
+# layouts. Values use the full declared storage dtype set independently.
+_INDEX_LAYOUT_CASES = [
+    (torch.sparse_csr, (4, 6), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
+    (torch.sparse_bsr, (4, 6), (3, 2, 3), [0, 2, 3], [0, 1, 1]),
+    (torch.sparse_csr, (4, 6), (0,), [0, 0, 0, 0, 0], []),
+    (torch.sparse_bsr, (4, 6), (0, 2, 3), [0, 0, 0], []),
+]
+_INDEX_CASES = tu.selected_cases(
+    [
+        (case, batch_shape, dense_shape)
+        for case in _INDEX_LAYOUT_CASES
+        for batch_shape in [(), (2,), (2, 3)]
+        for dense_shape in [(), (2,)]
+    ],
+    quick=[
+        (_INDEX_LAYOUT_CASES[0], (), ()),
+        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
+        (_INDEX_LAYOUT_CASES[2], (), ()),
+        (_INDEX_LAYOUT_CASES[3], (2,), ()),
+    ],
+)
+
+
+def _make_index_layout(case, batch_shape, dense_shape, dtype, index_dtype):
+    layout, matrix_shape, values_shape, compressed, plain = case
+    compressed = torch.tensor(compressed, dtype=index_dtype, device=flag_gems.device)
+    plain = torch.tensor(plain, dtype=index_dtype, device=flag_gems.device)
+    compressed = compressed.expand(batch_shape + compressed.shape).contiguous()
+    plain = plain.expand(batch_shape + plain.shape).contiguous()
+    values = tu.make_input(dtype, batch_shape + values_shape + dense_shape, ["-1", "1"])
+    inp = torch.sparse_compressed_tensor(
+        compressed,
+        plain,
+        values,
+        size=batch_shape + matrix_shape + dense_shape,
+        layout=layout,
+        check_invariants=True,
+    )
+    return inp
+
+
+@pytest.mark.crow_indices_copy
+@pytest.mark.parametrize("case,batch_shape,dense_shape", _INDEX_CASES)
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", _CROW_DTYPES)
+def test_crow_indices_copy_index_layouts(
+    case, batch_shape, dense_shape, dtype, index_dtype
+):
+    inp = _make_index_layout(case, batch_shape, dense_shape, dtype, index_dtype)
+    ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.crow_indices_copy(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
+
+
+@pytest.mark.crow_indices_copy_out
+@pytest.mark.parametrize("case,batch_shape,dense_shape", _INDEX_CASES)
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", _CROW_DTYPES)
+def test_crow_indices_copy_out_index_layouts(
+    case, batch_shape, dense_shape, dtype, index_dtype
+):
+    inp = _make_index_layout(case, batch_shape, dense_shape, dtype, index_dtype)
+    ref_inp = tu.to_reference(inp)
+    out = torch.full_like(inp.crow_indices(), -1)
+    ref_out = torch.full_like(ref_inp.crow_indices(), -1)
+    torch.ops.aten.crow_indices_copy(ref_inp, out=ref_out)
+    res_ret = _resolve_gems_op()(inp, out=out)
+    assert res_ret is out
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.crow_indices_copy

@@ -22,7 +22,7 @@ from . import test_utils as tu
 
 # aten::col_indices(Tensor(a) self) -> Tensor(a) returns the column index
 # tensor of a sparse row-compressed tensor (CSR or BSR): shape batch_dims +
-# (nnz,) with dtype int64. The result is a view of the input's internal
+# (nnz,) with dtype int32 or int64. The result is a view of the input's internal
 # col_indices storage and never depends on the stored values, so every workload
 # below feeds a sparse row-compressed tensor.
 #
@@ -48,7 +48,7 @@ from . import test_utils as tu
 #
 # No broadcast/backward dimensions apply: the operator is unary, returns a
 # view of the input's own storage (there is nothing to broadcast against) and
-# its result is an int64 metadata tensor (nothing to differentiate).
+# its result is an integer metadata tensor (nothing to differentiate).
 
 # ---------------------------------------------------------------------------
 # Input construction
@@ -95,9 +95,9 @@ def _build_csr(shape, nnz, dtype, value_range, seed=0):
 def _build_bsr(shape, nnz, blocks, dtype, value_range, seed=0):
     batch, n_rows, n_cols = shape[:-2], shape[-2], shape[-1]
     block_rows, block_cols = blocks
-    # ceil keeps the compressed extents valid for blocks that do not divide the
-    # matrix dims; torch.sparse_bsr_tensor infers the block size from the
-    # trailing dims of the values tensor and pads the logical size internally.
+    # Legacy non-divisible fixtures retain ceil-sized index arrays. The
+    # constructor stores these arrays with invariant checks disabled; it does
+    # not pad the logical matrix. The accessor reads the stored metadata.
     n_row_blocks = (n_rows + block_rows - 1) // block_rows
     n_col_blocks = (n_cols + block_cols - 1) // block_cols
     gen = torch.Generator("cpu").manual_seed(seed)
@@ -140,7 +140,7 @@ _COL_CASES_CORE = [
     ("bsr", (8, 8), 6, (2, 2)),
 ]
 
-# Higher-rank layouts for the "all" level (default, no --quick): multi-batch-dim
+# Higher-rank layouts for default mode (no --quick): multi-batch-dim
 # batched CSR (ranks 5-7) and BSR with blocks that do not divide the matrix,
 # plus batched BSR.
 _COL_CASES_ALL = [
@@ -208,7 +208,7 @@ def _resolve_gems_op():
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
     # col_indices returns a view of the input's internal batch_dims + (nnz,)
-    # int64 column index tensor. The entries are exact, and the schema
+    # int32/int64 column index tensor. The entries are exact, and the schema
     # annotation Tensor(a) self -> Tensor(a) requires the result to alias the
     # input's col_indices storage.
     tu.assert_result_equal(res_out, ref_out)
@@ -229,6 +229,55 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+# Preserve the actual index dtype across plain/block, batched/hybrid and empty
+# layouts. Values use the full declared storage dtype set independently.
+_INDEX_LAYOUT_CASES = [
+    (torch.sparse_csr, (4, 6), (4,), [0, 2, 2, 3, 4], [0, 4, 1, 5]),
+    (torch.sparse_bsr, (4, 6), (3, 2, 3), [0, 2, 3], [0, 1, 1]),
+    (torch.sparse_csr, (4, 6), (0,), [0, 0, 0, 0, 0], []),
+    (torch.sparse_bsr, (4, 6), (0, 2, 3), [0, 0, 0], []),
+]
+_INDEX_CASES = tu.selected_cases(
+    [
+        (case, batch_shape, dense_shape)
+        for case in _INDEX_LAYOUT_CASES
+        for batch_shape in [(), (2,), (2, 3)]
+        for dense_shape in [(), (2,)]
+    ],
+    quick=[
+        (_INDEX_LAYOUT_CASES[0], (), ()),
+        (_INDEX_LAYOUT_CASES[1], (2,), (2,)),
+        (_INDEX_LAYOUT_CASES[2], (), ()),
+        (_INDEX_LAYOUT_CASES[3], (2,), ()),
+    ],
+)
+
+
+@pytest.mark.col_indices
+@pytest.mark.parametrize("case,batch_shape,dense_shape", _INDEX_CASES)
+@pytest.mark.parametrize("index_dtype", [torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", _COL_DTYPES)
+def test_col_indices_index_layouts(case, batch_shape, dense_shape, dtype, index_dtype):
+    layout, matrix_shape, values_shape, compressed, plain = case
+    compressed = torch.tensor(compressed, dtype=index_dtype, device=flag_gems.device)
+    plain = torch.tensor(plain, dtype=index_dtype, device=flag_gems.device)
+    compressed = compressed.expand(batch_shape + compressed.shape).contiguous()
+    plain = plain.expand(batch_shape + plain.shape).contiguous()
+    values = tu.make_input(dtype, batch_shape + values_shape + dense_shape, ["-1", "1"])
+    inp = torch.sparse_compressed_tensor(
+        compressed,
+        plain,
+        values,
+        size=batch_shape + matrix_shape + dense_shape,
+        layout=layout,
+        check_invariants=True,
+    )
+    ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.col_indices(ref_inp)
+    res_out = _resolve_gems_op()(inp)
+    _assert_result(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.col_indices
@@ -371,7 +420,7 @@ def test_col_indices_full_storage(dtype):
 @pytest.mark.parametrize("dtype", _COL_DTYPES)
 def test_col_indices_bsr_ragged_blocks(dtype):
     # BSR whose blocks do not divide the matrix dims: the compressed extents
-    # use ceil and torch pads the logical size internally. col_indices returns
+    # use ceil with constructor invariant checks disabled. col_indices returns
     # the stored block-column indices, one per stored block.
     inp = _build_input("bsr", (10, 10), 6, (3, 4), dtype, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
