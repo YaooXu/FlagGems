@@ -635,9 +635,8 @@ def test__slow_conv2d_backward_negative_invalid_config(case):
             grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
         )
 
-    # ...and so must the candidate. LookupError is tolerated only when no
-    # candidate has been injected for this run.
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    # The candidate must reject the same invalid arguments.
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(
             grad_output, inp, weight, kernel_size, stride, padding, _FULL_MASK
         )
@@ -656,7 +655,7 @@ def test__slow_conv2d_backward_negative_non_float_dtype(dtype):
             grad_output, inp, weight, (3, 3), (1, 1), (0, 0), _FULL_MASK
         )
 
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(grad_output, inp, weight, (3, 3), (1, 1), (0, 0), _FULL_MASK)
 
 
@@ -672,7 +671,7 @@ def test__slow_conv2d_backward_negative_non_4d_grad_output():
             grad_output, inp, weight, (3, 3), (1, 1), (0, 0), _FULL_MASK
         )
 
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(grad_output, inp, weight, (3, 3), (1, 1), (0, 0), _FULL_MASK)
 
 
@@ -705,7 +704,7 @@ def test__slow_conv2d_backward_negative_scalar_param(scalar_param):
             grad_output, inp, weight, args[0], args[1], args[2], _FULL_MASK
         )
 
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(
             grad_output, inp, weight, args[0], args[1], args[2], _FULL_MASK
         )

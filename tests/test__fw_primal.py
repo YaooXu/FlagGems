@@ -244,13 +244,10 @@ def test__fw_primal_backward(shape, dtype):
 def test__fw_primal_rejects_non_tensor():
     # The aten schema requires a Tensor; a Python float hits the invalid
     # argument path and raises. The candidate must fail too rather than silently
-    # accept scalars. LookupError is tolerated so the file still runs without an
-    # injected override.
+    # accept scalars.
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(3.14, 0)
-    with pytest.raises(
-        (TypeError, ValueError, RuntimeError, AttributeError, LookupError)
-    ):
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(3.14, 0)
 
 
@@ -263,9 +260,7 @@ def test__fw_primal_rejects_non_int_level():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(ref_inp, 1.5)
-    with pytest.raises(
-        (TypeError, ValueError, RuntimeError, AttributeError, LookupError)
-    ):
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, 1.5)
 
 
@@ -278,9 +273,7 @@ def test__fw_primal_rejects_missing_level():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(ref_inp)
-    with pytest.raises(
-        (TypeError, ValueError, RuntimeError, AttributeError, LookupError)
-    ):
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp)
 
 

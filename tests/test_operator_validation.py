@@ -1,5 +1,6 @@
 """Regression checks for assertion and stateful measurement boundaries."""
 
+import importlib
 import runpy
 from pathlib import Path
 from types import SimpleNamespace
@@ -517,3 +518,28 @@ def test_diagflat_rejects_small_gradient_errors():
     with testing.override_gems_op("diagflat", CorruptedGradient.apply):
         with pytest.raises(AssertionError):
             cases.test_diagflat_backward((3, 4), 1, torch.float32)
+
+
+@pytest.mark.parametrize(
+    "operator,case_name,args",
+    [
+        ("_fw_primal", "test__fw_primal_rejects_non_tensor", ()),
+        (
+            "_slow_conv2d_backward",
+            "test__slow_conv2d_backward_negative_non_4d_grad_output",
+            (),
+        ),
+        (
+            "slow_conv_dilated2d",
+            "test_slow_conv_dilated2d_rejects_unsupported_dtype",
+            (torch.int32,),
+        ),
+    ],
+)
+def test_negative_cases_require_a_candidate(monkeypatch, operator, case_name, args):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
+    missing = Mock(side_effect=LookupError("candidate missing"))
+    monkeypatch.setattr(cases, "_resolve_gems_op", missing)
+    with pytest.raises(LookupError, match="candidate missing"):
+        getattr(cases, case_name)(*args)
+    missing.assert_called_once()

@@ -416,9 +416,8 @@ def test_slow_conv_dilated2d_negative(case):
             inp, weight, kernel_size, bias, stride, padding, dilation
         )
 
-    # ...and so must the candidate. LookupError is tolerated only when no
-    # candidate has been injected for this run.
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    # The candidate must reject the same invalid arguments.
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding, dilation)
 
 
@@ -435,5 +434,5 @@ def test_slow_conv_dilated2d_rejects_unsupported_dtype(dtype):
         torch.ops.aten.slow_conv_dilated2d(
             inp, weight, (3, 3), bias, (1, 1), (0, 0), (1, 1)
         )
-    with pytest.raises((TypeError, ValueError, RuntimeError, LookupError)):
+    with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(inp, weight, (3, 3), bias, (1, 1), (0, 0), (1, 1))
