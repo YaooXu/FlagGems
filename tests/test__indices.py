@@ -82,7 +82,7 @@ def _sparse_dtype_probe(op_name, dtype):
         indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
         values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
         inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        out = torch.ops.aten._indices(utils.to_reference(inp, independent=True))
+        out = torch.ops.aten._indices(tu.to_reference(inp))
         return out.dtype == torch.int64 and tuple(out.shape) == (2, 1)
     except Exception:
         return False
@@ -172,7 +172,9 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_indices", getattr(flag_gems, "_indices", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_indices", getattr(flag_gems, "_indices", None)
+    )
 
 
 def _assert_result(res_out, ref_out, inp, ref_inp):
@@ -211,7 +213,7 @@ def test__indices_layouts(case, dtype):
     # the reference exactly and alias the input's indices storage.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -230,7 +232,7 @@ def test__indices_spec_shapes_value_ranges(shape, value_range, dtype):
     # value-range machinery end to end on every rank.
     nnz = _INDICES_SPEC_NNZ
     inp = _make_coo_input(shape, len(shape), nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -249,7 +251,7 @@ def test__indices_value_ranges(case, value_range, dtype):
     # metadata, not the values payload.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -266,7 +268,7 @@ def test__indices_empty(dtype):
     indices = torch.empty(sparse_dim, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -283,7 +285,7 @@ def test__indices_empty_hybrid(dtype):
     indices = torch.empty(sparse_dim, 0, dtype=torch.long, device=flag_gems.device)
     values = torch.empty(0, 6, dtype=dtype, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -303,7 +305,7 @@ def test__indices_uncoalesced(dtype):
     values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -324,7 +326,7 @@ def test__indices_explicit_zeros(dtype):
     else:
         values = torch.tensor([0.0, 0.0, 0.0], dtype=dtype)
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -346,7 +348,7 @@ def test__indices_full_storage(dtype):
     values = tu.make_input(dtype, (nnz,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert inp._nnz() == nnz
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._indices(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -368,7 +370,7 @@ if tu.LEVEL == "all":
             device=flag_gems.device,
         )
         inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = torch.ops.aten._indices(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -383,7 +385,7 @@ def test__indices_dense_raises():
     # silently return a bogus index tensor.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._indices(utils.to_reference(inp, independent=True))
+        torch.ops.aten._indices(tu.to_reference(inp))
     with pytest.raises(
         (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
     ):
@@ -401,7 +403,7 @@ def test__indices_csr_raises():
         crow_indices, col_indices, values, (2, 4), device=flag_gems.device
     )
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._indices(utils.to_reference(inp, independent=True))
+        torch.ops.aten._indices(tu.to_reference(inp))
     with pytest.raises(
         (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
     ):

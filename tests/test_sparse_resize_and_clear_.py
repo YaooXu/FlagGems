@@ -186,7 +186,7 @@ def _call_is_rejected(size, sparse_dim, dense_dim):
     try:
         inp = _make_sparse_input((4, 5), 2, 1, torch.float32)
         torch.ops.aten.sparse_resize_and_clear_(
-            utils.to_reference(inp, independent=True), list(size), sparse_dim, dense_dim
+            tu.to_reference(inp), list(size), sparse_dim, dense_dim
         )
         return False
     except Exception:
@@ -222,7 +222,7 @@ def _split_for_shape(shape):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "sparse_resize_and_clear_", getattr(flag_gems, "sparse_resize_and_clear_", None)
     )
 
@@ -272,7 +272,7 @@ def _assert_empty_resized(t, shape, sparse_dim, dense_dim, dtype):
 def test_sparse_resize_and_clear_(case, dtype):
     src_shape, src_spd, src_dnd, dst_shape, dst_spd, dst_dnd, src_nnz = case
     inp = _make_sparse_input(src_shape, src_spd, src_nnz, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(dst_shape), dst_spd, dst_dnd
@@ -295,7 +295,7 @@ def test_sparse_resize_and_clear_empty_source(dst_shape, dst_spd, dst_dnd, dtype
     # An empty (nnz == 0) source may be reshaped to any size / sparse / dense
     # split; the result stays empty with the requested metadata.
     inp = _make_sparse_input((4, 5), 2, 0, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(dst_shape), dst_spd, dst_dnd
@@ -321,7 +321,7 @@ def test_sparse_resize_and_clear_uncoalesced(dtype):
     values = tu.make_input(dtype, (4,), _SELECTED_RANGES[0]).to(flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
@@ -342,7 +342,7 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
     # empty result as the reference.
     values = tu.make_input(dtype, (5,), value_range)
     inp = _make_sparse_input((4, 5), 2, 5, dtype, values=values)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
@@ -368,7 +368,7 @@ if tu.LEVEL == "all":
             device=flag_gems.device,
         )
         inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
         res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
@@ -389,7 +389,7 @@ def test_sparse_resize_and_clear_shape_levels(shape, dtype):
     # keeps the result empty regardless of the target.
     sparse_dim, dense_dim = _split_for_shape(shape)
     inp = _make_sparse_input((4, 5), 2, 3, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(shape), sparse_dim, dense_dim
@@ -413,7 +413,7 @@ def test_sparse_resize_and_clear_invalid_params(size, sparse_dim, dense_dim, dty
     inp = _make_sparse_input((4, 5), 2, 3, dtype)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_and_clear_(
-            utils.to_reference(inp.clone(), independent=True),
+            tu.to_reference(inp.clone()),
             size,
             sparse_dim,
             dense_dim,
@@ -430,7 +430,7 @@ def test_sparse_resize_and_clear_non_sparse_input():
     inp = torch.randn((4, 5), dtype=torch.float32, device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_and_clear_(
-            utils.to_reference(inp.clone(), independent=True), [4, 5], 2, 0
+            tu.to_reference(inp.clone()), [4, 5], 2, 0
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, [4, 5], 2, 0)

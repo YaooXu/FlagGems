@@ -230,7 +230,7 @@ def _resolve_named_gems_op(name):
     default = getattr(flag_gems, name.replace(".", "_"), None)
     if default is None:
         default = getattr(flag_gems, name, None)
-    return tu.resolve_gems_op(name, default)
+    return flag_gems.testing.resolve_gems_op(name, default)
 
 
 def _resolve_gems_op():
@@ -269,7 +269,7 @@ def test_dstack(shape_set, dtype):
     # non-degenerate [-1,1] range (tu.make_input clamps the negative bound for
     # dtypes that cannot represent it).
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -285,7 +285,7 @@ def test_dstack_value_ranges(shape_set, dtype, value_range):
     # (0/max/min and the degenerate constant ranges included) must round-trip
     # exactly through the depth-axis placement.
     inp = [tu.make_input(dtype, s, value_range) for s in shape_set]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -302,7 +302,7 @@ def test_dstack_out(shape_set, dtype):
     # The .out overload must write into the provided out tensor and return it
     # (alias semantics), matching the aten reference bit-for-bit.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_shape = torch.ops.aten.dstack(ref_inp).shape
     ref_out = torch.empty(ref_shape, dtype=dtype, device=ref_inp[0].device)
@@ -327,7 +327,7 @@ def test_dstack_empty_inputs(shape_set, dtype):
     # Zero-sized tensors: 1-D (0,), 2-D (2, 0) and 3-D (0, 3, 4) all produce
     # valid (possibly empty) depth-axis concatenations.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -360,7 +360,7 @@ if tu.LEVEL == "all":
             device=flag_gems.device,
         )
         inp = [values, values]
-        ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+        ref_inp = [tu.to_reference(t) for t in inp]
 
         ref_out = torch.ops.aten.dstack(ref_inp)
         res_out = _apply_dstack(inp)
@@ -380,7 +380,7 @@ def test_dstack_complex(dtype):
         tu.make_input(dtype, (4, 5, 6), _MAIN_RANGE),
         tu.make_input(dtype, (4, 5, 7), _MAIN_RANGE),
     ]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     res_out = _apply_dstack(inp)
@@ -400,14 +400,11 @@ if tu.LEVEL == "all":
         # analytic value, then check the candidate forward and - only when the
         # candidate output is differentiable - its gradient against the reference.
         inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
-        ref_inp = [
-            utils.to_reference(t.detach().clone(), independent=True).requires_grad_()
-            for t in inp
-        ]
+        ref_inp = [tu.to_reference(t.detach().clone()).requires_grad_() for t in inp]
 
         ref_out = torch.ops.aten.dstack(ref_inp)
         grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_grad = tu.to_reference(grad)
         ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
         offset = 0
@@ -453,7 +450,7 @@ def test_dstack_mismatched_shapes(shape_set):
     # All dims except dim 2 must match after the atleast_3d view; mismatched
     # non-depth dims must raise on both paths.
     inp = [tu.make_input(torch.float32, s, _MAIN_RANGE) for s in shape_set]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.dstack(ref_inp)

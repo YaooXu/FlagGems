@@ -136,11 +136,15 @@ else:
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("chain_matmul", getattr(flag_gems, "chain_matmul", None))
+    return flag_gems.testing.resolve_gems_op(
+        "chain_matmul", getattr(flag_gems, "chain_matmul", None)
+    )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("chain_matmul", getattr(flag_gems, "chain_matmul", None))
+    return flag_gems.testing.resolve_gems_op(
+        "chain_matmul", getattr(flag_gems, "chain_matmul", None)
+    )
 
 
 def _make_chain(shapes, dtype, value_range):
@@ -154,7 +158,7 @@ def _make_noncontig_chain(shapes, dtype, value_range):
 
 
 def _to_ref(matrices):
-    return [utils.to_reference(m, independent=True) for m in matrices]
+    return [tu.to_reference(m) for m in matrices]
 
 
 def _assert_chain_close(res_out, ref_out, shapes, dtype):
@@ -280,9 +284,9 @@ if tu.LEVEL == "all":
 
         ref_inp = []
         for matrix in inp:
-            ref_matrix = utils.to_reference(matrix.detach(), independent=True)
+            ref_matrix = tu.to_reference(matrix.detach())
             ref_inp.append(ref_matrix.requires_grad_())
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.chain_matmul(ref_inp)
         ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)

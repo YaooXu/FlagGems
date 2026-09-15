@@ -64,5 +64,6 @@ def test_add_inplace():
         gems_op=flag_gems.add_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
+        fresh_inputs=True,
     )
     bench.run()

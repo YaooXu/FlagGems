@@ -142,7 +142,9 @@ _SPECIAL_DTYPES = _unique(utils.ALL_FLOAT_DTYPES + list(_FP8_DTYPES))
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_make_dual", getattr(flag_gems, "_make_dual", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_make_dual", getattr(flag_gems, "_make_dual", None)
+    )
 
 
 def _make_input(dtype, shape, value_range):
@@ -201,8 +203,8 @@ def test__make_dual(shape, dtype):
     # [-1, 1] range (negative and positive for each dtype).
     inp = _make_input(dtype, shape, ["-1", "1"])
     tangent = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
@@ -223,8 +225,8 @@ def test__make_dual_value_ranges(shape, value_range, dtype):
     # round-trip bit-for-bit and the tangent must survive unchanged.
     inp = _make_input(dtype, shape, value_range)
     tangent = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
@@ -246,11 +248,11 @@ def test__make_dual_non_contiguous(shape, dtype):
     # non-contiguous primal. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
     base = _make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     tangent = _make_input(dtype, inp.shape, ["-1", "1"])
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_tangent = tu.to_reference(tangent)
     assert not inp.is_contiguous()
 
     with dual_level() as level:
@@ -271,8 +273,8 @@ def test__make_dual_empty(shape, dtype):
     # (also empty) tangent must round-trip.
     inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     tangent = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
@@ -293,9 +295,9 @@ def test__make_dual_mutation(shape, dtype):
     # clone so the two aliases are validated separately. The op itself never
     # mutates the primal or the tangent.
     inp = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     tangent = _make_input(dtype, shape, ["-1", "1"])
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
@@ -322,9 +324,9 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values, independent=True)
+        ref_inp = tu.to_reference(values)
         tangent = torch.ones_like(values)
-        ref_tangent = utils.to_reference(tangent, independent=True)
+        ref_tangent = tu.to_reference(tangent)
 
         with dual_level() as level:
             ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
@@ -349,8 +351,8 @@ def test__make_dual_rejects_non_float_primal(dtype):
         tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
-                utils.to_reference(inp, independent=True),
-                utils.to_reference(tangent, independent=True),
+                tu.to_reference(inp),
+                tu.to_reference(tangent),
                 level,
             )
         # The generated wrapper may fail on the first touch of the input
@@ -369,9 +371,7 @@ def test__make_dual_rejects_non_tensor_primal():
     with dual_level() as level:
         tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
-            torch.ops.aten._make_dual(
-                3.14, utils.to_reference(tangent, independent=True), level
-            )
+            torch.ops.aten._make_dual(3.14, tu.to_reference(tangent), level)
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
             _resolve_gems_op()(3.14, tangent, level)
 
@@ -387,8 +387,8 @@ def test__make_dual_rejects_tangent_size_mismatch(primal_shape, tangent_shape):
         tangent = _make_input(torch.float32, tangent_shape, ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
-                utils.to_reference(inp, independent=True),
-                utils.to_reference(tangent, independent=True),
+                tu.to_reference(inp),
+                tu.to_reference(tangent),
                 level,
             )
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -405,8 +405,8 @@ def test__make_dual_rejects_inactive_level(level):
     tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._make_dual(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(tangent, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(tangent),
             level,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -424,8 +424,8 @@ def test__make_dual_rejects_non_int_level():
         tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
-                utils.to_reference(inp, independent=True),
-                utils.to_reference(tangent, independent=True),
+                tu.to_reference(inp),
+                tu.to_reference(tangent),
                 1.5,
             )
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -438,12 +438,12 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))
     def test__make_dual_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "_make_dual", getattr(flag_gems, "_make_dual", None)
         )
         tangent = tu.make_special_input(dtype, scenario)
-        ref_tangent = utils.to_reference(tangent, independent=True)
+        ref_tangent = tu.to_reference(tangent)
         with torch.autograd.forward_ad.dual_level() as level:
             ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
             result = candidate(inp, tangent, level)

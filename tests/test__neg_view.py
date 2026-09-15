@@ -148,7 +148,9 @@ _RANGE_CASES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_neg_view", getattr(flag_gems, "_neg_view", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_neg_view", getattr(flag_gems, "_neg_view", None)
+    )
 
 
 def _assert_values_close(res_out, ref_out, dtype):
@@ -180,7 +182,7 @@ def test__neg_view(shape, dtype):
     # Shape levels x every materializable dtype (including the required int8/
     # uint8 dtypes) over a non-degenerate representative value range.
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -198,7 +200,7 @@ def test__neg_view_value_ranges(shape, dtype, value_range):
     # The op never reads or transforms the stored values, so the full spec range
     # sweep must round-trip exactly through the negated materialization.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -215,7 +217,7 @@ def test__neg_view_unmaterializable_dtypes(shape, dtype):
     # materialized, so only the view contract (shape/stride/offset/data_ptr and
     # the neg bit) can be verified - which is precisely what the op promises.
     inp = tu.make_input(dtype, shape, ["0", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -233,7 +235,7 @@ def test__neg_view_non_contiguous(shape, dtype):
     # input. Slice on both the test device and the reference device so the two
     # inputs share the same memory layout.
     base = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -252,7 +254,7 @@ def test__neg_view_toggle(shape, dtype):
     # The neg bit is a toggle: applying _neg_view to an already-negated tensor
     # clears the bit and the materialized values come back to the base input.
     base = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
 
     inp = torch.ops.aten._neg_view(base)
     ref_inp = torch.ops.aten._neg_view(ref_base)
@@ -282,7 +284,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values, independent=True)
+        ref_inp = tu.to_reference(values)
 
         ref_out = torch.ops.aten._neg_view(ref_inp)
         res_out = _resolve_gems_op()(values)
@@ -306,7 +308,7 @@ def test__neg_view_mutation(shape, dtype):
     # be observable on the candidate-side input. The reference runs on an
     # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten._neg_view(ref_inp)
@@ -334,8 +336,8 @@ if tu.LEVEL == "all":
         # would not).
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten._neg_view(ref_inp)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]

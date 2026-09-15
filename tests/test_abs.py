@@ -40,15 +40,15 @@ def _make_input(dtype, shape, value_range):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("abs", flag_gems.abs)
+    return flag_gems.testing.resolve_gems_op("abs", flag_gems.abs)
 
 
 def _resolve_gems_op_inplace():
-    return tu.resolve_gems_op("abs_", flag_gems.abs_)
+    return flag_gems.testing.resolve_gems_op("abs_", flag_gems.abs_)
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("abs", getattr(flag_gems, "abs", None))
+    return flag_gems.testing.resolve_gems_op("abs", getattr(flag_gems, "abs", None))
 
 
 @pytest.mark.abs
@@ -57,7 +57,7 @@ def _resolve_gems_op_out():
 @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
 def test_abs_float_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -71,7 +71,7 @@ def test_abs_float_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", _ABS_INT_DTYPES + utils.BOOL_TYPES)
 def test_abs_int_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -102,7 +102,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.abs(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -120,7 +120,7 @@ def test_abs_int_min_stays(dtype):
     inp = torch.tensor(
         [min_val, min_val + 1, 0, 1, -1], dtype=dtype, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -133,7 +133,7 @@ def test_abs_int_min_stays(dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_empty(shape, dtype):
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -147,7 +147,7 @@ def test_abs_empty(shape, dtype):
 def test_abs_noncontiguous(shape, dtype):
     # transposed views have non-unit strides; the kernel must honor them.
     inp = _make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -163,8 +163,8 @@ if tu.LEVEL == "all":
     def test_abs_backward(shape, dtype):
         inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = _make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.abs(ref_inp)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
@@ -190,7 +190,7 @@ if tu.LEVEL == "all":
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs__value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.abs_(ref_inp)
     res_out = _resolve_gems_op_inplace()(inp)
@@ -207,7 +207,7 @@ def test_abs__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_out(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)

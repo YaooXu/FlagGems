@@ -100,7 +100,7 @@ def _supported_component_dtypes():
                 tu.make_input(dtype, (3, 4), ["0", "1"]),
             ]
             inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-            ref_inp = utils.to_reference(inp, independent=True)
+            ref_inp = tu.to_reference(inp)
             ref = torch.ops.aten._nested_tensor_size(ref_inp)
         except Exception:
             continue
@@ -208,7 +208,7 @@ def _value_range_layouts():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_nested_tensor_size", getattr(flag_gems, "_nested_tensor_size", None)
     )
 
@@ -243,7 +243,7 @@ def test__nested_tensor_size(num_tensors, num_dims, dtype):
     # sizes depend only on component shapes, so column 0 holds the ragged dim-0
     # lengths and every other column the fixed component extent (4).
     inp, lengths = _make_nested(num_tensors, num_dims, dtype)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -271,7 +271,7 @@ def test__nested_tensor_size_shape_levels(case, dtype):
         _make_component(dtype, (length,) + trailing, _VALUE_RANGE) for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -292,7 +292,7 @@ def test__nested_tensor_size_value_ranges(case, value_range, dtype):
     # every storage dtype and value range the nested-tensor runtime supports.
     num_tensors, num_dims = case
     inp, lengths = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -315,7 +315,7 @@ def test__nested_tensor_size_uniform(dtype):
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -339,7 +339,7 @@ def test__nested_tensor_size_with_empty_components(dtype):
         _make_component(dtype, (length, 4), _VALUE_RANGE) for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -371,7 +371,7 @@ if tu.LEVEL == "all":
             values[-1, -1] = float("-inf") if has_inf else float("nan")
             components.append(values)
         inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -399,7 +399,7 @@ def test__nested_tensor_size_dense_raises(dtype):
     # candidate must fail too rather than silently reporting a bogus sizes row.
     inp = tu.make_input(dtype, (4, 4), _VALUE_RANGE)
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._nested_tensor_size(utils.to_reference(inp, independent=True))
+        torch.ops.aten._nested_tensor_size(tu.to_reference(inp))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 

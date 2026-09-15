@@ -111,5 +111,6 @@ def test_copy_sparse_to_sparse_():
         gems_op=gems_op,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
+        fresh_inputs=True,
     )
     bench.run()

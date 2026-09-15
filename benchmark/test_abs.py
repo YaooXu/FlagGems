@@ -69,5 +69,6 @@ def test_abs_inplace():
         gems_op=flag_gems.abs_,
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
+        fresh_inputs=True,
     )
     bench.run()

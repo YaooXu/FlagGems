@@ -104,5 +104,6 @@ def test_sparse_resize_():
         gems_op=getattr(flag_gems, "sparse_resize_", None),
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
+        fresh_inputs=True,
     )
     bench.run()

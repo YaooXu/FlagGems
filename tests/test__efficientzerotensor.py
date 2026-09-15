@@ -58,7 +58,7 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
 
 
 def _resolve(name):
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_efficientzerotensor", getattr(flag_gems, "_efficientzerotensor", None)
     )
 

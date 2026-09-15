@@ -108,7 +108,9 @@ _FW_PRIMAL_SPECIAL_VALUES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_fw_primal", getattr(flag_gems, "_fw_primal", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_fw_primal", getattr(flag_gems, "_fw_primal", None)
+    )
 
 
 def _make_input(dtype, shape, value_range):
@@ -139,7 +141,7 @@ def test__fw_primal(shape, value_range, dtype):
     # view never inspects or transforms the stored values, so every range must
     # round-trip exactly.
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -156,7 +158,7 @@ def test__fw_primal_level(shape, level, dtype):
     # The ``level`` argument is orthogonal to the shape/value grid, so sweep it
     # over representative ranks (0-dim, 1-dim, 3-dim) for every dtype.
     inp = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, level)
     res_out = _resolve_gems_op()(inp, level)
@@ -174,7 +176,7 @@ def test__fw_primal_non_contiguous(shape, level, dtype):
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
     base = _make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -197,7 +199,7 @@ def test__fw_primal_mutation(shape, dtype):
     # must behave identically. The reference runs on an independent clone so the
     # two aliases are validated separately.
     inp = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -227,7 +229,7 @@ if tu.LEVEL == "all":
         values = torch.tensor(
             _FW_PRIMAL_SPECIAL_VALUES, dtype=dtype, device=flag_gems.device
         )
-        ref_inp = utils.to_reference(values.clone(), independent=True)
+        ref_inp = tu.to_reference(values.clone())
 
         ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
         res_out = _resolve_gems_op()(values, 0)
@@ -245,7 +247,7 @@ def test__fw_primal_empty(shape, dtype):
     # Empty tensors (0 elements) still carry a valid layout; the view must
     # preserve shape, strides, storage offset and data_ptr exactly.
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -263,9 +265,7 @@ if tu.LEVEL == "all":
         # A view is transparent to autograd: the gradient of a loss built on the
         # result must match the reference gradient (the view contributes identity).
         inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
-        ref_inp = utils.to_reference(
-            inp.detach().clone(), independent=True
-        ).requires_grad_(True)
+        ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_(True)
 
         ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
         res_out = _resolve_gems_op()(inp, 0)
@@ -295,7 +295,7 @@ def test__fw_primal_rejects_non_int_level():
     # ``level`` is an int in the schema; a float is a cast error at the
     # dispatcher boundary and must be rejected by the candidate as well.
     inp = _make_input(torch.float32, (8,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(ref_inp, 1.5)
@@ -310,7 +310,7 @@ def test__fw_primal_rejects_missing_level():
     # ``level`` has no default in the schema; omitting it must fail on both the
     # reference and the candidate instead of silently using level 0.
     inp = _make_input(torch.float32, (8,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(ref_inp)
@@ -328,8 +328,8 @@ if tu.LEVEL == "all":
     )
     def test__fw_primal_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "_fw_primal", getattr(flag_gems, "_fw_primal", None)
         )
         expected = torch.ops.aten._fw_primal(reference, 0)

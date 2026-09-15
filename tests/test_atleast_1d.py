@@ -63,7 +63,9 @@ _ATLEAST_1D_BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("atleast_1d", getattr(flag_gems, "atleast_1d", None))
+    return flag_gems.testing.resolve_gems_op(
+        "atleast_1d", getattr(flag_gems, "atleast_1d", None)
+    )
 
 
 def _apply_atleast_1d(inp):
@@ -88,7 +90,7 @@ def _assert_result_equal(res_out, ref_out):
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_atleast_1d_value_ranges(shape, value_range, dtype):
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_1d(ref_inp)
     res_out = _apply_atleast_1d(inp)
@@ -119,7 +121,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.atleast_1d(ref_inp)
         res_out = _apply_atleast_1d(inp)
@@ -141,7 +143,7 @@ def test_atleast_1d_sequence(shape, value_range, dtype):
         _make_input(dtype, shape, value_range),
         _make_input(dtype, shape, value_range),
     ]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_1d.Sequence(ref_inp)
     res_out = _apply_atleast_1d(inp)
@@ -170,7 +172,7 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_atleast_1d_backward(shape, dtype):
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
         # x's shape on both the shape-changing (0-dim) and identity paths.
@@ -214,8 +216,8 @@ if tu.LEVEL == "all":
     )
     def test_atleast_1d_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "atleast_1d", getattr(flag_gems, "atleast_1d", None)
         )
         expected = torch.ops.aten.atleast_1d(reference)

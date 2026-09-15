@@ -148,7 +148,7 @@ def _resolve_named_gems_op(name):
     default = getattr(flag_gems, name.replace(".", "_"), None)
     if default is None:
         default = getattr(flag_gems, name, None)
-    return tu.resolve_gems_op(name, default)
+    return flag_gems.testing.resolve_gems_op(name, default)
 
 
 def _resolve_gems_op():
@@ -183,7 +183,7 @@ def test_atleast_3d(shape, dtype):
     # Shape levels x every supported dtype (incl. the required int8/uint8/fp8)
     # with values drawn from a non-degenerate [-1, 1] range.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _apply_atleast_3d(inp)
@@ -201,7 +201,7 @@ def test_atleast_3d_value_ranges(shape, dtype, value_range):
     # (including 0/max/min and the degenerate constant ranges) must round-trip
     # exactly through the shape-changing view.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _apply_atleast_3d(inp)
@@ -222,7 +222,7 @@ def test_atleast_3d_sequence(shape, dtype):
         tu.make_input(dtype, (4, 5), ["-1", "1"]),
         tu.make_input(dtype, shape, ["-1", "1"]),
     ]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_3d.Sequence(ref_inp)
     res_out = _apply_atleast_3d_sequence(inp)
@@ -244,7 +244,7 @@ def test_atleast_3d_sequence_value_ranges(dtype, value_range):
         tu.make_input(dtype, (3,), value_range),
         tu.make_input(dtype, (4, 5), value_range),
     ]
-    ref_inp = [utils.to_reference(t, independent=True) for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_3d.Sequence(ref_inp)
     res_out = _apply_atleast_3d_sequence(inp)
@@ -288,7 +288,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.atleast_3d(ref_inp)
         res_out = _apply_atleast_3d(inp)
@@ -304,7 +304,7 @@ def test_atleast_3d_complex(dtype):
     # parts pass through untouched). One negative-and-positive range per dtype
     # suffices because no arithmetic is performed.
     inp = tu.make_input(dtype, (2, 5), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _apply_atleast_3d(inp)
@@ -369,8 +369,8 @@ if tu.LEVEL == "all":
     )
     def test_atleast_3d_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "atleast_3d", getattr(flag_gems, "atleast_3d", None)
         )
         expected = torch.ops.aten.atleast_3d(reference)

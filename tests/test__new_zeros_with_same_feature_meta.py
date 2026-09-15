@@ -190,7 +190,7 @@ def _shape_level_cases():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_new_zeros_with_same_feature_meta",
         getattr(flag_gems, "_new_zeros_with_same_feature_meta", None),
     )
@@ -226,8 +226,8 @@ def test__new_zeros_with_same_feature_meta(
     # The [-1, 1] range covers negative and positive values in every dtype.
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -250,8 +250,8 @@ def test__new_zeros_with_same_feature_meta_out(
 ):
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     # Pre-sized out tensors with non-zero garbage values: the .out variant must
     # overwrite them in place with zeros and return the same object.
@@ -282,8 +282,8 @@ def test__new_zeros_with_same_feature_meta_shapes(
 ):
     self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -309,8 +309,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
     # shapes and options.
     self_t = _make_input(dtype, self_shape, value_range)
     other_t = _make_input(dtype, other_shape, value_range)
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
@@ -329,8 +329,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
 def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dtype):
     self_t = _make_input(self_dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = _make_input(other_dtype, (7, 8), _MAIN_RANGE)
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
@@ -348,8 +348,8 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     # fresh zero allocation, not an alias of the shared input.
     self_t = _make_input(dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = self_t
-    ref_self = utils.to_reference(self_t, independent=True)
-    ref_other = utils.to_reference(other_t, independent=True)
+    ref_self = tu.to_reference(self_t)
+    ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
@@ -370,8 +370,8 @@ if tu.LEVEL == "all":
         # the output is still an exact zero fill.
         self_t = _nan_inf_tensor(shape, dtype, flag_gems.device)
         other_t = _nan_inf_tensor((4, 5), dtype, flag_gems.device)
-        ref_self = utils.to_reference(self_t, independent=True)
-        ref_other = utils.to_reference(other_t, independent=True)
+        ref_self = tu.to_reference(self_t)
+        ref_other = tu.to_reference(other_t)
 
         ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
             ref_self, ref_other, self_num_batch_dims=0

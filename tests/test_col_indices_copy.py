@@ -350,13 +350,13 @@ def _reference_col_indices_copy_out(inp, out):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "col_indices_copy", getattr(flag_gems, "col_indices_copy", None)
     )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "col_indices_copy", getattr(flag_gems, "col_indices_copy", None)
     )
 
@@ -390,7 +390,7 @@ def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
 def test_col_indices_copy(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _reference_col_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -417,7 +417,7 @@ def _out_buffer(shape, dtype, device):
 def test_col_indices_copy_out(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
@@ -440,7 +440,7 @@ def test_col_indices_copy_spec_shapes(case, dtype):
     # matters.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _reference_col_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -454,7 +454,7 @@ def test_col_indices_copy_spec_shapes(case, dtype):
 def test_col_indices_copy_out_spec_shapes(case, dtype):
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
@@ -477,7 +477,7 @@ def test_col_indices_copy_value_ranges(case, value_range, dtype):
     # not perturb the returned column index array.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _reference_col_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -494,7 +494,7 @@ def test_col_indices_copy_out_value_ranges(case, value_range, dtype):
     # must be identical for every per-dtype value range of the storage.
     layout, size, nnz, blocks = case
     inp = _make_input(layout, size, nnz, blocks, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
@@ -513,7 +513,7 @@ def test_col_indices_copy_empty_bsr(dtype):
     # still return a (0,) contiguous int64 tensor (not a dense or
     # wrongly-shaped tensor).
     inp = _make_input("bsr", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _reference_col_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -525,7 +525,7 @@ def test_col_indices_copy_empty_bsr(dtype):
 @pytest.mark.parametrize("dtype", _COLS_DTYPES)
 def test_col_indices_copy_out_empty_bsr(dtype):
     inp = _make_input("bsr", (4, 6), 0, (2, 2), dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _out_buffer(0, torch.long, inp.device)
     ref_out = _out_buffer(0, torch.long, ref_inp.device)
 
@@ -555,7 +555,7 @@ def _uncoalesced_csr(dtype):
 @pytest.mark.parametrize("dtype", _COLS_DTYPES)
 def test_col_indices_copy_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _reference_col_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -567,7 +567,7 @@ def test_col_indices_copy_uncoalesced(dtype):
 @pytest.mark.parametrize("dtype", _COLS_DTYPES)
 def test_col_indices_copy_out_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _out_buffer(5, torch.long, inp.device)
     ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
@@ -602,7 +602,7 @@ if tu.LEVEL == "all":
         # col_indices_copy reads only the compressed-index storage, so the copy
         # must still be bit-exact even when the values contain non-finite entries.
         inp = _nan_inf_csr(dtype)
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = _reference_col_indices_copy(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -616,7 +616,7 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
     def test_col_indices_copy_out_nan_inf_values(dtype):
         inp = _nan_inf_csr(dtype)
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
         out = _out_buffer(7, torch.long, inp.device)
         ref_out = _out_buffer(7, torch.long, ref_inp.device)
 
@@ -640,7 +640,7 @@ def test_col_indices_copy_negative_dense():
     # reference and the candidate must reject it.
     inp = tu.make_input(torch.float32, (3, 4), ["-1", "1"])
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_col_indices_copy(utils.to_reference(inp.clone(), independent=True))
+        _reference_col_indices_copy(tu.to_reference(inp.clone()))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -657,7 +657,7 @@ def test_col_indices_copy_negative_csc():
         ccol_indices, row_indices, values, (4, 2), device=flag_gems.device
     )
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_col_indices_copy(utils.to_reference(inp.clone(), independent=True))
+        _reference_col_indices_copy(tu.to_reference(inp.clone()))
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -670,7 +670,7 @@ def test_col_indices_copy_negative_coo():
     values = torch.ones(2, dtype=torch.float32)
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_col_indices_copy(utils.to_reference(inp.clone(), independent=True))
+        _reference_col_indices_copy(tu.to_reference(inp.clone()))
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op()(inp)
 
@@ -691,9 +691,7 @@ def test_col_indices_copy_out_negative_dense():
     inp = tu.make_input(torch.float32, (3, 4), ["-1", "1"])
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_col_indices_copy_out(
-            utils.to_reference(inp.clone(), independent=True), out
-        )
+        _reference_col_indices_copy_out(tu.to_reference(inp.clone()), out)
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -708,9 +706,7 @@ def test_col_indices_copy_out_negative_csc():
     )
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((RuntimeError, TypeError)):
-        _reference_col_indices_copy_out(
-            utils.to_reference(inp.clone(), independent=True), out
-        )
+        _reference_col_indices_copy_out(tu.to_reference(inp.clone()), out)
     with pytest.raises((RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -722,9 +718,7 @@ def test_col_indices_copy_out_negative_coo():
     inp = torch.sparse_coo_tensor(indices, values, (3, 3), device=flag_gems.device)
     out = torch.empty(5, dtype=torch.long, device=flag_gems.device)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _reference_col_indices_copy_out(
-            utils.to_reference(inp.clone(), independent=True), out
-        )
+        _reference_col_indices_copy_out(tu.to_reference(inp.clone()), out)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         _resolve_gems_op_out()(inp, out=out)
 
@@ -734,7 +728,7 @@ def test_col_indices_copy_out_negative_wrong_dtype():
     # The .out contract materializes int64 entries into out; an out tensor of a
     # different dtype must be rejected.
     inp = _make_input("csr", (5, 4), 6, None, torch.float32)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = torch.empty(6, dtype=torch.float32, device=inp.device)
     ref_out = torch.empty(6, dtype=torch.float32, device=ref_inp.device)
     with pytest.raises(RuntimeError):

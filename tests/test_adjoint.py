@@ -123,7 +123,9 @@ _RANGE_CASES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("adjoint", getattr(flag_gems, "adjoint", None))
+    return flag_gems.testing.resolve_gems_op(
+        "adjoint", getattr(flag_gems, "adjoint", None)
+    )
 
 
 def _transposed_shape(shape):
@@ -162,7 +164,7 @@ def test_adjoint(shape, dtype):
     # Shape levels x every supported dtype (including the required int8/uint8/
     # fp8 dtypes) over a non-degenerate representative value range.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -179,7 +181,7 @@ def test_adjoint_value_ranges(shape, value_range, dtype):
     # toggle for complex dtypes), so the full spec range sweep must round-trip
     # exactly through the transposed/conjugated materialization.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -196,7 +198,7 @@ def test_adjoint_non_contiguous(shape, dtype):
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -216,7 +218,7 @@ def test_adjoint_toggle(shape, dtype):
     # clears the bit and the materialized values come back to the base input
     # (adjoint is an involution).
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
 
     inp = torch.ops.aten.adjoint(base)
     ref_inp = torch.ops.aten.adjoint(ref_base)
@@ -256,7 +258,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values, independent=True)
+        ref_inp = tu.to_reference(values)
 
         ref_out = torch.ops.aten.adjoint(ref_inp)
         res_out = _resolve_gems_op()(values)
@@ -274,7 +276,7 @@ def test_adjoint_mutation(shape, dtype):
     # the candidate-side input. The reference runs on an independent clone so
     # the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     res_out = _resolve_gems_op()(inp)
     ref_out = torch.ops.aten.adjoint(ref_inp)
@@ -300,8 +302,8 @@ if tu.LEVEL == "all":
         # machinery; a materializing kernel would not).
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, _transposed_shape(shape), ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.adjoint(ref_inp)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
@@ -329,7 +331,7 @@ def test_adjoint_0d(dtype):
     # conj view for complex dtypes. The candidate must match both the value and
     # the conjugation state.
     inp = tu.make_input(dtype, (), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -345,7 +347,7 @@ def test_adjoint_1d_raises(dtype):
     # 1-D tensors are neither matrices nor batches of matrices: aten raises
     # RuntimeError and the candidate must do the same.
     inp = tu.make_input(dtype, (5,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.adjoint(ref_inp)
@@ -372,8 +374,10 @@ if tu.LEVEL == "all":
     def test_adjoint_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
         inp = inp.reshape(1, -1)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op("adjoint", getattr(flag_gems, "adjoint", None))
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
+            "adjoint", getattr(flag_gems, "adjoint", None)
+        )
         expected = torch.ops.aten.adjoint(reference)
         actual = candidate(inp)
         tu.assert_result_equal(actual, expected)

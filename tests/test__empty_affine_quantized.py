@@ -37,7 +37,7 @@ for _name in ("_empty_affine_quantized", "_empty_affine_quantized_out"):
 
 
 def _resolve(name):
-    return tu.resolve_gems_op(name, getattr(flag_gems, name, None))
+    return flag_gems.testing.resolve_gems_op(name, getattr(flag_gems, name, None))
 
 
 # aten::_empty_affine_quantized is a factory: given a size (plus optional

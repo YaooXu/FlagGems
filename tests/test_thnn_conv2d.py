@@ -72,11 +72,15 @@ _UNSUPPORTED_DTYPES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None))
+    return flag_gems.testing.resolve_gems_op(
+        "thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None)
+    )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None))
+    return flag_gems.testing.resolve_gems_op(
+        "thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None)
+    )
 
 
 def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
@@ -164,9 +168,9 @@ def test_thnn_conv2d(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     ref_out = torch.ops.aten.thnn_conv2d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -197,15 +201,9 @@ def test_thnn_conv2d_value_ranges(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
-    ref_inp = utils.to_reference(
-        inp, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_weight = utils.to_reference(
-        weight, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_bias = utils.to_reference(
-        bias_t, not tu.is_extreme_range(value_range), independent=True
-    )
+    ref_inp = tu.to_reference(inp, not tu.is_extreme_range(value_range))
+    ref_weight = tu.to_reference(weight, not tu.is_extreme_range(value_range))
+    ref_bias = tu.to_reference(bias_t, not tu.is_extreme_range(value_range))
 
     ref_out = torch.ops.aten.thnn_conv2d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -252,10 +250,10 @@ if tu.LEVEL == "all":
         )
         grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias_t, True, independent=True)
-        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias_t, True)
+        ref_grad_out = tu.to_reference(grad_out, True)
         ref_out = torch.ops.aten.thnn_conv2d(
             ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
         )
@@ -320,9 +318,9 @@ if tu.LEVEL == "all":
         weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
         bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias, True)
         ref_out = torch.ops.aten.thnn_conv2d(
             ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
         ).to(dtype)
@@ -360,9 +358,9 @@ def test_thnn_conv2d_out(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     out_shape = _conv_output_shape(
         inp_shape, weight_shape, kernel_size, stride, padding

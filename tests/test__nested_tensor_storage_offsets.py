@@ -173,7 +173,7 @@ def _make_strided_view_input(dtype, device=None):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_nested_tensor_storage_offsets",
         getattr(flag_gems, "_nested_tensor_storage_offsets", None),
     )
@@ -198,7 +198,7 @@ def _assert_offsets(res_out, ref_out, num_tensors):
 @pytest.mark.parametrize("dtype", _COMPONENT_DTYPES)
 def test__nested_tensor_storage_offsets(num_tensors, num_dims, dtype):
     inp = _make_input(num_tensors, num_dims, dtype)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
     assert ref_inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
@@ -221,7 +221,7 @@ def test__nested_tensor_storage_offsets_ragged_non_zero_dim(dtype):
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -243,7 +243,7 @@ def test__nested_tensor_storage_offsets_uniform(dtype):
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -264,7 +264,7 @@ def test__nested_tensor_storage_offsets_with_empty_components(dtype):
         length = int(torch.randint(0, 4, (1,), generator=gen).item())
         components.append(tu.make_input(dtype, (length, 4), _DEFAULT_VALUE_RANGE))
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -302,7 +302,7 @@ def test__nested_tensor_storage_offsets_value_ranges(dtype, value_range):
     # still catches a candidate that derives offsets from the stored values.
     num_tensors, num_dims = 8, 3
     inp = _make_input(num_tensors, num_dims, dtype, value_range=value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -332,7 +332,7 @@ if tu.LEVEL == "all":
                 flat[2] = float("-inf")
             components.append(comp)
         inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -347,7 +347,7 @@ def test__nested_tensor_storage_offsets_non_nested_raises(dtype):
     # backends, so a plain strided tensor is rejected by the reference and must
     # be rejected by the candidate as well.
     inp = tu.make_input(dtype, (4, 4), _DEFAULT_VALUE_RANGE)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError, ValueError)):
         torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     with pytest.raises((NotImplementedError, RuntimeError, TypeError, ValueError)):

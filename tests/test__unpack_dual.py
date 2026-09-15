@@ -148,7 +148,9 @@ _EMPTY_SHAPES = [(0,), (2, 0, 3)]
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_unpack_dual", getattr(flag_gems, "_unpack_dual", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_unpack_dual", getattr(flag_gems, "_unpack_dual", None)
+    )
 
 
 def _make_input(dtype, shape, value_range):
@@ -192,8 +194,8 @@ def test__unpack_dual_dual_tensor(shape, dtype):
     # both the primal view and the registered tangent.
     primal = _make_input(dtype, shape, ["-1", "1"])
     tangent = _make_input(dtype, shape, ["-1", "1"])
-    ref_primal = utils.to_reference(primal, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_primal = tu.to_reference(primal)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -220,8 +222,8 @@ def test__unpack_dual_dual_tensor_value_ranges(shape, value_range, dtype):
     # round-trip bit-for-bit through both the primal view and the tangent.
     primal = _make_input(dtype, shape, value_range)
     tangent = _make_input(dtype, shape, value_range)
-    ref_primal = utils.to_reference(primal, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_primal = tu.to_reference(primal)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -245,7 +247,7 @@ def test__unpack_dual_plain_tensor(shape, level, dtype):
     # input as an aliasing view, and the tangent component must be None. This
     # exercises the tangent-None contract across every storage dtype.
     inp = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, level)
     res_primal_out, res_tangent_out = _resolve_gems_op()(inp, level)
@@ -265,7 +267,7 @@ def test__unpack_dual_plain_tensor_value_ranges(shape, value_range, dtype):
     # (including the exact int/bool comparisons) must round-trip through the
     # returned primal view.
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, 0)
     res_primal_out, res_tangent_out = _resolve_gems_op()(inp, 0)
@@ -286,11 +288,11 @@ def test__unpack_dual_non_contiguous(shape, dtype):
     # tangent may be materialized with a different layout by the forward-AD
     # machinery, so only its values are compared.
     base = _make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     primal = base[..., ::2]
     ref_primal = ref_base[..., ::2]
     tangent = _make_input(dtype, primal.shape, ["-1", "1"])
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_tangent = tu.to_reference(tangent)
     assert not primal.is_contiguous()
 
     with dual_level() as level:
@@ -317,9 +319,9 @@ def test__unpack_dual_mutation(shape, dtype):
     # clone so the two aliases are validated separately. The op itself never
     # mutates anything.
     primal = _make_input(dtype, shape, ["-1", "1"])
-    ref_primal = utils.to_reference(primal.clone(), independent=True)
+    ref_primal = tu.to_reference(primal.clone())
     tangent = _make_input(dtype, shape, ["-1", "1"])
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -349,9 +351,9 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_primal = utils.to_reference(values, independent=True)
+        ref_primal = tu.to_reference(values)
         tangent = torch.ones_like(values)
-        ref_tangent = utils.to_reference(tangent, independent=True)
+        ref_tangent = tu.to_reference(tangent)
 
         with dual_level() as level:
             ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -383,8 +385,8 @@ def test__unpack_dual_empty(shape, dtype):
     # (also empty) tangent must round-trip.
     primal = torch.empty(shape, dtype=dtype, device=flag_gems.device)
     tangent = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    ref_primal = utils.to_reference(primal, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_primal = tu.to_reference(primal)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -418,7 +420,7 @@ def test__unpack_dual_rejects_non_int_level():
     # ``level`` is an int in the schema; a float is a cast error at the
     # dispatcher boundary and must be rejected by the candidate as well.
     inp = _make_input(torch.float32, (8,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._unpack_dual(ref_inp, 1.5)
@@ -438,8 +440,8 @@ def test__unpack_dual_rejects_inactive_level(dtype, bad_level):
     # happened to assign 1, in which case the next level is used instead.
     primal = _make_input(dtype, (4, 5), ["-1", "1"])
     tangent = _make_input(dtype, (4, 5), ["-1", "1"])
-    ref_primal = utils.to_reference(primal, independent=True)
-    ref_tangent = utils.to_reference(tangent, independent=True)
+    ref_primal = tu.to_reference(primal)
+    ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
         ref_dual = torch.ops.aten._make_dual(ref_primal, ref_tangent, level)
@@ -458,12 +460,12 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))
     def test__unpack_dual_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "_unpack_dual", getattr(flag_gems, "_unpack_dual", None)
         )
         tangent = tu.make_special_input(dtype, scenario)
-        ref_tangent = utils.to_reference(tangent, independent=True)
+        ref_tangent = tu.to_reference(tangent)
         with torch.autograd.forward_ad.dual_level() as level:
             ref_dual = torch.ops.aten._make_dual(reference, ref_tangent, level)
             dual = torch.ops.aten._make_dual(inp, tangent, level)

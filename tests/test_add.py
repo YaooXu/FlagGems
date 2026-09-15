@@ -65,15 +65,15 @@ _ADD_SCALAR_SCALAR_CASES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("add", flag_gems.add)
+    return flag_gems.testing.resolve_gems_op("add", flag_gems.add)
 
 
 def _resolve_gems_op_inplace():
-    return tu.resolve_gems_op("add_", flag_gems.add_)
+    return flag_gems.testing.resolve_gems_op("add_", flag_gems.add_)
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("add", getattr(flag_gems, "add", None))
+    return flag_gems.testing.resolve_gems_op("add", getattr(flag_gems, "add", None))
 
 
 @pytest.mark.add
@@ -83,8 +83,8 @@ def _resolve_gems_op_out():
 def test_add_tensor_tensor_float_value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
     res_out = _resolve_gems_op()(inp, other)
@@ -99,8 +99,8 @@ def test_add_tensor_tensor_float_value_ranges(shape, value_range, dtype):
 def test_add_tensor_tensor_int_value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     # int add is exact and wraps identically on both paths (alpha stays 1).
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
@@ -115,8 +115,8 @@ def test_add_tensor_tensor_int_value_ranges(shape, value_range, dtype):
 def test_add_tensor_tensor_bool_value_ranges(shape, value_range):
     inp = tu.make_input(torch.bool, shape, value_range)
     other = tu.make_input(torch.bool, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     # bool add behaves as logical OR; make_input ignores the range for bool.
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
@@ -134,8 +134,8 @@ def test_add_tensor_tensor_bool_value_ranges(shape, value_range):
 def test_add_tensor_tensor_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     other = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other, alpha=alpha)
     res_out = _resolve_gems_op()(inp, other, alpha=alpha)
@@ -150,8 +150,8 @@ def test_add_tensor_tensor_alpha(shape, alpha, dtype):
 def test_add_tensor_tensor_int_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     other = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     # aten only accepts an integral alpha for integral inputs; the candidate
     # must reproduce the scaled values exactly.
@@ -172,7 +172,7 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_add_tensor_scalar(shape, scalar, alpha, dtype):
         inp = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.add.Scalar(ref_inp, scalar, alpha=alpha)
         res_out = _resolve_gems_op()(inp, scalar, alpha=alpha)
@@ -191,7 +191,7 @@ if tu.LEVEL == "all":
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_add_scalar_tensor(shape, scalar, alpha, dtype):
         other = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_other = utils.to_reference(other, independent=True)
+        ref_other = tu.to_reference(other)
 
         # Scalar-first ordering: aten's tensor-first .Scalar overload computes
         # other + scalar*alpha, which differs from the scalar-first semantics when
@@ -226,8 +226,8 @@ if tu.LEVEL == "all":
         shape_a, shape_b = broadcast_pair
         inp = tu.make_input(dtype, shape_a, ["-1", "1"])
         other = tu.make_input(dtype, shape_b, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_other = utils.to_reference(other, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_other = tu.to_reference(other)
 
         ref_out = torch.ops.aten.add(ref_inp, ref_other)
         res_out = _resolve_gems_op()(inp, other)
@@ -256,8 +256,8 @@ if tu.LEVEL == "all":
         ]
         inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device)
         other = torch.tensor(vals[::-1], dtype=dtype, device=flag_gems.device)
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_other = utils.to_reference(other, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_other = tu.to_reference(other)
 
         ref_out = torch.ops.aten.add(ref_inp, ref_other)
         res_out = _resolve_gems_op()(inp, other)
@@ -272,8 +272,8 @@ if tu.LEVEL == "all":
 def test_add_complex_value_ranges(shape, value_range, complex_dtype):
     inp = tu.make_input(complex_dtype, shape, value_range)
     other = tu.make_input(complex_dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
     res_out = _resolve_gems_op()(inp, other)
@@ -299,12 +299,8 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
     else:
         other = 3
 
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = (
-        utils.to_reference(other, independent=True)
-        if isinstance(other, torch.Tensor)
-        else other
-    )
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other) if isinstance(other, torch.Tensor) else other
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
     res_out = _resolve_gems_op()(inp, other)
@@ -344,11 +340,9 @@ def test_add_complex32(shape, complex_dtype, other_type):
     else:
         other = 3
 
-    ref_inp = utils.to_reference(inp, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
     ref_other = (
-        utils.to_reference(other, True, independent=True)
-        if isinstance(other, torch.Tensor)
-        else other
+        tu.to_reference(other, True) if isinstance(other, torch.Tensor) else other
     )
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
@@ -363,8 +357,8 @@ def test_add_complex32(shape, complex_dtype, other_type):
 def test_add_empty(shape, dtype):
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
     other = torch.empty(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
     res_out = _resolve_gems_op()(inp, other)
@@ -379,8 +373,8 @@ def test_add_noncontiguous(shape, dtype):
     # transposed views have non-unit strides; the kernel must honor them.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     other = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
     res_out = _resolve_gems_op()(inp, other)
@@ -397,9 +391,9 @@ if tu.LEVEL == "all":
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         other = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_other = utils.to_reference(other, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_other = tu.to_reference(other)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.add(ref_inp, ref_other)
         ref_in_grad, ref_other_grad = torch.autograd.grad(
@@ -432,9 +426,9 @@ if tu.LEVEL == "all":
         inp = tu.make_input(dtype, shape_a, ["-1", "1"]).requires_grad_()
         other = tu.make_input(dtype, shape_b, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, shape_a, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_other = utils.to_reference(other, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_other = tu.to_reference(other)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.add(ref_inp, ref_other)
         ref_in_grad, ref_other_grad = torch.autograd.grad(
@@ -465,8 +459,8 @@ if tu.LEVEL == "all":
 def test_add__value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp.clone())
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add_(ref_inp, ref_other)
     res_out = _resolve_gems_op_inplace()(inp, other)
@@ -486,7 +480,7 @@ def test_add__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.add_(ref_inp, scalar, alpha=alpha)
     res_out = _resolve_gems_op_inplace()(inp, scalar, alpha=alpha)
@@ -505,8 +499,8 @@ if tu.LEVEL == "all":
         shape_a, shape_b = broadcast_pair
         inp = tu.make_input(dtype, shape_a, ["-1", "1"])
         other = tu.make_input(dtype, shape_b, ["-1", "1"])
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
-        ref_other = utils.to_reference(other, independent=True)
+        ref_inp = tu.to_reference(inp.clone())
+        ref_other = tu.to_reference(other)
 
         ref_out = torch.ops.aten.add_(ref_inp, ref_other)
         res_out = _resolve_gems_op_inplace()(inp, other)
@@ -523,8 +517,8 @@ if tu.LEVEL == "all":
 def test_add_out(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     other = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
@@ -548,8 +542,8 @@ def test_add_out(shape, value_range, dtype):
 def test_add_out_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     other = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_other = utils.to_reference(other, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_other = tu.to_reference(other)
 
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)

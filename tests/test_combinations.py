@@ -122,7 +122,9 @@ _REPLACEMENT_MODES = [False, True]
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("combinations", getattr(flag_gems, "combinations", None))
+    return flag_gems.testing.resolve_gems_op(
+        "combinations", getattr(flag_gems, "combinations", None)
+    )
 
 
 def _combinations_op():
@@ -175,7 +177,7 @@ def test_combinations_spec_shapes_value_ranges(shape, value_range, dtype):
     # constant ranges) must round-trip exactly through the gather
     # materialization. bool ignores the range and is covered here as well.
     inp = _make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
     res_out = _combinations_op()(inp, 2, False)
@@ -193,7 +195,7 @@ def test_combinations_shapes_r_replacement(shape, r, with_replacement, dtype):
     # default [-1, 1] range; the row count C(n, r) / C(n + r - 1, r) and the
     # exact value gather are both compared against the aten reference.
     inp = _make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _combinations_op()(inp, r, with_replacement)
@@ -210,7 +212,7 @@ def test_combinations_empty_input(r, with_replacement, dtype):
     # (0, r) tensor of the input dtype for every r / with_replacement setting
     # (and a 1-D (0,) tensor when r == 0).
     inp = _make_input(dtype, (0,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _combinations_op()(inp, r, with_replacement)
@@ -227,7 +229,7 @@ def test_combinations_r_boundaries(r, with_replacement, dtype):
     # r=5/10 > n without replacement returns an empty (0, r) tensor; with
     # replacement the output still has C(n + r - 1, r) rows.
     inp = _make_input(dtype, (4,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
     res_out = _combinations_op()(inp, r, with_replacement)
@@ -242,7 +244,7 @@ def test_combinations_non_contiguous(dtype):
     # through the input's actual strides. Slice on both the test device and the
     # reference device so the two inputs share the same memory layout.
     base = _make_input(dtype, (32,), ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[::2]
     ref_inp = ref_base[::2]
 
@@ -275,7 +277,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values, independent=True)
+        ref_inp = tu.to_reference(values)
 
         ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
         res_out = _combinations_op()(values, 2, False)
@@ -314,10 +316,8 @@ if tu.LEVEL == "all":
         rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
         inp = _make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
         grad = _make_input(dtype, (rows, r), ["-1", "1"])
-        ref_inp = utils.to_reference(
-            inp.detach().clone(), independent=True
-        ).requires_grad_()
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_()
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
@@ -341,7 +341,7 @@ def test_combinations_raises_on_non_1d(shape, dtype):
     # aten::combinations only accepts 1-D inputs (0-dim scalars and 2-D+ tensors
     # are rejected); the candidate must raise the same way.
     inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, 2, False)
@@ -355,7 +355,7 @@ def test_combinations_raises_on_negative_r():
     # r must be non-negative; aten raises RuntimeError and the candidate must
     # behave the same way.
     inp = torch.arange(4, dtype=torch.float32, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, -1, False)
@@ -368,7 +368,7 @@ def test_combinations_raises_on_negative_r():
 def test_combinations_raises_on_non_int_r():
     # The schema demands an int r; passing a float must raise on both paths.
     inp = torch.arange(4, dtype=torch.float32, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, 2.0, False)

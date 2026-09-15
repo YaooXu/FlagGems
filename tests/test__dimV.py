@@ -240,7 +240,7 @@ def _shape_level_cases():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_dimV", getattr(flag_gems, "_dimV", None))
+    return flag_gems.testing.resolve_gems_op("_dimV", getattr(flag_gems, "_dimV", None))
 
 
 def _assert_result(res_out, ref_out, dense_dim):
@@ -262,7 +262,7 @@ def test__dimV_coo(case, dtype):
     # layout's dense dim.
     shape, dense_dim = case
     inp = _make_coo_input(shape, dense_dim, dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -284,7 +284,7 @@ def test__dimV_shape_value_range_grid(case, value_range, dtype):
     # chosen for the layout; the payload never changes it.
     shape, dense_dim = case
     inp = _make_coo_input(shape, dense_dim, dtype, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -303,7 +303,7 @@ def test__dimV_hybrid_value_ranges(case, value_range, dtype):
     # payload never changes the reported dense dim, only the layout does.
     shape, dense_dim = case
     inp = _make_coo_input(shape, dense_dim, dtype, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -320,7 +320,7 @@ def test__dimV_empty(dtype):
     # are still reported exactly as for a populated tensor.
     shape, dense_dim = (3, 4), 0
     inp = _make_empty_coo(shape, dense_dim, dtype)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -335,7 +335,7 @@ def test__dimV_empty_hybrid(shape, dense_dim, dtype):
     # nnz == 0 with dense dimensions: the hybrid layout is preserved and the
     # dense dims stay exactly as for a populated tensor.
     inp = _make_empty_coo(shape, dense_dim, dtype)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -353,7 +353,7 @@ def test__dimV_single_entry(dtype):
     shape, dense_dim = (3, 4, 5), 2
     inp = _make_coo_input(shape, dense_dim, dtype, ["-1", "1"], nnz=1)
     assert inp._nnz() == 1
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -372,7 +372,7 @@ def test__dimV_uncoalesced(dtype):
     values = _make_values(dtype, (5, 4), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -401,7 +401,7 @@ if tu.LEVEL == "all":
         )
         indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
         inp = torch.sparse_coo_tensor(indices, values, (6, 2), device=flag_gems.device)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten._dimV(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -428,7 +428,7 @@ def test__dimV_dense_raises():
     # report a bogus count.
     inp = _make_values(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._dimV(utils.to_reference(inp, independent=True))
+        torch.ops.aten._dimV(tu.to_reference(inp))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 
@@ -445,7 +445,7 @@ def test__dimV_csr_raises():
         crow_indices, col_indices, values, (2, 3), device=flag_gems.device
     )
     with pytest.raises(NotImplementedError):
-        torch.ops.aten._dimV(utils.to_reference(inp, independent=True))
+        torch.ops.aten._dimV(tu.to_reference(inp))
     with pytest.raises(_NEGATIVE_EXC):
         _resolve_gems_op()(inp)
 

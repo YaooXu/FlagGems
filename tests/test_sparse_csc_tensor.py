@@ -197,7 +197,7 @@ def _make_csc_inputs(
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "sparse_csc_tensor", getattr(flag_gems, "sparse_csc_tensor", None)
     )
 

@@ -129,13 +129,13 @@ _RANGE_CASES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_neg_view_copy", getattr(flag_gems, "_neg_view_copy", None)
     )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_neg_view_copy", getattr(flag_gems, "_neg_view_copy", None)
     )
 
@@ -172,7 +172,7 @@ def test__neg_view_copy(shape, dtype):
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
     # Clone so the post-call equality check below can detect any mutation of
     # the input even when the reference runs on the same device.
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -189,7 +189,7 @@ def test__neg_view_copy_value_ranges(shape, dtype, value_range):
     # integers the reference wraps at INT_MIN (two's complement); the candidate
     # is held to the same behavior by comparing against the reference.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -203,7 +203,7 @@ def test__neg_view_copy_value_ranges(shape, dtype, value_range):
 @pytest.mark.parametrize("dtype", _NEG_VIEW_COPY_DTYPES)
 def test__neg_view_copy_out(shape, dtype):
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _make_out(shape, ref_inp.dtype, ref_inp.device)
     out = _make_out(shape, dtype, flag_gems.device)
@@ -225,7 +225,7 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
     # The .out path must reproduce the same sign-flip over every spec range
     # while overwriting the caller's buffer.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = _make_out(shape, ref_inp.dtype, ref_inp.device)
     out = _make_out(shape, dtype, flag_gems.device)
@@ -251,7 +251,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values.clone(), independent=True)
+        ref_inp = tu.to_reference(values.clone())
 
         ref_out = torch.ops.aten._neg_view_copy(ref_inp)
         res_out = _resolve_gems_op()(values)
@@ -269,7 +269,7 @@ def test__neg_view_copy_non_contiguous(shape, dtype):
     # shape regardless of the input's strides. Transpose on both the test device
     # and the reference device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base.transpose(-1, -2)
     ref_inp = ref_base.transpose(-1, -2)
     assert not inp.is_contiguous()
@@ -286,7 +286,7 @@ def test__neg_view_copy_non_contiguous(shape, dtype):
 def test__neg_view_copy_empty(shape, dtype):
     # Zero-element tensors must be handled without out-of-bounds accesses.
     inp = tu.make_input(dtype, shape, _basic_range(dtype))
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -305,8 +305,8 @@ if tu.LEVEL == "all":
         # validated on the same contract when it advertises autograd support.
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten._neg_view_copy(ref_inp)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]

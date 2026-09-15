@@ -135,7 +135,9 @@ def _diagflat_shapes():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("diagflat", getattr(flag_gems, "diagflat", None))
+    return flag_gems.testing.resolve_gems_op(
+        "diagflat", getattr(flag_gems, "diagflat", None)
+    )
 
 
 def _assert_output(res_out, ref_out, dtype):
@@ -163,7 +165,7 @@ def test_diagflat(shape, offset, dtype):
     # Shape levels x offsets x every supported dtype with values in the default
     # [-1, 1] range (0-D, 1-D, empty, 2-D, 3-D, 4-D and 5-D are all covered).
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -180,7 +182,7 @@ def test_diagflat_value_ranges(shape, value_range, dtype):
     # (including 0/max/min and the degenerate ranges) must round-trip exactly
     # through the diagonal placement.
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
@@ -197,7 +199,7 @@ def test_diagflat_large_offset(shape, offset, dtype):
     # vector is placed on a diagonal that starts past the main diagonal,
     # leaving extra zero rows/columns around it.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -215,7 +217,7 @@ def test_diagflat_non_contiguous(shape, offset, dtype):
     # Transpose on both the test device and the reference device so the two
     # inputs share the same memory layout.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
     inp = inp.transpose(-1, -2)
     ref_inp = ref_inp.transpose(-1, -2)
 
@@ -234,7 +236,7 @@ def test_diagflat_strided(shape, offset, dtype):
     # in logical view order too, so the candidate must read through the input's
     # actual strides. Slice on both devices so the layouts match.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -272,7 +274,7 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_inp = utils.to_reference(values, independent=True)
+        ref_inp = tu.to_reference(values)
 
         ref_out = torch.ops.aten.diagflat(ref_inp, 1)
         res_out = _resolve_gems_op()(values, 1)
@@ -292,7 +294,7 @@ def test_diagflat_empty_input(offset, dtype):
     # An empty input has no elements to place: offset 0 yields a 0x0 output and
     # |offset| > 0 yields an all-zero |offset| x |offset| matrix.
     inp = tu.make_input(dtype, (0,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
@@ -316,8 +318,8 @@ if tu.LEVEL == "all":
         n = _numel(shape)
         inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
         grad = tu.make_input(dtype, (n + abs(offset), n + abs(offset)), ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_grad = utils.to_reference(grad, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_grad = tu.to_reference(grad)
 
         ref_out = torch.ops.aten.diagflat(ref_inp, offset)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
@@ -351,7 +353,7 @@ def test_diagflat_rejects_non_int_offset():
     # The schema demands an int offset; passing a float must raise on both
     # paths.
     inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.diagflat(ref_inp, 1.5)

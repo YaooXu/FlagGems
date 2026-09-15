@@ -226,7 +226,9 @@ def _make_nan_inf_values(nnz, dtype):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("coalesce", getattr(flag_gems, "coalesce", None))
+    return flag_gems.testing.resolve_gems_op(
+        "coalesce", getattr(flag_gems, "coalesce", None)
+    )
 
 
 def _assert_coalesced(res_out, ref_out, dtype):
@@ -253,7 +255,7 @@ def test_coalesce(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -272,7 +274,7 @@ def test_coalesce_coalesced_input(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype).coalesce()
     assert inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -293,7 +295,7 @@ def test_coalesce_value_ranges(value_range, dtype, case):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range=value_range)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -323,7 +325,7 @@ if tu.LEVEL == "all":
             device=flag_gems.device,
         )
         assert not inp.is_coalesced()
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = torch.ops.aten.coalesce(ref_inp)
         res_out = _resolve_gems_op()(inp)

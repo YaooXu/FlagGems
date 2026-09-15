@@ -86,13 +86,13 @@ _INPUT_SCALE = 0.1
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
     )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
     )
 
@@ -175,9 +175,9 @@ def test__slow_conv2d_forward(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     ref_out = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -204,15 +204,9 @@ def test__slow_conv2d_forward_value_ranges(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
-    ref_inp = utils.to_reference(
-        inp, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_weight = utils.to_reference(
-        weight, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_bias = utils.to_reference(
-        bias_t, not tu.is_extreme_range(value_range), independent=True
-    )
+    ref_inp = tu.to_reference(inp, not tu.is_extreme_range(value_range))
+    ref_weight = tu.to_reference(weight, not tu.is_extreme_range(value_range))
+    ref_bias = tu.to_reference(bias_t, not tu.is_extreme_range(value_range))
 
     ref_out = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
@@ -255,10 +249,10 @@ if tu.LEVEL == "all":
         )
         grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias_t, True, independent=True)
-        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias_t, True)
+        ref_grad_out = tu.to_reference(grad_out, True)
         ref_out = torch.ops.aten._slow_conv2d_forward(
             ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
         )
@@ -318,9 +312,9 @@ if tu.LEVEL == "all":
         weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
         bias = tu.make_input(dtype, (weight_shape[0],), ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias, True)
         ref_out = torch.ops.aten._slow_conv2d_forward(
             ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
         ).to(dtype)
@@ -353,9 +347,9 @@ def test__slow_conv2d_forward_out(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     out_shape = _conv_output_shape(
         inp_shape, weight_shape, kernel_size, stride, padding
@@ -383,8 +377,8 @@ def test__slow_conv2d_forward_rejects_kernel_size_mismatch():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             (2, 2),
             None,
             (1, 1),
@@ -402,8 +396,8 @@ def test__slow_conv2d_forward_rejects_kernel_larger_than_input():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             (3, 3),
             None,
             (1, 1),
@@ -420,8 +414,8 @@ def test__slow_conv2d_forward_rejects_channel_mismatch():
     weight = tu.make_input(torch.float32, (1, 3, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             (3, 3),
             None,
             (1, 1),
@@ -438,8 +432,8 @@ def test__slow_conv2d_forward_rejects_non_4d_input():
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             (3, 3),
             None,
             (1, 1),
@@ -458,8 +452,8 @@ def test__slow_conv2d_forward_rejects_unsupported_dtype(dtype):
     weight = tu.make_input(dtype, (1, 2, 3, 3), ["0", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             (3, 3),
             None,
             (1, 1),
@@ -484,8 +478,8 @@ def test__slow_conv2d_forward_rejects_scalar_params(scalar_param):
         bad_kwargs = {"kernel_size": (3, 3), "stride": (1, 1), "padding": 1}
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -509,8 +503,8 @@ def test__slow_conv2d_forward_rejects_wrong_length_params(bad_kwargs):
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -533,8 +527,8 @@ def test__slow_conv2d_forward_rejects_invalid_params(bad_kwargs):
     weight = tu.make_input(torch.float32, (1, 2, 3, 3), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._slow_conv2d_forward(
-            utils.to_reference(inp, independent=True),
-            utils.to_reference(weight, independent=True),
+            tu.to_reference(inp),
+            tu.to_reference(weight),
             **bad_kwargs,
         )
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):

@@ -292,13 +292,13 @@ _BACKWARD_DTYPES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
     )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
     )
 
@@ -391,9 +391,9 @@ def test_slow_conv_transpose3d(
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     ref_out = torch.ops.aten.slow_conv_transpose3d(
         ref_inp,
@@ -434,15 +434,9 @@ def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     bias_t = tu.make_input(dtype, (weight_shape[1],), value_range) if bias else None
-    ref_inp = utils.to_reference(
-        inp, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_weight = utils.to_reference(
-        weight, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_bias = utils.to_reference(
-        bias_t, not tu.is_extreme_range(value_range), independent=True
-    )
+    ref_inp = tu.to_reference(inp, not tu.is_extreme_range(value_range))
+    ref_weight = tu.to_reference(weight, not tu.is_extreme_range(value_range))
+    ref_bias = tu.to_reference(bias_t, not tu.is_extreme_range(value_range))
 
     ref_out = torch.ops.aten.slow_conv_transpose3d(
         ref_inp,
@@ -486,9 +480,9 @@ def test_slow_conv_transpose3d_out(
     _disable_tf32()
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     # The .out overload must write into the provided tensor and return it.
     ref_full = torch.ops.aten.slow_conv_transpose3d(
@@ -561,16 +555,10 @@ if tu.LEVEL == "all":
 
         # Reference graph on the fp64-upcast inputs. ``detach`` keeps the upcast
         # tensors leaves so ``requires_grad_`` is legal.
-        ref_inp = utils.to_reference(
-            inp.detach(), True, independent=True
-        ).requires_grad_()
-        ref_weight = utils.to_reference(
-            weight.detach(), True, independent=True
-        ).requires_grad_()
-        ref_bias = utils.to_reference(
-            bias.detach(), True, independent=True
-        ).requires_grad_()
-        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_inp = tu.to_reference(inp.detach(), True).requires_grad_()
+        ref_weight = tu.to_reference(weight.detach(), True).requires_grad_()
+        ref_bias = tu.to_reference(bias.detach(), True).requires_grad_()
+        ref_grad_out = tu.to_reference(grad_out, True)
 
         ref_out = torch.ops.aten.slow_conv_transpose3d(
             ref_inp,
@@ -643,9 +631,9 @@ if tu.LEVEL == "all":
         bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
         kernel_size = (1, 1, 1)
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias, True)
         ref_out = torch.ops.aten.slow_conv_transpose3d(
             ref_inp,
             ref_weight,

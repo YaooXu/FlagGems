@@ -207,15 +207,15 @@ def _make_bsc_inputs(
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "sparse_bsc_tensor", getattr(flag_gems, "sparse_bsc_tensor", None)
     )
 
 
 def _call_reference(ccol, row, values, size, dtype):
-    ref_ccol = utils.to_reference(ccol, independent=True)
-    ref_row = utils.to_reference(row, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
     return torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(
         ref_ccol,
         ref_row,
@@ -464,9 +464,9 @@ def test_sparse_bsc_tensor_negative_layout():
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
-    ref_ccol = utils.to_reference(ccol, independent=True)
-    ref_row = utils.to_reference(row, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(
@@ -497,9 +497,9 @@ def test_sparse_bsc_tensor_negative_size():
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
-    ref_ccol = utils.to_reference(ccol, independent=True)
-    ref_row = utils.to_reference(row, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_ccol = tu.to_reference(ccol)
+    ref_row = tu.to_reference(row)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(
@@ -533,8 +533,8 @@ def test_sparse_bsc_tensor_negative_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(
             3.14,
-            utils.to_reference(row, independent=True),
-            utils.to_reference(values, independent=True),
+            tu.to_reference(row),
+            tu.to_reference(values),
             size=[4, 4],
             dtype=torch.float32,
             layout=torch.sparse_bsc,

@@ -171,7 +171,7 @@ def _resolve_gems_op():
     (3) LookupError. The op has no native FlagGems kernel yet, so the candidate
     is always injected by KernelGen through ``override_gems_op``.
     """
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_choose_qparams_per_tensor",
         getattr(flag_gems, "_choose_qparams_per_tensor", None),
     )
@@ -211,7 +211,7 @@ def test__choose_qparams_per_tensor_value_ranges(
     """The required 5 ranges x 7 shapes x supported-dtypes x reduce_range grid."""
     utils.init_seed(0)
     inp = _make_input(shape, dtype, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
@@ -227,7 +227,7 @@ def test__choose_qparams_per_tensor_tiny_scale(values, reduce_range):
     zero_point rounds from the UNCLAMPED raw scale just below the clamp
     boundary."""
     inp = torch.tensor(values, dtype=torch.float32, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
@@ -243,7 +243,7 @@ def test__choose_qparams_per_tensor_constant(value, dtype, reduce_range):
     """min == max branches: exact zero -> (0.1, 0); constant positive -> zp 0;
     constant negative -> zp qmax; tiny constant -> clamped scale."""
     inp = torch.full((1024,), value, dtype=dtype, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
@@ -256,7 +256,7 @@ def test__choose_qparams_per_tensor_constant(value, dtype, reduce_range):
 def test__choose_qparams_per_tensor_inf(reduce_range):
     """inf / -inf are accepted: scale = inf, zero_point = INT32_MIN."""
     inp = torch.tensor(_CQPT_INF_INPUT, dtype=torch.float32, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
@@ -277,7 +277,7 @@ def test__choose_qparams_per_tensor_non_contiguous(layout, dtype, reduce_range):
     inp = base_inp.t() if layout == "transpose" else base_inp[:, ::2]
     assert not inp.is_contiguous()
 
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
 
@@ -290,7 +290,7 @@ def test__choose_qparams_per_tensor_default_reduce_range(dtype):
     """The second argument is optional and defaults to False."""
     utils.init_seed(0)
     inp = _make_input((20, 320, 15), dtype, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp)
     res_pair = _resolve_gems_op()(inp)
@@ -305,7 +305,7 @@ def test__choose_qparams_per_tensor_rejects_nan():
     inp = torch.tensor(
         [float("nan"), 1.0, 2.0], dtype=torch.float32, device=flag_gems.device
     )
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._choose_qparams_per_tensor(ref_inp, False)
@@ -318,7 +318,7 @@ def test__choose_qparams_per_tensor_rejects_empty():
     """The reduction of a 0-element tensor is undefined; both paths must reject
     it."""
     inp = torch.empty(0, dtype=torch.float32, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._choose_qparams_per_tensor(ref_inp, False)
@@ -330,7 +330,7 @@ def test__choose_qparams_per_tensor_rejects_empty():
 def test__choose_qparams_per_tensor_rejects_complex():
     """min/max reduction is not implemented for complex; reject the dtype."""
     inp = torch.tensor([1.0 + 2.0j], dtype=torch.complex64, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._choose_qparams_per_tensor(ref_inp, False)
@@ -343,7 +343,7 @@ def test__choose_qparams_per_tensor_rejects_complex():
 def test__choose_qparams_per_tensor_rejects_fp8():
     """fp8 has no min/max reduction kernel; reject the dtype."""
     inp = torch.zeros((4,), dtype=torch.float8_e4m3fn, device=flag_gems.device)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._choose_qparams_per_tensor(ref_inp, False)

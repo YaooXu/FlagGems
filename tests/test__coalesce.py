@@ -249,11 +249,15 @@ def _make_empty_out(shape, dtype, device):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_coalesce", getattr(flag_gems, "_coalesce", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_coalesce", getattr(flag_gems, "_coalesce", None)
+    )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("_coalesce", getattr(flag_gems, "_coalesce", None))
+    return flag_gems.testing.resolve_gems_op(
+        "_coalesce", getattr(flag_gems, "_coalesce", None)
+    )
 
 
 def _assert_coalesced(res_out, ref_out, dtype):
@@ -280,7 +284,7 @@ def test__coalesce(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -302,7 +306,7 @@ def test__coalesce_value_ranges(value_range, dtype, case):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range=value_range)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._coalesce(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -332,7 +336,7 @@ if tu.LEVEL == "all":
             device=flag_gems.device,
         )
         assert not inp.is_coalesced()
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = torch.ops.aten._coalesce(ref_inp)
         res_out = _resolve_gems_op()(inp)
@@ -357,7 +361,7 @@ def test__coalesce_out(case, dtype):
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     out = _make_empty_out(shape, dtype, flag_gems.device)
     ref_out = _make_empty_out(shape, dtype, ref_inp.device)
 

@@ -144,7 +144,7 @@ _NON_CONTIGUOUS_CASES = [
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_remove_batch_dim", getattr(flag_gems, "_remove_batch_dim", None)
     )
 
@@ -192,7 +192,7 @@ def test__remove_batch_dim(shape, out_dim, batch_size, level, dtype):
     # keeps every storage dtype valid); the dedicated value-range test below
     # sweeps the full spec ranges. ``level`` must never change the result.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
@@ -210,7 +210,7 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     # shape rank semantics; the broadcast case below covers true data broadcast.
     out_dim, batch_size = 0, 1
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
@@ -228,7 +228,7 @@ if tu.LEVEL == "all":
         # dim and every value range must round-trip exactly.
         shape, out_dim, batch_size = (2, 19, 7), 1, 2
         inp = tu.make_input(dtype, shape, value_range)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
         res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
@@ -246,7 +246,7 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     # device so the two inputs share the same memory layout. The sliced shape is
     # what out_dim/batch_size must be valid for.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -276,7 +276,7 @@ if tu.LEVEL == "all":
             -1e30,
         ]
         inp = torch.tensor(vals, dtype=dtype, device=flag_gems.device).reshape(3, 3)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, 4, 0)
         res_out = _resolve_gems_op()(inp, 0, 4, 0)
@@ -295,10 +295,10 @@ if tu.LEVEL == "all":
         # candidate gradient must match aten's, including the reduction.
         level = 0
         inp = tu.make_input(dtype, shape, ["-1", "1"])
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
         out_shape = _expected_shape(shape, out_dim, batch_size)
         grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
-        ref_grad_out = utils.to_reference(grad_out, independent=True)
+        ref_grad_out = tu.to_reference(grad_out)
 
         inp.requires_grad_(True)
         ref_inp.requires_grad_(True)
@@ -355,8 +355,8 @@ if tu.LEVEL == "all":
     )
     def test__remove_batch_dim_special_scenarios(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        reference = utils.to_reference(inp, independent=True)
-        candidate = tu.resolve_gems_op(
+        reference = tu.to_reference(inp)
+        candidate = flag_gems.testing.resolve_gems_op(
             "_remove_batch_dim", getattr(flag_gems, "_remove_batch_dim", None)
         )
         expected = torch.ops.aten._remove_batch_dim(reference, 0, 4, 0)

@@ -138,13 +138,13 @@ _BACKWARD_DTYPES = (
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_dilated3d", getattr(flag_gems, "slow_conv_dilated3d", None)
     )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_dilated3d", getattr(flag_gems, "slow_conv_dilated3d", None)
     )
 
@@ -228,9 +228,9 @@ def test_slow_conv_dilated3d(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
@@ -259,8 +259,8 @@ def test_slow_conv_dilated3d_unbatched(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, False, dtype)
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, None, stride, padding, dilation
@@ -290,15 +290,9 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
     bias_t = tu.make_input(dtype, (weight_shape[0],), value_range) if bias else None
-    ref_inp = utils.to_reference(
-        inp, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_weight = utils.to_reference(
-        weight, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_bias = utils.to_reference(
-        bias_t, not tu.is_extreme_range(value_range), independent=True
-    )
+    ref_inp = tu.to_reference(inp, not tu.is_extreme_range(value_range))
+    ref_weight = tu.to_reference(weight, not tu.is_extreme_range(value_range))
+    ref_bias = tu.to_reference(bias_t, not tu.is_extreme_range(value_range))
 
     ref_out = torch.ops.aten.slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
@@ -325,9 +319,9 @@ def test_slow_conv_dilated3d_out(
     torch.backends.cuda.matmul.allow_tf32 = False
 
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     # The .out overload must write into the provided tensor and return it.
     ref_full = torch.ops.aten.slow_conv_dilated3d(
@@ -375,10 +369,10 @@ if tu.LEVEL == "all":
         grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
         # Reference graph on the fp64-upcast inputs.
-        ref_inp = utils.to_reference(inp, True, independent=True).requires_grad_()
-        ref_weight = utils.to_reference(weight, True, independent=True).requires_grad_()
-        ref_bias = utils.to_reference(bias, True, independent=True).requires_grad_()
-        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_inp = tu.to_reference(inp, True).requires_grad_()
+        ref_weight = tu.to_reference(weight, True).requires_grad_()
+        ref_bias = tu.to_reference(bias, True).requires_grad_()
+        ref_grad_out = tu.to_reference(grad_out, True)
 
         ref_out = torch.ops.aten.slow_conv_dilated3d(
             ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
@@ -441,9 +435,9 @@ if tu.LEVEL == "all":
         bias = torch.ones((1,), dtype=dtype, device=flag_gems.device)
         kernel_size = (2, 2, 2)
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias, True)
         ref_out = torch.ops.aten.slow_conv_dilated3d(
             ref_inp, ref_weight, kernel_size, ref_bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
         ).to(dtype)

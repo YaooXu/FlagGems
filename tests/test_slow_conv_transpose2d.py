@@ -168,19 +168,17 @@ _BACKWARD_CASES = SLOW_CONV_TRANSPOSE2D_CASES[:3]
 _GEMS_ERRORS = (TypeError, ValueError, RuntimeError, AttributeError)
 
 
-def _resolve_gems_op(*, expected_input_metadata=None):
-    return tu.resolve_gems_op(
+def _resolve_gems_op():
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_transpose2d",
         getattr(flag_gems, "slow_conv_transpose2d", None),
-        expected_input_metadata=expected_input_metadata,
     )
 
 
-def _resolve_gems_op_out(*, expected_input_metadata=None):
-    return tu.resolve_gems_op(
+def _resolve_gems_op_out():
+    return flag_gems.testing.resolve_gems_op(
         "slow_conv_transpose2d",
         getattr(flag_gems, "slow_conv_transpose2d", None),
-        expected_input_metadata=expected_input_metadata,
     )
 
 
@@ -275,9 +273,9 @@ def test_slow_conv_transpose2d(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     ref_out = torch.ops.aten.slow_conv_transpose2d(
         ref_inp,
@@ -291,8 +289,8 @@ def test_slow_conv_transpose2d(
     ).to(dtype)
 
     # Native CUDA adds a leading batch dimension to the unbatched input.
-    # Match its post-call metadata while still protecting every stored value.
-    res_out = _resolve_gems_op(expected_input_metadata={0: ref_inp})(
+    # Independent reference storage keeps that change local to each call.
+    res_out = _resolve_gems_op()(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -324,15 +322,9 @@ def test_slow_conv_transpose2d_value_ranges(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
-    ref_inp = utils.to_reference(
-        inp, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_weight = utils.to_reference(
-        weight, not tu.is_extreme_range(value_range), independent=True
-    )
-    ref_bias = utils.to_reference(
-        bias_t, not tu.is_extreme_range(value_range), independent=True
-    )
+    ref_inp = tu.to_reference(inp, not tu.is_extreme_range(value_range))
+    ref_weight = tu.to_reference(weight, not tu.is_extreme_range(value_range))
+    ref_bias = tu.to_reference(bias_t, not tu.is_extreme_range(value_range))
 
     ref_out = torch.ops.aten.slow_conv_transpose2d(
         ref_inp,
@@ -398,10 +390,10 @@ if tu.LEVEL == "all":
         )
         grad_out = tu.make_input(dtype, out_shape, ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias_t, True, independent=True)
-        ref_grad_out = utils.to_reference(grad_out, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias_t, True)
+        ref_grad_out = tu.to_reference(grad_out, True)
         ref_out = torch.ops.aten.slow_conv_transpose2d(
             ref_inp,
             ref_weight,
@@ -484,9 +476,9 @@ if tu.LEVEL == "all":
         weight = tu.make_input(dtype, weight_shape, ["0", "1"]) + 0.5
         bias = tu.make_input(dtype, (weight_shape[1],), ["-1", "1"])
 
-        ref_inp = utils.to_reference(inp, True, independent=True)
-        ref_weight = utils.to_reference(weight, True, independent=True)
-        ref_bias = utils.to_reference(bias, True, independent=True)
+        ref_inp = tu.to_reference(inp, True)
+        ref_weight = tu.to_reference(weight, True)
+        ref_bias = tu.to_reference(bias, True)
         ref_out = torch.ops.aten.slow_conv_transpose2d(
             ref_inp,
             ref_weight,
@@ -536,14 +528,14 @@ def test_slow_conv_transpose2d_out(
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
-    ref_inp = utils.to_reference(inp, True, independent=True)
-    ref_weight = utils.to_reference(weight, True, independent=True)
-    ref_bias = utils.to_reference(bias_t, True, independent=True)
+    ref_inp = tu.to_reference(inp, True)
+    ref_weight = tu.to_reference(weight, True)
+    ref_bias = tu.to_reference(bias_t, True)
 
     # The native .out overload is callable on this backend (probed), so call it
     # directly for the reference -- never simulate it with default()+copy_.
     ref_full = torch.ops.aten.slow_conv_transpose2d(
-        utils.to_reference(ref_inp, independent=True),
+        tu.to_reference(ref_inp),
         ref_weight,
         kernel_size,
         ref_bias,
@@ -567,7 +559,7 @@ def test_slow_conv_transpose2d_out(
     assert ref_ret is ref_out
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op_out(expected_input_metadata={0: ref_inp})(
+    res_ret = _resolve_gems_op_out()(
         inp,
         weight,
         kernel_size,

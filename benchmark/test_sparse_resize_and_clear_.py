@@ -101,9 +101,8 @@ class SparseResizeAndClearBenchmark(base.GenericBenchmark):
     # dense default shapes in core_shapes.yaml do not apply, so benchmark
     # dedicated (logical_src_shape, sparse_dim, dense_dim, nnz, dst_size,
     # dst_sparse_dim, dst_dense_dim) tuples instead. The op is in-place: every
-    # timed call rewrites the metadata and clears the (already empty) storage,
-    # so the two-phase case/input builder is used with an explicit
-    # build_inputs_fn.
+    # timed call must start with the declared nonempty storage. fresh_inputs
+    # restores that state before each invocation, outside the measured region.
     def set_shapes(self, shape_file_path=None):
         self.shapes = _SPARSE_RESIZE_AND_CLEAR_CASES
 
@@ -118,5 +117,6 @@ def test_sparse_resize_and_clear_():
         gems_op=getattr(flag_gems, "sparse_resize_and_clear_", None),
         dtypes=consts.FLOAT_DTYPES,
         is_inplace=True,
+        fresh_inputs=True,
     )
     bench.run()

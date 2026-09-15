@@ -199,7 +199,7 @@ def _default_gems_op():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("_version", _default_gems_op())
+    return flag_gems.testing.resolve_gems_op("_version", _default_gems_op())
 
 
 def _as_int(value):

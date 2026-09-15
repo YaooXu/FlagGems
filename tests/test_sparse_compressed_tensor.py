@@ -241,7 +241,7 @@ def _make_input(
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "sparse_compressed_tensor", getattr(flag_gems, "sparse_compressed_tensor", None)
     )
 
@@ -297,9 +297,9 @@ def test_sparse_compressed_tensor_shape_levels(shape, dtype):
     layout = torch.sparse_csr
     nnz = 8
     compressed, plain, values = _make_input(layout, shape, nnz, dtype)
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -335,9 +335,9 @@ def test_sparse_compressed_tensor(case, dtype):
     # workload; the explicit size overload (4 components + size) is exercised.
     layout, shape, nnz, index_dtype = case
     compressed, plain, values = _make_input(layout, shape, nnz, dtype, index_dtype)
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -371,9 +371,9 @@ def test_sparse_compressed_tensor_no_size(case, dtype):
     # shape must match the reference exactly.
     layout, shape, nnz, index_dtype = case
     compressed, plain, values = _make_input(layout, shape, nnz, dtype, index_dtype)
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -406,9 +406,9 @@ def test_sparse_compressed_tensor_empty(case, dtype):
     # the requested layout and dtype.
     layout, shape = case
     compressed, plain, values = _make_input(layout, shape, 0, dtype)
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -447,9 +447,9 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
     compressed, plain, values = _make_input(
         layout, shape, nnz, dtype, index_dtype, value_range
     )
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     ref_out = torch.ops.aten.sparse_compressed_tensor(
         ref_compressed,
@@ -493,9 +493,9 @@ if tu.LEVEL == "all":
             dtype=dtype,
             device=flag_gems.device,
         )
-        ref_crow = utils.to_reference(crow_t, independent=True)
-        ref_col = utils.to_reference(col_t, independent=True)
-        ref_values = utils.to_reference(values, independent=True)
+        ref_crow = tu.to_reference(crow_t)
+        ref_col = tu.to_reference(col_t)
+        ref_values = tu.to_reference(values)
 
         ref_out = torch.ops.aten.sparse_compressed_tensor(
             ref_crow,
@@ -539,14 +539,9 @@ if tu.LEVEL == "all":
         # and the reference for the same weighted sum.
         layout, shape, nnz = torch.sparse_csr, (5, 4), 7
         compressed, plain, values = _make_input(layout, shape, nnz, dtype)
-        ref_compressed = utils.to_reference(compressed, independent=True)
-        ref_plain = utils.to_reference(plain, independent=True)
-        ref_values = (
-            utils.to_reference(values, independent=True)
-            .detach()
-            .clone()
-            .requires_grad_(True)
-        )
+        ref_compressed = tu.to_reference(compressed)
+        ref_plain = tu.to_reference(plain)
+        ref_values = tu.to_reference(values).detach().clone().requires_grad_(True)
 
         values_in = values.detach().clone().requires_grad_(True)
 
@@ -595,9 +590,9 @@ def test_sparse_compressed_tensor_rejects_missing_layout():
     # candidate must reject the call too rather than silently defaulting to a
     # dense or COO tensor.
     compressed, plain, values, shape = _negative_csr_inputs()
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_compressed_tensor(
@@ -625,9 +620,9 @@ def test_sparse_compressed_tensor_rejects_coo_layout():
     # the factory has no Sparse implementation and raises. The candidate must
     # reject it too.
     compressed, plain, values, shape = _negative_csr_inputs()
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_compressed_tensor(
@@ -656,9 +651,9 @@ def test_sparse_compressed_tensor_rejects_dtype_mismatch():
     # The dtype= kwarg must match the values dtype; aten raises when it does
     # not. The candidate must reproduce the validation.
     compressed, plain, values, shape = _negative_csr_inputs()
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_compressed_tensor(
@@ -689,9 +684,9 @@ def test_sparse_compressed_tensor_rejects_non_float32_values_without_dtype():
     # rejected because the instance defaults to float32. The candidate must
     # reject it too rather than silently upcasting the payload.
     compressed, plain, values, shape = _negative_csr_inputs(torch.bfloat16)
-    ref_compressed = utils.to_reference(compressed, independent=True)
-    ref_plain = utils.to_reference(plain, independent=True)
-    ref_values = utils.to_reference(values, independent=True)
+    ref_compressed = tu.to_reference(compressed)
+    ref_plain = tu.to_reference(plain)
+    ref_values = tu.to_reference(values)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_compressed_tensor(

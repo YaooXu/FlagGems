@@ -150,7 +150,7 @@ def _resolve_gems_op():
     (1) override, (2) the direct ``flag_gems._slow_conv2d_backward`` callable,
     (3) LookupError.
     """
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_slow_conv2d_backward", getattr(flag_gems, "_slow_conv2d_backward", None)
     )
 
@@ -186,9 +186,9 @@ def _reference_output_mask(
     inp, weight, grad_output, kernel_size, stride, padding, mask, *, upcast=True
 ):
     """High-precision (fp64 upcast) reference computed with torch.ops.aten."""
-    ref_inp = utils.to_reference(inp, upcast, independent=True)
-    ref_weight = utils.to_reference(weight, upcast, independent=True)
-    ref_grad_output = utils.to_reference(grad_output, upcast, independent=True)
+    ref_inp = tu.to_reference(inp, upcast)
+    ref_weight = tu.to_reference(weight, upcast)
+    ref_grad_output = tu.to_reference(grad_output, upcast)
     return torch.ops.aten._slow_conv2d_backward.output_mask(
         ref_grad_output,
         ref_inp,
@@ -566,10 +566,10 @@ def test__slow_conv2d_backward_backward(case, dtype):
     # through autograd on the fp64 upcast reference and compare against the
     # candidate's three gradients. This validates the candidate against the true
     # gradient through an independent computation path.
-    ref_inp = utils.to_reference(inp, True, independent=True).requires_grad_(True)
-    ref_weight = utils.to_reference(weight, True, independent=True).requires_grad_(True)
-    ref_bias = utils.to_reference(bias, True, independent=True).requires_grad_(True)
-    ref_grad_output = utils.to_reference(grad_output, True, independent=True)
+    ref_inp = tu.to_reference(inp, True).requires_grad_(True)
+    ref_weight = tu.to_reference(weight, True).requires_grad_(True)
+    ref_bias = tu.to_reference(bias, True).requires_grad_(True)
+    ref_grad_output = tu.to_reference(grad_output, True)
 
     fwd = torch.ops.aten._slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding

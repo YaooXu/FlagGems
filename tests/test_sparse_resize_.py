@@ -218,7 +218,7 @@ def _nan_inf_values(dtype, values_shape, device):
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "sparse_resize_", getattr(flag_gems, "sparse_resize_", None)
     )
 
@@ -275,7 +275,7 @@ def _assert_values_equal(t, ref, dtype):
 def test_sparse_resize_(case, dtype):
     src_shape, sparse_dim, nnz, size, new_sparse_dim, new_dense_dim = case
     inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_(
         ref_inp, size, new_sparse_dim, new_dense_dim
@@ -306,7 +306,7 @@ def test_sparse_resize_value_ranges(case, dtype, value_range):
     dense_shape = tuple(src_shape[sparse_dim:])
     values = tu.make_input(dtype, (nnz,) + dense_shape, value_range)
     inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype, values=values)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_(
         ref_inp, size, new_sparse_dim, new_dense_dim
@@ -331,7 +331,7 @@ def test_sparse_resize_shape_levels(shape, dtype):
     dense_dim = len(shape) - 1
     nnz = min(2, shape[0])
     inp = _make_sparse_input(shape, sparse_dim, nnz, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_(ref_inp, list(shape), sparse_dim, dense_dim)
     res_out = _resolve_gems_op()(inp, list(shape), sparse_dim, dense_dim)
@@ -352,7 +352,7 @@ if tu.LEVEL == "all":
         src_shape, sparse_dim, nnz = (4, 5, 6), 2, 4
         values = _nan_inf_values(dtype, (nnz, 6), flag_gems.device)
         inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype, values=values)
-        ref_inp = utils.to_reference(inp.clone(), independent=True)
+        ref_inp = tu.to_reference(inp.clone())
 
         ref_out = torch.ops.aten.sparse_resize_(ref_inp, [6, 5, 6], 2, 1)
         res_out = _resolve_gems_op()(inp, [6, 5, 6], 2, 1)
@@ -373,7 +373,7 @@ def test_sparse_resize_invalid_raises(case, dtype):
     # too instead of silently accepting them.
     src_shape, sparse_dim, nnz, size, bad_sparse_dim, bad_dense_dim = case
     inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_(ref_inp, size, bad_sparse_dim, bad_dense_dim)
@@ -392,9 +392,7 @@ def test_sparse_resize_dense_input_rejected(dtype):
     else:
         inp = torch.randint(0, 5, (4, 5), dtype=dtype, device=flag_gems.device)
     with pytest.raises(RuntimeError):
-        torch.ops.aten.sparse_resize_(
-            utils.to_reference(inp.clone(), independent=True), [6, 5], 2, 0
-        )
+        torch.ops.aten.sparse_resize_(tu.to_reference(inp.clone()), [6, 5], 2, 0)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         _resolve_gems_op()(inp, [6, 5], 2, 0)
 
@@ -411,7 +409,7 @@ def test_sparse_resize_uncoalesced(dtype):
     values = tu.make_input(dtype, (4,), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, (4, 5), device=flag_gems.device)
     assert not inp.is_coalesced()
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.sparse_resize_(ref_inp, [6, 5], 2, 0)
     res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)

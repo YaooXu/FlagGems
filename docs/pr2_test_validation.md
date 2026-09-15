@@ -1,28 +1,32 @@
 # PR #2 test repair and validation
 
 This revision repairs false acceptance, candidate routing, and coverage gaps in
-70 operator correctness files and their benchmark entry points. The reusable
-comparison/input-state/measurement support lives in dependency
-[PR #4](https://github.com/YaooXu/FlagGems/pull/4), commit `6df89d652` on
-`fix/test-validation-primitives`. Merge that dependency first, then synchronize
-this still-open `feat/new-api-for-kernelgen-server-test-gen` branch with the
-updated target. `tests/test_utils.py` is owned by the dependency, so this PR no
-longer adds a conflicting copy.
+70 operator correctness files and their benchmark entry points. All necessary
+support is included in this PR; there is no dependency on PR #4.
+`tests/test_utils.py` contains the test-local comparison and independent-reference
+helpers. The existing public `flag_gems.testing` and `tests/accuracy_utils.py`
+APIs are unchanged. Candidates use the existing direct resolver without a
+new generic input-monitoring wrapper.
+
+Benchmark input restoration is explicitly enabled for add_, abs_,
+copy_sparse_to_sparse_, sparse_resize_ and sparse_resize_and_clear_. Other
+in-place benchmarks retain their existing timing path. Explicit direct-candidate
+benchmarks fail if no candidate exists instead of silently measuring native code.
 
 ## Repairs
 
 | Review finding | Result |
 | --- | --- |
-| R1–R2: contaminated oracle and loose copy/view comparisons | Independent reference inputs, candidate input snapshots, zero-tolerance value-preserving comparisons, shared dtype-aware FP8 compatibility. |
+| R1–R2: contaminated oracle and loose copy/view comparisons | Independent reference tensors and zero-tolerance value-preserving comparisons, with test-local FP8 compatibility and original-dtype tolerances. |
 | R3–R4: overload aliases and fabricated out support | One public candidate name per operator; real out arguments go directly to the candidate. Default-plus-copy adapters are removed. |
 | R5: optional candidate backward checks | Differentiable tests require candidate gradients and compare their values. Detached or wrong-gradient candidates fail. |
-| R6–R7: native fallback and consumed benchmark inputs | The shared dependency requires direct candidates and restores state before each state-changing invocation outside timing. |
+| R6–R7: native fallback and consumed benchmark inputs | Direct candidates are required when explicitly requested; the five opt-in in-place cases restore inputs before every invocation outside timing. |
 | R8: removed or magnitude-capped extremes | Five ranges restored for convolution; chain inputs retain their declared magnitude. Extreme reference calls preserve native intermediate overflow. |
 | R9: missing dtype/parameter/broadcast cases | add includes int8/uint8 and alpha=0; broadcast baselines use (20,320,15). chain_matmul includes supported float64. |
 | R10: quick boundaries | Dedicated broadcast/backward/special-value and add tensor/scalar expansions are selected in default mode. Quick keeps dtype coverage, including complex32; alpha/reduce_range use defaults. |
 | R11: FP8 special values and stale comments | Separate representable nan-only/inf-only/mixed cases, including FP8 views/copies/duals; corrected bf16 explanations and removed duplicated unsigned generators. |
 | R12: incomplete shape × range grid | Expanded detach_copy, dual and related view range grids to the selected required shapes. |
-| R13: ambiguous dtype probe failures | Shared probing propagates input-generation and unexpected signature failures instead of classifying them as unsupported dtype. |
+| R13: ambiguous dtype probe failures | Test-local probing propagates input-generation and unexpected signature failures instead of classifying them as unsupported dtype. |
 | R14: reference-only negative test | `_coalesce` FP8 rejection now invokes and checks the candidate. |
 
 For `chain_matmul`, each intermediate matrix product has the tested dtype's
@@ -32,8 +36,8 @@ inputs. This was checked with native candidates over the full chain grid, withou
 increasing comparison tolerances.
 
 The current CUDA `slow_conv_transpose2d` mutates the shape of an unbatched input
-from (C,H,W) to (1,C,H,W). Tests obtain the expected post-call metadata from the
-independent native reference and still verify that stored values did not change.
+from (C,H,W) to (1,C,H,W). The reference and candidate
+receive independent tensors so this metadata change cannot alter the other call.
 The out test also uses a separate input for its preliminary output-shape call,
 so that call cannot change the workload subsequently presented to the oracle.
 
@@ -57,15 +61,15 @@ implementations or performance speedups.
   all 162 newly added special-scenario cases.
 - Quick suite: 9,207 passed, zero failures/skips. The previous four empty
   complex32 parameter cases were repaired rather than counted as coverage.
-- Shared assertion, candidate API and benchmark API regressions: 63 passed.
+- Focused assertion, reference, resolver and benchmark regression checks: 49 passed.
 - Wrong-candidate and actual measurement acceptance probes: 10 passed. They reject
   changed copy values, input mutation, missing/wrong gradients, forward-only out
   callables and permissive negative candidates. Actual kernel/operator measurements
   start every reference/candidate invocation with the declared nonempty sparse
   input; input preparation occurs outside the timed region.
 
-The input-restoring benchmark implementation explicitly rejects state-changing
-CUDA graph/backward timing; it does not claim those modes have been validated.
+For the five opt-in cases, input restoration explicitly rejects CUDA
+graph/backward timing; it does not claim those modes have been validated.
 Cross-backend execution and full performance benchmarks were not part of this
 repair's verification. Torch/Triton/vendor packages were not installed or changed;
 pre-commit initialized its own isolated hook environments.

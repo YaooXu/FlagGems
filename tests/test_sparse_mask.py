@@ -159,11 +159,15 @@ _SPARSE_MASK_VALUE_RANGE_CASES = _value_range_cases()
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("sparse_mask", getattr(flag_gems, "sparse_mask", None))
+    return flag_gems.testing.resolve_gems_op(
+        "sparse_mask", getattr(flag_gems, "sparse_mask", None)
+    )
 
 
 def _resolve_gems_op_out():
-    return tu.resolve_gems_op("sparse_mask", getattr(flag_gems, "sparse_mask", None))
+    return flag_gems.testing.resolve_gems_op(
+        "sparse_mask", getattr(flag_gems, "sparse_mask", None)
+    )
 
 
 def _assert_masked(res_out, ref_out, ref_mask, dtype, equal_nan=False):
@@ -197,9 +201,9 @@ def test_sparse_mask_value_ranges(shape, value_range, dtype):
     numel = math.prod(shape)
     keep_threshold = 0.5 if numel <= 4096 else 0.9
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp.clone(), independent=True)
+    ref_inp = tu.to_reference(inp.clone())
     mask = _make_mask(shape, density=keep_threshold)
-    ref_mask = utils.to_reference(mask, independent=True)
+    ref_mask = tu.to_reference(mask)
 
     ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
     res_out = _resolve_gems_op()(inp, mask)
@@ -221,8 +225,8 @@ def test_sparse_mask_sparse_self(shape, dtype):
     dense = tu.make_input(dtype, shape, ["-1", "1"])
     inp = dense.to_sparse()
     mask = _make_mask(shape)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_mask = utils.to_reference(mask, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_mask = tu.to_reference(mask)
 
     ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
     res_out = _resolve_gems_op()(inp, mask)
@@ -238,12 +242,12 @@ def test_sparse_mask_non_contiguous(base_shape, shape, dtype):
     # positions, not physical memory offsets. Slice on both the test device and
     # the reference device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, base_shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
     mask = _make_mask(shape)
-    ref_mask = utils.to_reference(mask, independent=True)
+    ref_mask = tu.to_reference(mask)
 
     ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
     res_out = _resolve_gems_op()(inp, mask)
@@ -263,8 +267,8 @@ def test_sparse_mask_out(shape, dtype):
     # mask is bool-valued, so empty_like must be given the self dtype.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     mask = _make_mask(shape)
-    ref_inp = utils.to_reference(inp, independent=True)
-    ref_mask = utils.to_reference(mask, independent=True)
+    ref_inp = tu.to_reference(inp)
+    ref_mask = tu.to_reference(mask)
 
     out = torch.empty_like(mask, dtype=dtype)
     ref_out = torch.empty_like(ref_mask, dtype=dtype)
@@ -312,8 +316,8 @@ if tu.LEVEL == "all":
         mask_dense.flatten()[:n] = True
         mask = mask_dense.to_sparse()
 
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_mask = utils.to_reference(mask, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_mask = tu.to_reference(mask)
 
         ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
         res_out = _resolve_gems_op()(inp, mask)
@@ -338,9 +342,9 @@ if tu.LEVEL == "all":
         # values zero outside the mask.
         grad_out = (dense_grad * mask.to_dense()).to_sparse()
 
-        ref_inp = utils.to_reference(inp, independent=True)
-        ref_mask = utils.to_reference(mask, independent=True)
-        ref_grad_out = utils.to_reference(grad_out, independent=True)
+        ref_inp = tu.to_reference(inp)
+        ref_mask = tu.to_reference(mask)
+        ref_grad_out = tu.to_reference(grad_out)
 
         ref_out = torch.ops.aten.sparse_mask(ref_inp, ref_mask)
         ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad_out)[
@@ -373,8 +377,8 @@ def test_sparse_mask_shape_mismatch():
     mask = _make_mask((4, 6))
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_mask(
-            utils.to_reference(self_t, independent=True),
-            utils.to_reference(mask, independent=True),
+            tu.to_reference(self_t),
+            tu.to_reference(mask),
         )
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(self_t, mask)
@@ -388,8 +392,8 @@ def test_sparse_mask_rejects_dense_mask():
     dense_mask = torch.rand(4, 5, device=flag_gems.device) > 0.5
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_mask(
-            utils.to_reference(self_t, independent=True),
-            utils.to_reference(dense_mask, independent=True),
+            tu.to_reference(self_t),
+            tu.to_reference(dense_mask),
         )
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         _resolve_gems_op()(self_t, dense_mask)

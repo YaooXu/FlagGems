@@ -117,7 +117,7 @@ def _dtype_range_pairs():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op(
+    return flag_gems.testing.resolve_gems_op(
         "_add_batch_dim", getattr(flag_gems, "_add_batch_dim", None)
     )
 
@@ -173,7 +173,7 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
     # [-1, 1] keeps every storage dtype valid (bool ignores the range); the
     # value-range sweep below covers all five spec ranges.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
@@ -190,7 +190,7 @@ def test__add_batch_dim_value_ranges(shape, dtype, value_range):
     batch_dim = len(shape) // 2
     level = 0
     inp = tu.make_input(dtype, shape, value_range)
-    ref_inp = utils.to_reference(inp, independent=True)
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
@@ -207,7 +207,7 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
-    ref_base = utils.to_reference(base, independent=True)
+    ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
     assert not inp.is_contiguous()
@@ -226,7 +226,7 @@ if tu.LEVEL == "all":
     )
     def test__add_batch_dim_nan_inf(dtype, scenario):
         inp = tu.make_special_input(dtype, scenario)
-        ref_inp = utils.to_reference(inp, independent=True)
+        ref_inp = tu.to_reference(inp)
         batch_dim, level = 0, 0
 
         ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)

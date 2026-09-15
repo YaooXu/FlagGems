@@ -84,7 +84,9 @@ def _can_cast_dtypes():
 
 
 def _resolve_gems_op():
-    return tu.resolve_gems_op("can_cast", getattr(flag_gems, "can_cast", None))
+    return flag_gems.testing.resolve_gems_op(
+        "can_cast", getattr(flag_gems, "can_cast", None)
+    )
 
 
 def _as_bool(value):
