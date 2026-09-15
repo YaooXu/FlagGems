@@ -266,25 +266,21 @@ def test_atleast_3d_complex(dtype):
 @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
 def test_atleast_3d_backward(shape, dtype):
-    # atleast_3d is a view: grad(sum(atleast_3d(x))) is all-ones in x's shape
-    # on both the shape-changing (0-dim/1-dim/2-dim) and the identity paths.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-    ref_inp = inp.detach().clone().requires_grad_()
+    ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
-    ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-    tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
+    # Explicit upstream values detect gradients that always return ones.
+    grad = tu.make_input(dtype, ref_out.shape, ["-1", "1"])
+    ref_grad = tu.to_reference(grad)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    # The candidate forward must match the reference...
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
 
-    # ...and, when the candidate view is autograd-aware (a compiled kernel that
-    # returns a plain tensor is not), its gradient must match too.
     assert res_out.requires_grad
-    res_grad = torch.autograd.grad(res_out.sum(), inp)[0]
-    assert res_grad.shape == inp.shape
-    tu.assert_result_close(res_grad, ref_grad)
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_equal(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.atleast_3d_negative

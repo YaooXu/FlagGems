@@ -543,3 +543,24 @@ def test_negative_cases_require_a_candidate(monkeypatch, operator, case_name, ar
     with pytest.raises(LookupError, match="candidate missing"):
         getattr(cases, case_name)(*args)
     missing.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "operator,shape", [("atleast_1d", ()), ("atleast_2d", (3,)), ("atleast_3d", (2, 3))]
+)
+def test_atleast_backward_rejects_constant_gradient(operator, shape):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
+
+    class ConstantGradient(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, inp):
+            ctx.shape = inp.shape
+            return getattr(torch.ops.aten, operator)(inp)
+
+        @staticmethod
+        def backward(ctx, grad):
+            return torch.ones_like(grad).reshape(ctx.shape)
+
+    with testing.override_gems_op(operator, ConstantGradient.apply):
+        with pytest.raises(AssertionError):
+            getattr(cases, f"test_{operator}_backward")(shape, torch.float32)

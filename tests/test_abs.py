@@ -30,8 +30,7 @@ _ABS_DTYPES = _ABS_FLOAT_DTYPES + _ABS_INT_DTYPES + utils.BOOL_TYPES
 _ABS_EMPTY_SHAPES = [(0,), (4, 0), (2, 0, 3)]
 _ABS_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
 
-# Backward shapes stay small (the autograd graph is built on the CPU reference
-# and the analytic comparison below is elementwise).
+# Backward shapes stay small to keep both autograd graphs inexpensive.
 _ABS_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
@@ -147,19 +146,12 @@ def test_abs_backward(shape, dtype):
     ref_out = torch.ops.aten.abs(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    # d|x|/dx == sign(x) (torch defines sign(0) == 0), so the reference
-    # gradient must match the analytic value; this validates the reference
-    # autograd path itself.
-    expected_in_grad = torch.sign(ref_inp) * ref_grad
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
-
-    # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_close(res_out, ref_out)
 
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, expected_in_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.abs_

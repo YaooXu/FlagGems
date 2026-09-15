@@ -147,21 +147,18 @@ def test_atleast_1d_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)
 
-    # atleast_1d is a view: the gradient of sum(atleast_1d(x)) is all-ones in
-    # x's shape on both the shape-changing (0-dim) and identity paths.
     ref_out = torch.ops.aten.atleast_1d(ref_inp)
-    ref_in_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-    tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
+    # Explicit upstream values detect gradients that always return ones.
+    grad = tu.make_input(dtype, ref_out.shape, ["-1", "1"])
+    ref_grad = tu.to_reference(grad)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    # The candidate forward must match the reference...
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
 
-    # ...and, if the candidate view is autograd-aware (a compiled kernel that
-    # returns a plain tensor is not), its gradient must match too.
     assert res_out.requires_grad
-    res_in_grad = torch.autograd.grad(res_out.sum(), inp)[0]
-    tu.assert_result_close(res_in_grad, torch.ones_like(inp))
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_equal(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.atleast_1d_negative

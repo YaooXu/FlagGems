@@ -46,8 +46,7 @@ _ADD_INPLACE_BROADCAST_PAIRS = _ADD_BROADCAST_PAIRS[:3]
 _ADD_EMPTY_SHAPES = [(0,), (4, 0), (2, 0, 3)]
 _ADD_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
 
-# Backward shapes stay small (the autograd graph is built on the CPU reference
-# and the analytic comparison below is elementwise).
+# Backward shapes stay small to keep both autograd graphs inexpensive.
 _ADD_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 # aten requires an integral alpha for integral inputs; 2 and -3 exercise both
@@ -372,12 +371,6 @@ def test_add_backward(shape, dtype):
         ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
     )
 
-    # d(a + b)/da == d(a + b)/db == 1, so both gradients are the incoming
-    # grad; this validates the reference autograd path itself.
-    tu.assert_result_close(ref_in_grad, ref_grad)
-    tu.assert_result_close(ref_other_grad, ref_grad)
-
-    # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp, other)
     tu.assert_result_close(res_out, ref_out)
 
@@ -385,8 +378,8 @@ def test_add_backward(shape, dtype):
     res_in_grad, res_other_grad = torch.autograd.grad(
         res_out, (inp, other), grad_outputs=grad
     )
-    tu.assert_result_close(res_in_grad, ref_grad)
-    tu.assert_result_close(res_other_grad, ref_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
+    tu.assert_result_close(res_other_grad, ref_other_grad)
 
 
 @pytest.mark.add
@@ -405,12 +398,6 @@ def test_add_backward_broadcast(dtype):
         ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
     )
 
-    # The gradient w.r.t. the broadcast operand is reduced over the broadcast
-    # dims: for (2, 3, 5) vs (5,), g_b == sum(grad, dim=(0, 1)).
-    expected_other_grad = ref_grad.sum(dim=(0, 1))
-    tu.assert_result_close(ref_in_grad, ref_grad)
-    tu.assert_result_close(ref_other_grad, expected_other_grad)
-
     res_out = _resolve_gems_op()(inp, other)
     tu.assert_result_close(res_out, ref_out)
 
@@ -418,8 +405,8 @@ def test_add_backward_broadcast(dtype):
     res_in_grad, res_other_grad = torch.autograd.grad(
         res_out, (inp, other), grad_outputs=grad
     )
-    tu.assert_result_close(res_in_grad, ref_grad)
-    tu.assert_result_close(res_other_grad, expected_other_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
+    tu.assert_result_close(res_other_grad, ref_other_grad)
 
 
 @pytest.mark.add_

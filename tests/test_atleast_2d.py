@@ -282,20 +282,18 @@ def test_atleast_2d_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)
 
-    # atleast_2d is a view: d(sum(atleast_2d(x)))/dx is all ones in x's shape,
-    # both on the shape-promoting (0-dim/1-dim) and identity paths.
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
-    tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
+    # Explicit upstream values detect gradients that always return ones.
+    grad = tu.make_input(dtype, ref_out.shape, ["-1", "1"])
+    ref_grad = tu.to_reference(grad)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
     res_out = _resolve_candidate()(inp)
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
-    # A candidate that returns a plain (non-autograd-aware) tensor cannot be
-    # differentiated; only check the gradient when the graph exists.
     assert res_out.requires_grad
-    res_grad = torch.autograd.grad(res_out.sum(), inp)[0]
-    tu.assert_result_close(res_grad, torch.ones_like(inp))
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_equal(res_in_grad, ref_in_grad)
 
 
 # ---------------------------------------------------------------------------

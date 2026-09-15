@@ -58,7 +58,7 @@ setattr(
 #     degenerate ranges (tu.make_input clamps unsigned bounds);
 #   * edge cases: non-contiguous (strided) inputs, empty tensors and
 #     nan/inf/+-0.0 special values;
-#   * backward: autograd.grad() against the analytic gradient -1 (a unary
+#   * backward: autograd.grad() against the ATen gradient (a unary
 #     view_copy op, so broadcast does not apply);
 #   * negative: unsupported dtypes (float8/bool) and a non-tensor input must
 #     fail on the candidate exactly like the aten reference.
@@ -259,9 +259,6 @@ def test__neg_view_copy_empty(shape, dtype):
 @pytest.mark.parametrize("shape", _NEG_VIEW_COPY_BACKWARD_SHAPES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test__neg_view_copy_backward(shape, dtype):
-    # Materializing the negative view computes -x, so d(-x)/dx == -1: the
-    # reference gradient must match the analytic value. The candidate is
-    # validated on the same contract when it advertises autograd support.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -269,18 +266,13 @@ def test__neg_view_copy_backward(shape, dtype):
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-    expected_in_grad = -ref_grad
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-    # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
-    # ...and, if the candidate advertises autograd support, its gradient must
-    # match the analytic value too.
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, expected_in_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark._neg_view_copy

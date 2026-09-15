@@ -360,23 +360,6 @@ def test_slow_conv_dilated3d_backward(case, dtype):
         ref_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
     )
 
-    # Self-check: the low-level op's autograd must match the standard
-    # F.conv3d backward (same math, im2col vs direct formulation).
-    f_out = torch.nn.functional.conv3d(
-        ref_inp,
-        ref_weight,
-        ref_bias,
-        stride=stride,
-        padding=padding,
-        dilation=dilation,
-    )
-    f_gi, f_gw, f_gb = torch.autograd.grad(
-        f_out, (ref_inp, ref_weight, ref_bias), grad_outputs=ref_grad_out
-    )
-    tu.assert_result_close(ref_gi, f_gi)
-    tu.assert_result_close(ref_gw, f_gw)
-    tu.assert_result_close(ref_gb, f_gb)
-
     # The candidate forward must match the fp64 reference...
     res_out = _resolve_gems_op()(
         inp, weight, kernel_size, bias, stride, padding, dilation

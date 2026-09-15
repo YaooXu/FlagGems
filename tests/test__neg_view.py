@@ -283,11 +283,6 @@ def test__neg_view_mutation(shape, dtype):
 @pytest.mark.parametrize("shape", _NEG_VIEW_BACKWARD_SHAPES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
 def test__neg_view_backward(shape, dtype):
-    # Materializing the view computes -x, so d(-x)/dx == -1: the reference
-    # gradient must match the analytic value. The candidate is validated on the
-    # same contract when it advertises autograd support (a true view of a leaf
-    # carries requires_grad through the view machinery; a materializing kernel
-    # would not).
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -295,19 +290,14 @@ def test__neg_view_backward(shape, dtype):
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-    expected_in_grad = -ref_grad
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-    # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
     _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, inp)
 
-    # ...and, if the candidate advertises autograd support, its gradient must
-    # match the analytic value too.
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, expected_in_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark._neg_view

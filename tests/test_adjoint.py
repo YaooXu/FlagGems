@@ -46,8 +46,8 @@ from . import test_utils as tu
 #     them exactly);
 #   * edge cases: non-contiguous (strided) inputs, the conj-bit toggle, writing
 #     through the returned alias, and nan/inf/+-0.0 special values;
-#   * backward: autograd.grad() through the adjoint view against the analytic
-#     gradient adjoint(dy) (broadcast does not apply to a unary view op);
+#   * backward: autograd.grad() through the candidate and ATen adjoint views
+#     (broadcast does not apply to a unary view op);
 #   * negative: 1-D inputs and non-tensor inputs raise on both the aten
 #     reference and the candidate.
 
@@ -252,11 +252,6 @@ def test_adjoint_mutation(shape, dtype):
     "dtype", tu.selected_cases(utils.FLOAT_DTYPES + utils.COMPLEX_DTYPES)
 )
 def test_adjoint_backward(shape, dtype):
-    # adjoint is an involution (its own inverse), so d(adjoint(x))/dx ==
-    # adjoint(dy): the reference gradient must match the analytic value. The
-    # candidate is validated on the same contract when it advertises autograd
-    # support (a true view of a leaf carries requires_grad through the view
-    # machinery; a materializing kernel would not).
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, _transposed_shape(shape), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -264,20 +259,14 @@ def test_adjoint_backward(shape, dtype):
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
-    expected_in_grad = torch.ops.aten.adjoint(ref_grad)
-    tu.assert_result_close(ref_in_grad, expected_in_grad)
 
-    # The candidate forward output must match the reference...
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
-    # ...and, if the candidate advertises autograd support, its gradient must
-    # match the analytic value too (the input grad values are the same ones the
-    # reference gradient was computed from).
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, expected_in_grad)
+    tu.assert_result_close(res_in_grad, ref_in_grad)
 
 
 @pytest.mark.adjoint
