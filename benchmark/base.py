@@ -16,7 +16,6 @@ import gc
 import math
 import os
 import time
-from contextlib import nullcontext
 from dataclasses import asdict
 from typing import Any, Collection, Generator, List, Optional, Tuple
 
@@ -107,6 +106,7 @@ class Benchmark:
             self.op_name += "_backward"
         self.torch_op = torch_op
         self.gems_op = kwargs.get("gems_op", None)
+        self.require_direct_candidate = "gems_op" in kwargs
         self.is_backward = is_backward
         self.is_inplace = is_inplace
         self._input_iter = None
@@ -300,7 +300,62 @@ class Benchmark:
             )
         return fn, xs
 
+    def _get_fresh_input_latency(self, op, args, kwargs):
+        # Each sample starts from an independent snapshot. Input restoration
+        # happens before the start event/clock, never inside the measured call.
+        if self.is_backward:
+            raise ValueError("Fresh-input backward measurement is not supported")
+        if Config.mode == consts.BenchMode.CUDAGRAPH:
+            raise ValueError(
+                "State-changing benchmarks require fresh inputs; use kernel or operator mode"
+            )
+        if Config.mode not in (
+            consts.BenchMode.KERNEL,
+            consts.BenchMode.OPERATOR,
+            consts.BenchMode.WRAPPER,
+        ):
+            raise ValueError("Undefined Value of Benchmark Mode.")
+        template = flag_gems.testing.clone_inputs((args, kwargs))
+        device_timing = Config.mode == consts.BenchMode.KERNEL
+        if device_timing and not hasattr(torch_device_fn, "Event"):
+            raise ValueError("Backend has no event timer for fresh-input measurements")
+
+        def sample():
+            fresh_args, fresh_kwargs = flag_gems.testing.clone_inputs(template)
+            torch_device_fn.synchronize()
+            if device_timing:
+                start = torch_device_fn.Event(enable_timing=True)
+                end = torch_device_fn.Event(enable_timing=True)
+                start.record()
+                result = op(*fresh_args, **fresh_kwargs)
+                end.record()
+                end.synchronize()
+                elapsed = start.elapsed_time(end)
+            else:
+                start = time.perf_counter()
+                result = op(*fresh_args, **fresh_kwargs)
+                if Config.mode == consts.BenchMode.OPERATOR:
+                    torch_device_fn.synchronize()
+                elapsed = (time.perf_counter() - start) * 1000
+            del result
+            if elapsed <= 0:
+                raise RuntimeError("Fresh-input timer returned a nonpositive latency")
+            return elapsed
+
+        warmup_elapsed = 0.0
+        while warmup_elapsed < Config.warm_up:
+            warmup_elapsed += sample()
+        measured = []
+        elapsed = 0.0
+        while not measured or elapsed < Config.repetition:
+            value = sample()
+            measured.append(value)
+            elapsed += value
+        return sum(measured) / len(measured)
+
     def get_latency(self, op, *args, **kwargs):
+        if self.is_inplace:
+            return self._get_fresh_input_latency(op, args, kwargs)
         fn, xs = self._make_invocation(op, *args, **kwargs)
         if Config.mode == consts.BenchMode.OPERATOR:
             n_warm, n_rep = get_iter_count(fn)
@@ -359,9 +414,15 @@ class Benchmark:
         try:
             op = flag_gems.testing.resolve_gems_op(self.op_name, self.gems_op)
         except LookupError:
+            if self.require_direct_candidate:
+                raise
             return None, None
         source = flag_gems.testing.gems_op_source(self.op_name, op)
-        if source == "override" or self.gems_op is not None:
+        if (
+            source == "override"
+            or self.gems_op is not None
+            or self.require_direct_candidate
+        ):
             return op, source
         return None, None
 
@@ -394,6 +455,30 @@ class Benchmark:
         case_id: Optional[str] = None,
     ):
         context, op = self._candidate_context_and_op(case_id)
+        if self.is_inplace:
+            if self.is_backward:
+                raise ValueError("Fresh-input backward profiling is not supported")
+            # Preparation is outside every profiler range, including repeats.
+            with context:
+                for count, source, capture in (
+                    (warmup, warmup_input, False),
+                    (iterations, capture_input, profile),
+                ):
+                    args, kwargs = self.unpack_to_args_kwargs(source)
+                    for _ in range(count):
+                        fresh_args, fresh_kwargs = flag_gems.testing.clone_inputs(
+                            (args, kwargs)
+                        )
+                        torch_device_fn.synchronize()
+                        if capture:
+                            self._external_profiler_start()
+                        try:
+                            op(*fresh_args, **fresh_kwargs)
+                            torch_device_fn.synchronize()
+                        finally:
+                            if capture:
+                                self._external_profiler_stop()
+            return
         with context:
             # Warmup phase: use a separate input so in-place ops do not corrupt
             # the tensor state that the capture phase will observe.
@@ -448,9 +533,7 @@ class Benchmark:
     def _case_id(self, dtype, ordinal: int) -> str:
         nodeid = getattr(Config, "current_nodeid", None)
         if not nodeid:
-            raise RuntimeError(
-                "Benchmark case IDs require an active pytest nodeid."
-            )
+            raise RuntimeError("Benchmark case IDs require an active pytest nodeid.")
         dtype_name = str(dtype).removeprefix("torch.")
         local_id = f"{Config.bench_level.value}::{dtype_name}::{ordinal}"
         return f"{nodeid}::{local_id}"
@@ -485,9 +568,7 @@ class Benchmark:
                 f"Operator '{self.op_name}' does not support case listing yet."
             )
         return tuple(
-            case
-            for dtype in self.to_bench_dtypes
-            for case in self.get_case_iter(dtype)
+            case for dtype in self.to_bench_dtypes for case in self.get_case_iter(dtype)
         )
 
     def list_cases(self, initialize: bool = True) -> BenchmarkCaseList:
@@ -545,9 +626,7 @@ class Benchmark:
                 if gems_op is not None:
                     metric.candidate_source = candidate_source
                     with flag_gems.testing.gems_op_case(self.op_name, case_id):
-                        metric.latency = self.get_latency(
-                            gems_op, *args, **kwargs
-                        )
+                        metric.latency = self.get_latency(gems_op, *args, **kwargs)
                 elif self.op_name == "zero_":
                     with flag_gems.use_gems():
                         metric.latency = self.get_latency(
@@ -617,9 +696,7 @@ class Benchmark:
         cases = self._collect_cases()
         available_ids = [case.case_id for case in cases]
         if len(available_ids) != len(set(available_ids)):
-            raise ValueError(
-                f"Operator '{self.op_name}' generated duplicate case IDs."
-            )
+            raise ValueError(f"Operator '{self.op_name}' generated duplicate case IDs.")
 
         select_all = case_ids is None
         selected = set(case_ids or [])
@@ -660,9 +737,7 @@ class Benchmark:
         cases = self._collect_cases()
         available_ids = [case.case_id for case in cases]
         if len(available_ids) != len(set(available_ids)):
-            raise ValueError(
-                f"Operator '{self.op_name}' generated duplicate case IDs."
-            )
+            raise ValueError(f"Operator '{self.op_name}' generated duplicate case IDs.")
 
         select_all = case_ids is None
         selected = set(case_ids or [])
@@ -677,10 +752,10 @@ class Benchmark:
                 warmup_input = self.build_inputs(case)
                 capture_input = self.build_inputs(case) if profile else warmup_input
             except Exception as e:
-                msg = (
-                    f"input generation failed for case_id={case.case_id}: {e}"
+                msg = f"input generation failed for case_id={case.case_id}: {e}"
+                print(
+                    f"\033[31mFAILED\033[0m [materialize]: Operator={self.op_name} {msg}"
                 )
-                print(f"\033[31mFAILED\033[0m [materialize]: Operator={self.op_name} {msg}")
                 pytest.fail(msg)
 
             # --- candidate execution ---
@@ -695,6 +770,7 @@ class Benchmark:
                 )
             except Exception as e:
                 import triton
+
                 if isinstance(e, triton.compiler.errors.CompilationError):
                     stage = "compile"
                 elif isinstance(e, (RuntimeError, torch.cuda.OutOfMemoryError)):
@@ -725,21 +801,15 @@ class Benchmark:
 
         self.init_user_config()
         configured_case_ids = getattr(Config, "case_ids", None)
-        selection_requested = (
-            case_ids is not None or configured_case_ids is not None
-        )
-        selected_case_ids = (
-            case_ids if case_ids is not None else configured_case_ids
-        )
+        selection_requested = case_ids is not None or configured_case_ids is not None
+        selected_case_ids = case_ids if case_ids is not None else configured_case_ids
 
         if getattr(Config, "list_cases", False):
             if selected_case_ids:
                 raise ValueError("--list-cases cannot be combined with --case-id.")
             case_list = self.list_cases(initialize=False)
             update_case_list(case_list.to_dict())
-            print(
-                f"Listed {len(case_list.cases)} benchmark cases for {self.op_name}."
-            )
+            print(f"Listed {len(case_list.cases)} benchmark cases for {self.op_name}.")
             return case_list
 
         if getattr(Config, "preflight_only", False):
@@ -792,7 +862,9 @@ class GenericBenchmark(Benchmark):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        if input_fn is not None and (case_fn is not None or build_inputs_fn is not None):
+        if input_fn is not None and (
+            case_fn is not None or build_inputs_fn is not None
+        ):
             raise ValueError(
                 "GenericBenchmark accepts either legacy input_fn or the "
                 "case_fn/build_inputs_fn pair, not both."
@@ -841,9 +913,7 @@ class GenericBenchmark(Benchmark):
         for shape in self.shapes:
             for plan in self.case_fn(shape, dtype):
                 if not isinstance(plan, BenchmarkCasePlan):
-                    raise TypeError(
-                        "case_fn must yield BenchmarkCasePlan instances."
-                    )
+                    raise TypeError("case_fn must yield BenchmarkCasePlan instances.")
                 yield self._case_from_plan(dtype, ordinal, plan)
                 ordinal += 1
 
@@ -933,8 +1003,7 @@ class UnaryReductionBenchmark(Benchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not UnaryReductionBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not UnaryReductionBenchmark.build_inputs
+            and type(self).build_inputs is not UnaryReductionBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is UnaryReductionBenchmark.get_input_iter
@@ -997,8 +1066,7 @@ class TexGluForwardBenchmark(TexGluBenchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not TexGluForwardBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not TexGluForwardBenchmark.build_inputs
+            and type(self).build_inputs is not TexGluForwardBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is TexGluForwardBenchmark.get_input_iter
@@ -1034,8 +1102,7 @@ class TexGluBackwardBenchmark(TexGluBenchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not TexGluBackwardBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not TexGluBackwardBenchmark.build_inputs
+            and type(self).build_inputs is not TexGluBackwardBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is TexGluBackwardBenchmark.get_input_iter
@@ -1058,9 +1125,7 @@ class TexGluBackwardBenchmark(TexGluBenchmark):
         plan = case.builder_args[0]
         shape, grad_out_shape = plan.builder_args
         inp = generate_tensor_input(shape, case.dtype, self.device)
-        grad_out = torch.randn(
-            grad_out_shape, dtype=case.dtype, device=self.device
-        )
+        grad_out = torch.randn(grad_out_shape, dtype=case.dtype, device=self.device)
         return grad_out, inp, plan.params["quantizer"]
 
     def get_tflops(self, op, *args, **kwargs):
@@ -1182,8 +1247,7 @@ class BinaryPointwiseBenchmark(Benchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not BinaryPointwiseBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not BinaryPointwiseBenchmark.build_inputs
+            and type(self).build_inputs is not BinaryPointwiseBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is BinaryPointwiseBenchmark.get_input_iter
@@ -1229,15 +1293,13 @@ class ScalarBinaryPointwiseBenchmark(Benchmark):
 
     def supports_cases(self) -> bool:
         if (
-            type(self).get_case_iter
-            is not ScalarBinaryPointwiseBenchmark.get_case_iter
+            type(self).get_case_iter is not ScalarBinaryPointwiseBenchmark.get_case_iter
             and type(self).build_inputs
             is not ScalarBinaryPointwiseBenchmark.build_inputs
         ):
             return True
         return (
-            type(self).get_input_iter
-            is ScalarBinaryPointwiseBenchmark.get_input_iter
+            type(self).get_input_iter is ScalarBinaryPointwiseBenchmark.get_input_iter
         )
 
     def get_case_iter(self, dtype) -> Generator:
@@ -1281,8 +1343,7 @@ class UnaryPointwiseBenchmark(Benchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not UnaryPointwiseBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not UnaryPointwiseBenchmark.build_inputs
+            and type(self).build_inputs is not UnaryPointwiseBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is UnaryPointwiseBenchmark.get_input_iter
@@ -1316,8 +1377,7 @@ class UnaryPointwiseOutBenchmark(UnaryPointwiseBenchmark):
     def supports_cases(self) -> bool:
         if (
             type(self).get_case_iter is not UnaryPointwiseOutBenchmark.get_case_iter
-            and type(self).build_inputs
-            is not UnaryPointwiseOutBenchmark.build_inputs
+            and type(self).build_inputs is not UnaryPointwiseOutBenchmark.build_inputs
         ):
             return True
         return type(self).get_input_iter is UnaryPointwiseOutBenchmark.get_input_iter

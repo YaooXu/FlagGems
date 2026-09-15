@@ -22,15 +22,14 @@ import torch
 from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 
-from .candidate import (
-    candidate_code as _candidate_code,
-    candidate_report,
-    is_candidate as _is_candidate,
-    resolve_candidate as _resolve_candidate,
+from .candidate import candidate_code as _candidate_code
+from .candidate import candidate_report  # noqa: F401 - public re-export
+from .candidate import is_candidate as _is_candidate
+from .candidate import resolve_candidate as _resolve_candidate
+from .candidate import (  # noqa: F401 - public re-exports
     set_candidate_call_tracking,
     write_candidate_report,
 )
-
 
 _REGISTERED_OP_OVERRIDE_LOCK = RLock()
 _GEMS_OP_OVERRIDE_LOCK = RLock()
@@ -69,9 +68,7 @@ def override_gems_op(operator: str, replacement: Callable) -> Iterator[Callable]
                 _GEMS_OP_OVERRIDES[operator] = previous
 
 
-def resolve_gems_op(
-    operator: str, default: Optional[Callable] = None
-) -> Callable:
+def resolve_gems_op(operator: str, default: Optional[Callable] = None) -> Callable:
     """Resolve an override or the operator's normal direct FlagGems callable."""
 
     _validate_gems_op(operator, default)
@@ -152,9 +149,7 @@ def candidate_code(
 
 
 @contextmanager
-def override_registered_op(
-    operator: str, replacement: Callable
-) -> Iterator[Callable]:
+def override_registered_op(operator: str, replacement: Callable) -> Iterator[Callable]:
     """Temporarily replace exactly one registered operator implementation.
 
     Kept for standalone dispatcher smoke tests and compatibility with archived
@@ -194,9 +189,7 @@ def override_registered_op(
 
         old_by_func = package.FULL_CONFIG_BY_FUNC
         new_by_func = {
-            name: [
-                new_entry if entry is old_entry else entry for entry in entries
-            ]
+            name: [new_entry if entry is old_entry else entry for entry in entries]
             for name, entries in old_by_func.items()
         }
 
@@ -269,6 +262,24 @@ def _maybe_move_to_cpu(res, ref):
     return res, ref
 
 
+_FP8_DTYPES = {
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float8_e4m3fnuz,
+    torch.float8_e5m2fnuz,
+}
+
+
+def _comparison_values(res, ref):
+    if not isinstance(res, torch.Tensor) or not isinstance(ref, torch.Tensor):
+        return res, ref
+    assert res.dtype == ref.dtype
+    assert res.shape == ref.shape
+    if res.dtype in _FP8_DTYPES:
+        return res.float(), ref.float()
+    return res, ref
+
+
 def assert_close(res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4):
     if dtype is None:
         dtype = torch.float32
@@ -276,10 +287,47 @@ def assert_close(res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4):
     ref = ref.to(dtype)
     res, ref = _maybe_move_to_cpu(res, ref)
     rtol = RESOLUTION[dtype]
+    res, ref = _comparison_values(res, ref)
     torch.testing.assert_close(
         res, ref, atol=atol * reduce_dim, rtol=rtol, equal_nan=equal_nan
     )
 
 
 def assert_equal(res, ref, equal_nan=False):
+    res, ref = _comparison_values(res, ref)
     torch.testing.assert_close(res, ref, atol=0, rtol=0, equal_nan=equal_nan)
+
+
+def clone_inputs(value, memo=None):
+    """Snapshot tensor inputs, preserving dense strides, offsets and aliases.
+
+    Copies are independent leaves. This is input preparation, never a candidate
+    implementation or part of the timed operator invocation.
+    """
+    if memo is None:
+        memo = {}
+    if isinstance(value, torch.Tensor):
+        if value.layout != torch.strided or value.is_quantized or value.is_nested:
+            return value.detach().clone().requires_grad_(value.requires_grad)
+        storage = value.untyped_storage()
+        key = (value.device, storage._cdata)
+        if key not in memo:
+            raw = torch.empty(0, dtype=torch.uint8, device=value.device)
+            raw = raw.set_(storage, 0, (storage.nbytes(),), (1,))
+            memo[key] = raw.clone().untyped_storage()
+        result = torch.empty(0, dtype=value.dtype, device=value.device)
+        result = result.set_(
+            memo[key], value.storage_offset(), value.size(), value.stride()
+        )
+        if value.is_conj():
+            result = result.conj()
+        if value.is_neg():
+            result = torch._neg_view(result)
+        return result.requires_grad_(value.requires_grad)
+    if isinstance(value, list):
+        return [clone_inputs(x, memo) for x in value]
+    if isinstance(value, tuple):
+        return tuple(clone_inputs(x, memo) for x in value)
+    if isinstance(value, dict):
+        return {k: clone_inputs(v, memo) for k, v in value.items()}
+    return value

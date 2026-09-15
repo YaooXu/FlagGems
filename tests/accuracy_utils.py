@@ -284,10 +284,10 @@ GLU_SHAPES = (
 )
 
 
-def to_reference(inp, upcast=False):
+def to_reference(inp, upcast=False, *, independent=False):
     if inp is None:
         return None
-    ref_inp = inp
+    ref_inp = flag_gems.testing.clone_inputs(inp) if independent else inp
     if TO_CPU:
         ref_inp = ref_inp.to("cpu")
     if upcast:
