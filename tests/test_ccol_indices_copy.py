@@ -155,13 +155,6 @@ _CCOLS_DTYPES = _dedup(
 # adds nothing beyond the copy-semantics cases above).
 _VALUE_RANGE_DTYPES = [dtype for dtype in _CCOLS_DTYPES if dtype != torch.bool]
 
-# nan / +-inf stored values: only the float dtypes that can represent them.
-_NAN_INF_DTYPES = [
-    dtype
-    for dtype in _CCOLS_DTYPES
-    if dtype in (torch.float16, torch.bfloat16, torch.float32, torch.float64)
-]
-
 
 def _random_ccol(n_compressed, nnz, gen):
     # A valid compressed-column array: length n_compressed + 1, non-decreasing,
@@ -511,27 +504,22 @@ def test_ccol_indices_copy_out_uncoalesced(dtype):
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
 
 
-def _nan_inf_csc(dtype):
+def _special_csc(dtype, scenario):
     shape = (3, 4)
     ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor(
         [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
     )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     return torch.sparse_csc_tensor(ccol, rows, values, shape)
 
 
 @pytest.mark.ccol_indices_copy
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_ccol_indices_copy_nan_inf_values(dtype):
-    # nan / +-inf stored values must not perturb the returned ccol copy:
-    # ccol_indices_copy reads only the compressed-index storage, so the copy
-    # must still be bit-exact even when the values contain non-finite entries.
-    inp = _nan_inf_csc(dtype)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CCOLS_DTYPES))
+)
+def test_ccol_indices_copy_nan_inf_values(dtype, scenario):
+    inp = _special_csc(dtype, scenario)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
@@ -541,9 +529,11 @@ def test_ccol_indices_copy_nan_inf_values(dtype):
 
 
 @pytest.mark.ccol_indices_copy_out
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_ccol_indices_copy_out_nan_inf_values(dtype):
-    inp = _nan_inf_csc(dtype)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CCOLS_DTYPES))
+)
+def test_ccol_indices_copy_out_nan_inf_values(dtype, scenario):
+    inp = _special_csc(dtype, scenario)
     ref_inp = tu.to_reference(inp)
     out = _out_buffer(5, torch.long, inp.device)
     ref_out = _out_buffer(5, torch.long, ref_inp.device)

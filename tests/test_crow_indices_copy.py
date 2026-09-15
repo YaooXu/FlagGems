@@ -158,14 +158,6 @@ _CROW_DTYPES = _dedup(
 # adds nothing beyond the copy-semantics cases above).
 _VALUE_RANGE_DTYPES = [dtype for dtype in _CROW_DTYPES if dtype != torch.bool]
 
-# nan / +-inf stored values: only the float dtypes that can represent them (fp8
-# formats have no inf and are excluded).
-_NAN_INF_DTYPES = [
-    dtype
-    for dtype in _CROW_DTYPES
-    if dtype in (torch.float16, torch.bfloat16, torch.float32, torch.float64)
-]
-
 
 def _random_crow(n_compressed, nnz, gen):
     # A valid compressed-row array: length n_compressed + 1, non-decreasing,
@@ -531,28 +523,22 @@ def test_crow_indices_copy_out_uncoalesced(dtype):
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
 
 
-def _nan_inf_csr(dtype):
-    # Fully stored 3x4 CSR (7 entries) whose values contain nan / +-inf / -0.0.
+def _special_csr(dtype, scenario):
     shape = (3, 4)
     crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor(
         [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
     )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     return torch.sparse_csr_tensor(crow, cols, values, shape)
 
 
 @pytest.mark.crow_indices_copy
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_crow_indices_copy_nan_inf_values(dtype):
-    # nan / +-inf stored values must not perturb the returned crow copy:
-    # crow_indices_copy reads only the compressed-row storage, so the copy must
-    # still be bit-exact even when the values contain non-finite entries.
-    inp = _nan_inf_csr(dtype)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CROW_DTYPES))
+)
+def test_crow_indices_copy_nan_inf_values(dtype, scenario):
+    inp = _special_csr(dtype, scenario)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.crow_indices_copy(ref_inp)
@@ -562,9 +548,11 @@ def test_crow_indices_copy_nan_inf_values(dtype):
 
 
 @pytest.mark.crow_indices_copy_out
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_crow_indices_copy_out_nan_inf_values(dtype):
-    inp = _nan_inf_csr(dtype)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CROW_DTYPES))
+)
+def test_crow_indices_copy_out_nan_inf_values(dtype, scenario):
+    inp = _special_csr(dtype, scenario)
     ref_inp = tu.to_reference(inp)
     out = _out_buffer(4, torch.long, inp.device)
     ref_out = _out_buffer(4, torch.long, ref_inp.device)
