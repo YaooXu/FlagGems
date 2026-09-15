@@ -77,8 +77,7 @@ def _flatten_shape_cases():
 
     Each case is a list of tensor shapes (number, ranks and sizes of the tensors
     fed to the op; the dedicated non-contiguous test covers memory layout).
-    Element counts stay <= 1M except the single high-rank case, which is a pure
-    copy and stays cheap.
+    Default mode includes each spec shape as both a single tensor and a pair.
     """
     if tu.QUICK_MODE:
         return [
@@ -96,11 +95,9 @@ def _flatten_shape_cases():
         [(16, 7, 57, 32, 29)],  # high-rank single tensor
     ]
     for shape in tu.selected_shapes():
-        numel = _numel(shape)
-        if numel <= 1024 * 1024:
+        if [shape] not in cases:
             cases.append([shape])
-        if 2 * numel <= 1024 * 1024:
-            cases.append([shape, shape])
+        cases.append([shape, shape])
     return cases
 
 

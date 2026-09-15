@@ -104,8 +104,8 @@ _SPEC_1D_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) == 1] o
     (8,),
 ]
 
-# Level-driven 1-D sizes. The largest all-level case (96, r=3) writes
-# C(96, 3) * 3 = 428,640 output elements, staying under the 1M-element cap.
+# Representative 1-D sizes for the r/replacement sweep. At n=96 and r=3,
+# the no-replacement case produces C(96,3) * 3 = 428,640 output elements.
 if tu.QUICK_MODE:
     _LEVEL_SHAPES = [(4,), (8,)]
 else:
@@ -228,8 +228,8 @@ def test_combinations_non_contiguous(dtype):
 @pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_CLOSE_DTYPES))
 def test_combinations_nan_inf(dtype):
     # combinations is a pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
-    # (equal_nan=True is active on the float path of assert_result_close; 1e30
-    # overflows to inf in fp16/bf16 on both paths identically).
+    # (assert_result_equal permits matching NaNs). 1e30 overflows to inf in
+    # fp16 and remains finite in bf16.
     values = torch.tensor(
         [
             float("inf"),

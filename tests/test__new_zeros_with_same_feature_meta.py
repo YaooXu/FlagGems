@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -59,8 +57,8 @@ setattr(
 #     [min,0]) over a representative dtype family (``_VALUE_RANGE_DTYPES``);
 #     the op ignores values, so the output is identical for every range.
 #   * Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) are
-#     placed in both the self and other position with every valid N, bounded so
-#     the zero allocation stays cheap.
+#     placed in both the self and other position, with N = 0, 1 and 2 where
+#     valid; the main grid also covers full-rank shape concatenation.
 #   * Broadcast -- N/A: the op concatenates shapes, it does not compute on
 #     values, so there is nothing to broadcast.
 #   * Backward -- N/A: the result is a constant zero tensor that is not a
@@ -142,10 +140,6 @@ _VALUE_RANGE_CASES = [
     pytest.param((3,), (4, 5), 0, id="self_1d_N0"),
 ]
 
-# The op allocates a zero tensor of the concatenated shape; keep that
-# allocation small so the shape-level sweep stays fast at every --quick.
-_MAX_OUTPUT_ELEMENTS = 1_000_000
-
 _MAIN_RANGE = ["-1", "1"]
 
 
@@ -167,8 +161,7 @@ def _shape_level_cases():
 
     Every level shape appears in the self position (N = 0 and, when the rank
     allows, N = 1 or N = 2) and in the other position; N never exceeds
-    self.dim() and the output element count is bounded by
-    ``_MAX_OUTPUT_ELEMENTS``.
+    self.dim().
     """
     cases = []
     for shape in tu.selected_shapes():
@@ -178,11 +171,7 @@ def _shape_level_cases():
         if len(shape) >= 2:
             cases.append((shape, (2,), 2))
         cases.append(((2,), shape, 1))
-    return [
-        (self_shape, other_shape, n)
-        for self_shape, other_shape, n in cases
-        if math.prod(self_shape[:n] + other_shape) <= _MAX_OUTPUT_ELEMENTS
-    ]
+    return cases
 
 
 def _resolve_gems_op():

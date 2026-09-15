@@ -18,17 +18,17 @@
 vector and returns a NEW 2-D square matrix whose ``offset``-th diagonal holds
 that vector, with zeros everywhere else. The output side length is
 ``numel(self) + |offset|``, so the output is quadratic in the input element
-count: the correctness shapes are therefore bounded (~1M output elements max)
-and whole ranks rather than the generic multi-million-element levels are used.
+count. The large spec shapes therefore use explicit smaller representatives
+of the same rank; for example, a (1024,1024) input alone needs a 4 TiB float32
+output at offset=0. This is an operator-specific allocation constraint.
 
 Coverage follows the regular-operator spec adapted to a pure data-movement op:
 
 * dtype coverage explicitly includes all of the spec's
   required dtypes -- int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64
   -- plus float64/int16/bool;
-* shape levels: the spec's 7 shapes (0-D, which torch.diagflat accepts, through
-  the large dense levels), bounded to inputs whose quadratic output stays small,
-  plus the empty input;
+* shape levels: scalar, singleton and regular 1-D spec shapes, explicit
+  representatives for ranks 2 through 5, and the empty input;
 * value ranges: the spec's five ranges via :func:`tu.make_input` (the values
   round-trip exactly through the diagonal placement);
 * edge cases: empty inputs, large offsets (|offset| > numel), non-contiguous
@@ -88,40 +88,29 @@ def _numel(shape):
     return n
 
 
-def _bounded_selected_shapes(limit=1024):
-    """The spec shape levels whose quadratic diagflat output stays small enough."""
-    return [shape for shape in tu.selected_shapes() if _numel(shape) <= limit]
+# Keep the scalar and 1-D spec shapes. Ranks 2-5 use explicit representatives:
+# the original large shapes would require tens of GiB to hundreds of TiB for
+# each float32 output, before allocating the reference and comparison buffers.
+_DIAGFLAT_SHAPES = [
+    (),
+    (1,),
+    (256,),
+    (2, 3),
+    (4, 5, 6),
+    (2, 3, 4, 5),
+    (2, 2, 2, 2, 3),
+    (0,),
+]
 
-
-# Shape levels aligned with the spec's 7 shapes (``tu.selected_shapes()``).
-# diagflat accepts any input rank -- including 0-D, which torch.diagflat accepts
-# and maps to a (1, 1) matrix -- so the spec shape set is used directly instead
-# of a bespoke list. It is bounded to numel <= 1024 because the output side is
-# ``numel(self) + |offset|``: the output element count is quadratic in the
-# input, so the spec's multi-dim levels (``(1024, 1024)`` numel 1M,
-# ``(20, 320, 15)`` numel 96K, ...) would allocate multi-gigabyte/terabyte
-# outputs. Only the 0-D/1-D spec levels survive the bound, so small
-# representative multi-dim shapes are added below to preserve rank coverage;
-# ``(0,)`` (absent from the spec set) covers the empty-input case.
-_DIAGFLAT_SHAPES = (
-    _bounded_selected_shapes() + [(2, 3), (4, 5, 6), (2, 2, 2, 2, 3)] + [(0,)]
+_DIAGFLAT_RANGE_SHAPES = tu.selected_cases(
+    _DIAGFLAT_SHAPES[:-1], quick=[(2, 19, 7), (2, 3), (4, 5, 6)]
 )
-
-# Small inputs for the value-range sweep (bounded spec levels + rank reps).
-_DIAGFLAT_RANGE_SHAPES = _bounded_selected_shapes() + [(2, 3), (4, 5, 6)]
 
 _DIAGFLAT_NONCONTIG_SHAPES = [(4, 8), (6, 3), (2, 3, 4)]
 
 _DIAGFLAT_STRIDED_SHAPES = [(16, 32), (4, 8, 16)]
 
 _DIAGFLAT_BACKWARD_SHAPES = [(8,), (2, 3), (4, 5, 6)]
-
-
-def _diagflat_shapes():
-    """The bounded spec shape levels for the main sweep."""
-    if tu.QUICK_MODE:
-        return [(2, 19, 7)]
-    return list(_DIAGFLAT_SHAPES)
 
 
 def _resolve_gems_op():
@@ -140,7 +129,9 @@ def _assert_output(res_out, ref_out):
 
 
 @pytest.mark.diagflat
-@pytest.mark.parametrize("shape", _diagflat_shapes())
+@pytest.mark.parametrize(
+    "shape", tu.selected_cases(_DIAGFLAT_SHAPES, quick=[(2, 19, 7)])
+)
 @pytest.mark.parametrize("offset", _DIAGFLAT_OFFSETS)
 @pytest.mark.parametrize("dtype", _DIAGFLAT_DTYPES)
 def test_diagflat(shape, offset, dtype):
@@ -233,10 +224,9 @@ def test_diagflat_strided(shape, offset, dtype):
 @pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
 def test_diagflat_nan_inf(dtype):
     # diagflat is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the diagonal (assert_result_close uses equal_nan=True).
-    # The values that reach the tensor are dtype-dependent: fp16/bf16 overflow
-    # 1e30 to inf, and float8_e4m3fn turns every inf into nan, but both the
-    # candidate and the reference are built from these same stored values, so
+    # unchanged onto the diagonal (assert_result_equal permits matching NaNs).
+    # 1e30 overflows to inf in fp16 and remains finite in bf16. float8_e4m3fn
+    # turns inf into nan. Candidate and reference use the same stored values, so
     # the comparison must hold whatever the dtype did to them. fp8 is compared
     # after casting to fp32 (see _NAN_INF_DTYPES).
     values = torch.tensor(

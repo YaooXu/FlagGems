@@ -39,8 +39,7 @@ from . import test_utils as tu
 #     value test is migrated onto this framework);
 #   * shape levels -- dedicated depth-axis sets merged with the shared shape
 #     levels tu.selected_shapes() (quick/default via --quick) as self-pairs,
-#     bounded so one input stays <= 2**20 elements (the output is ~n_inputs x
-#     the input) and every rank 0..5 is represented;
+#     including every required shape from rank 0 through rank 5;
 #   * broadcast -- N/A: dstack has no broadcast dimension, all non-depth dims
 #     must match, so the broadcast dimension is skipped;
 #   * backward -- autograd.grad() against the analytic slice-back gradient
@@ -88,13 +87,6 @@ DSTACK_DTYPES = list(_DTYPE_CANDIDATES)
 DSTACK_COMPLEX_DTYPES = list(utils.COMPLEX_DTYPES)
 
 _MAIN_RANGE = ["-1", "1"]
-
-
-def _numel(shape):
-    n = 1
-    for dim in shape:
-        n *= dim
-    return n
 
 
 # Dedicated depth-axis shape sets. dstack views each input as 3-D and
@@ -159,14 +151,10 @@ def _dstack_shape_sets():
     """Shape-list levels for the main sweep.
 
     The dedicated depth-axis sets are merged with the shared shape levels
-    (tu.selected_shapes(), quick/default) as self-pairs. Self-pairs whose single
-    input would exceed 2**20 elements are skipped because the output is
-    ~n_inputs x the input size.
+    (tu.selected_shapes(), quick/default) as self-pairs.
     """
     shape_sets = list(_DSTACK_EXTRA_SHAPE_SETS)
     for shape in tu.selected_shapes():
-        if _numel(shape) > 2**20:
-            continue
         pair = [shape, shape]
         if pair not in shape_sets:
             shape_sets.append(pair)
@@ -284,9 +272,8 @@ def test_dstack_empty_inputs(shape_set, dtype):
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_dstack_nan_inf(dtype):
     # dstack is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the depth axis (assert_result_close uses equal_nan=True on
-    # the float path; 1e30 overflows to inf in fp16/bf16 on both paths
-    # identically).
+    # unchanged onto the depth axis (assert_result_equal permits matching NaNs).
+    # 1e30 overflows to inf in fp16 and remains finite in bf16.
     values = torch.tensor(
         [
             float("inf"),

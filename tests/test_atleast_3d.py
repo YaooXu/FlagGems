@@ -221,7 +221,7 @@ def test_atleast_3d_sequence_empty():
 def test_atleast_3d_nan_inf(dtype):
     # Values pass through a view untouched: nan/inf/-inf and signed zeros must
     # be preserved (the float comparison path uses equal_nan=True). 1e30
-    # overflows to inf in fp16/bf16 identically on both paths.
+    # overflows to inf in fp16 and remains finite in bf16.
     inp = torch.tensor(
         [
             float("inf"),
