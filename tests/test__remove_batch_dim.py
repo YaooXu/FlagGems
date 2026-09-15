@@ -261,7 +261,7 @@ def test__remove_batch_dim_nan_inf(dtype):
 
 @pytest.mark._remove_batch_dim
 @pytest.mark.parametrize("shape, out_dim, batch_size", _BACKWARD_CASES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test__remove_batch_dim_backward(shape, out_dim, batch_size, dtype):
     # expand is differentiable: the gradient of the broadcast view is the
     # sum-reduction of grad_output over every broadcast (stride-0) dim. The
@@ -278,12 +278,12 @@ def test__remove_batch_dim_backward(shape, out_dim, batch_size, dtype):
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
+    tu.assert_result_equal(res_out, ref_out)
 
     res_grad = torch.autograd.grad(res_out, inp, grad_out)[0]
     ref_grad = torch.autograd.grad(ref_out, ref_inp, ref_grad_out)[0]
 
-    assert res_grad.shape == ref_grad.shape == inp.shape
-    tu.assert_result_equal(res_grad, ref_grad)
+    tu.assert_result_close(res_grad, ref_grad)
 
 
 @pytest.mark._remove_batch_dim

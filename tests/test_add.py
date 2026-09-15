@@ -353,7 +353,7 @@ def test_add_noncontiguous(shape, dtype):
 
 @pytest.mark.add
 @pytest.mark.parametrize("shape", _ADD_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_add_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     other = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
@@ -379,7 +379,7 @@ def test_add_backward(shape, dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_add_backward_broadcast(dtype):
     shape_a, shape_b = (2, 3, 5), (5,)
     inp = tu.make_input(dtype, shape_a, ["-1", "1"]).requires_grad_()

@@ -252,7 +252,7 @@ def test_sparse_mask_nan_inf(shape, dtype, scenario):
 
 @pytest.mark.sparse_mask
 @pytest.mark.parametrize("shape", _SPARSE_MASK_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_sparse_mask_backward(shape, dtype):
     # Compare candidate and reference gradients at the same mask positions.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()

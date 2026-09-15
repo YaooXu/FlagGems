@@ -508,7 +508,7 @@ def test_sparse_compressed_tensor_nan_inf_values(dtype, scenario):
 
 
 @pytest.mark.sparse_compressed_tensor
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_sparse_compressed_tensor_backward(dtype):
     # The factory records an autograd formula (SparseCompressedTensorBackward0)
     # w.r.t. the values input, so gradients flow back through the constructed

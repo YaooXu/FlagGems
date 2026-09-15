@@ -132,7 +132,7 @@ def test_abs_noncontiguous(shape, dtype):
 
 @pytest.mark.abs
 @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_abs_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, shape, ["-1", "1"])

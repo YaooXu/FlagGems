@@ -264,7 +264,12 @@ def test_atleast_3d_complex(dtype):
 
 @pytest.mark.atleast_3d_backward
 @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        [d for d in ATLEAST_3D_DTYPES if d.is_floating_point or d.is_complex]
+    ),
+)
 def test_atleast_3d_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)

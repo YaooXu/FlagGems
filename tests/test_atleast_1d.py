@@ -142,7 +142,12 @@ def test_atleast_1d_sequence_empty():
 
 @pytest.mark.atleast_1d_backward
 @pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        [d for d in _SUPPORTED_DTYPES if d.is_floating_point or d.is_complex]
+    ),
+)
 def test_atleast_1d_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)

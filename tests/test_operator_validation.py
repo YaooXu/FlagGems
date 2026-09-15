@@ -485,20 +485,26 @@ def test_quantization_params_reject_boolean_zero_point():
             cases.test__choose_qparams_per_tensor_constant(0.0, torch.float32, False)
 
 
-@pytest.mark.parametrize("operator", ["combinations", "diagflat"])
-def test_gather_backward_cases_reject_small_forward_errors(operator):
-    from . import test_combinations as combinations
-    from . import test_diagflat as diagflat
+@pytest.mark.parametrize(
+    "operator,args",
+    [
+        ("combinations", (2, False, torch.float32)),
+        ("diagflat", ((3, 4), 1, torch.float32)),
+        ("dstack", ([(2, 3), (2, 3)], torch.float32)),
+        ("flatten_dense_tensors", ([(2, 3), (2, 3)], torch.float32)),
+        ("_fw_primal", ((3, 4), torch.float32)),
+        ("_remove_batch_dim", ((1, 3), 0, 2, torch.float32)),
+    ],
+)
+def test_gather_backward_cases_reject_small_forward_errors(operator, args):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
 
     def corrupted(*args, **kwargs):
         return getattr(torch.ops.aten, operator)(*args, **kwargs) + 1e-6
 
     with testing.override_gems_op(operator, corrupted):
         with pytest.raises(AssertionError):
-            if operator == "combinations":
-                combinations.test_combinations_backward(2, False, torch.float32)
-            else:
-                diagflat.test_diagflat_backward((3, 4), 1, torch.float32)
+            getattr(cases, f"test_{operator}_backward")(*args)
 
 
 def test_diagflat_rejects_small_gradient_errors():
@@ -564,3 +570,11 @@ def test_atleast_backward_rejects_constant_gradient(operator, shape):
     with testing.override_gems_op(operator, ConstantGradient.apply):
         with pytest.raises(AssertionError):
             getattr(cases, f"test_{operator}_backward")(shape, torch.float32)
+
+
+def test_detach_copy_rejects_an_implemented_backward():
+    from . import test_detach_copy as cases
+
+    with testing.override_gems_op("detach_copy", lambda inp: inp.clone()):
+        with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+            cases.test_detach_copy_no_backward((3, 4), torch.float32)

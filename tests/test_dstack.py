@@ -161,12 +161,6 @@ def _dstack_shape_sets():
     return shape_sets
 
 
-def _dstack_depth(shape):
-    """Depth (dim-2 extent) an input of ``shape`` occupies after atleast_3d;
-    0-dim/1-dim/2-dim inputs get depth 1, ndim >= 3 inputs keep their dim 2."""
-    return utils.unsqueeze_tuple(shape, 3)[2]
-
-
 _DTYPE_RANGE_PAIRS = [
     (dtype, value_range)
     for dtype in DSTACK_DTYPES
@@ -303,38 +297,29 @@ def test_dstack_complex(dtype):
 
 @pytest.mark.dstack_backward
 @pytest.mark.parametrize("shape_set", _DSTACK_BACKWARD_SHAPE_SETS)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize(
+    "dtype",
+    tu.selected_cases(
+        [d for d in DSTACK_DTYPES if d.is_floating_point or d.is_complex]
+    ),
+)
 def test_dstack_backward(shape_set, dtype):
-    # dstack = atleast_3d(each input) + cat along dim 2, so grad_i is the slice
-    # of grad_out owned by input i, reshaped back to the input's shape (a pure
-    # gather, no arithmetic). Validate the autograd reference against that
-    # analytic value, then check the candidate forward and - only when the
-    # candidate output is differentiable - its gradient against the reference.
+    # Backward slices and reshapes the upstream gradient without arithmetic.
     inp = [tu.make_input(dtype, s, _MAIN_RANGE).requires_grad_() for s in shape_set]
-    ref_inp = [tu.to_reference(t.detach()).requires_grad_() for t in inp]
+    ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
     grad = tu.make_input(dtype, ref_out.shape, _MAIN_RANGE)
     ref_grad = tu.to_reference(grad)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    offset = 0
-    for t, g in zip(ref_inp, ref_in_grads):
-        depth = _dstack_depth(t.shape)
-        expected = torch.ops.aten.slice(ref_grad, 2, offset, offset + depth).reshape(
-            t.shape
-        )
-        tu.assert_result_close(g, expected)
-        offset += depth
-
     res_out = _resolve_gems_op()(inp)
-    tu.assert_result_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
     res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
-    for res_g, ref_g, src in zip(res_in_grads, ref_in_grads, inp):
-        assert res_g.shape == ref_g.shape == src.shape
-        tu.assert_result_close(res_g, ref_g)
+    for res_g, ref_g in zip(res_in_grads, ref_in_grads):
+        tu.assert_result_equal(res_g, ref_g)
 
 
 @pytest.mark.dstack_negative

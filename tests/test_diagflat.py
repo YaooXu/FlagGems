@@ -63,9 +63,7 @@ _DIAGFLAT_DTYPES = [
     torch.bool,
 ]
 
-_GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d in (torch.float32, torch.float64)] or [
-    torch.float32
-]
+_GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d.is_floating_point]
 
 _DIAGFLAT_OFFSETS = [-2, -1, 0, 1, 2]
 

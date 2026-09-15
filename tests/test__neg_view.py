@@ -281,7 +281,7 @@ def test__neg_view_mutation(shape, dtype):
 
 @pytest.mark._neg_view
 @pytest.mark.parametrize("shape", _NEG_VIEW_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
+@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test__neg_view_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     grad = tu.make_input(dtype, shape, ["-1", "1"])

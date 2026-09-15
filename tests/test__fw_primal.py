@@ -71,7 +71,9 @@ _FW_PRIMAL_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _FW_PRIMAL_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _FW_PRIMAL_EMPTY_SHAPES = [(0,), (2, 0, 3)]
 _FW_PRIMAL_BACKWARD_SHAPES = [(), (256,), (7, 13, 29)]
-_FW_PRIMAL_BACKWARD_DTYPES = [torch.float16, torch.float32, torch.bfloat16]
+_FW_PRIMAL_BACKWARD_DTYPES = [
+    d for d in _FW_PRIMAL_DTYPES if d.is_floating_point or d.is_complex
+]
 _FW_PRIMAL_SPECIAL_VALUES = [
     0.0,
     -0.0,
@@ -226,18 +228,18 @@ def test__fw_primal_empty(shape, dtype):
 @pytest.mark.parametrize("shape", _FW_PRIMAL_BACKWARD_SHAPES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(_FW_PRIMAL_BACKWARD_DTYPES))
 def test__fw_primal_backward(shape, dtype):
-    # A view is transparent to autograd: the gradient of a loss built on the
-    # result must match the reference gradient (the view contributes identity).
-    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
-    ref_inp = tu.to_reference(inp.detach()).requires_grad_(True)
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+    grad = tu.make_input(dtype, shape, ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    ref_grad = tu.to_reference(grad)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
+    tu.assert_result_equal(res_out, ref_out)
 
-    (ref_grad,) = torch.autograd.grad((ref_out.float() ** 2).sum(), ref_inp)
-    (res_grad,) = torch.autograd.grad((res_out.float() ** 2).sum(), inp)
-
-    tu.assert_result_close(res_grad, ref_grad)
+    ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
+    res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
+    tu.assert_result_equal(res_in_grad, ref_in_grad)
 
 
 @pytest.mark._fw_primal

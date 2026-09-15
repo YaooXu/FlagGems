@@ -252,7 +252,9 @@ def test_detach_copy_independent_storage(shape, dtype):
 
 @pytest.mark.detach_copy
 @pytest.mark.parametrize("shape", _DETACH_COPY_NO_BACKWARD_SHAPES)
-@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+@pytest.mark.parametrize(
+    "dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES, quick=utils.FLOAT_DTYPES)
+)
 def test_detach_copy_no_backward(shape, dtype):
     # detach_copy has no autograd formula: the reference output is a non-leaf
     # graph node but torch.autograd.grad raises RuntimeError ("derivative ...
@@ -269,6 +271,9 @@ def test_detach_copy_no_backward(shape, dtype):
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
+
+    with pytest.raises(RuntimeError):
+        torch.autograd.grad(res_out, inp, grad_outputs=grad)
 
 
 @pytest.mark.detach_copy

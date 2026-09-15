@@ -64,10 +64,8 @@ _SUPPORTED_DTYPES = list(
 
 _FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
 
-# fp32/bf16/fp16 are the autograd-capable float dtypes; fp8 has no autograd and
-# fp64 support is device dependent, so only the shared float set is used there.
+# Regular floating dtypes support the reductions in multi-input backward.
 _FLOAT_DTYPES = [d for d in _SUPPORTED_DTYPES if d in utils.ALL_FLOAT_DTYPES]
-_BACKWARD_DTYPES = [d for d in _FLOAT_DTYPES if d in utils.FLOAT_DTYPES]
 
 # The value-range grid applies to every supported non-bool dtype; bool ignores
 # the range (it is still covered, range-independently, by the shape grid).
@@ -202,8 +200,19 @@ def test_cartesian_prod_nan_inf(dtype, scenario):
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("sizes", _BACKWARD_SIZES)
-@pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
+# A single input returns a view and supports FP8 backward. Multiple inputs
+# repeat values; their backward uses sum, whose CUDA kernel rejects FP8.
+@pytest.mark.parametrize(
+    "sizes,dtype",
+    tu.selected_cases(
+        [
+            (sizes, dtype)
+            for sizes in _BACKWARD_SIZES
+            for dtype in _FLOAT_DTYPES + _FP8_DTYPES
+            if len(sizes) == 1 or dtype not in _FP8_DTYPES
+        ]
+    ),
+)
 def test_cartesian_prod_backward(sizes, dtype):
     out_shape = (sizes[0],) if len(sizes) == 1 else (math.prod(sizes), len(sizes))
     inp = [
@@ -219,11 +228,14 @@ def test_cartesian_prod_backward(sizes, dtype):
     res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
 
-    # Backward sums repeated appearances of each input value.
+    # One input is a view; multiple inputs sum repeated appearances.
     assert res_out.requires_grad
     res_in_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)
     for res_grad, ref_grad in zip(res_in_grads, ref_in_grads):
-        tu.assert_result_close(res_grad, ref_grad)
+        if len(sizes) == 1:
+            tu.assert_result_equal(res_grad, ref_grad)
+        else:
+            tu.assert_result_close(res_grad, ref_grad)
 
 
 @pytest.mark.cartesian_prod

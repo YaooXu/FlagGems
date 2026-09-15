@@ -249,7 +249,10 @@ def test_adjoint_mutation(shape, dtype):
 @pytest.mark.adjoint
 @pytest.mark.parametrize("shape", _ADJOINT_BACKWARD_SHAPES)
 @pytest.mark.parametrize(
-    "dtype", tu.selected_cases(utils.FLOAT_DTYPES + utils.COMPLEX_DTYPES)
+    "dtype",
+    tu.selected_cases(
+        [d for d in _ADJOINT_DTYPES if d.is_floating_point or d.is_complex]
+    ),
 )
 def test_adjoint_backward(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
