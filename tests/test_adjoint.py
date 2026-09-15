@@ -20,78 +20,16 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::adjoint(Tensor(a) self) -> Tensor(a) returns the conjugate-transpose
-# (Hermitian adjoint) of a matrix or batch of matrices as a zero-copy aliasing
-# view equivalent to self.transpose(-2, -1).conj(): for real dtypes only the
-# last two dimensions are swapped, for complex dtypes the view is additionally
-# lazily conjugated (the is_conj bit toggles). The view shares the input
-# storage, so every storage dtype (float/complex/int/bool, including the
-# int8/uint8/float8 dtypes required by the spec) is supported and the observed
-# values round-trip exactly through the transposed/conjugated materialization.
-# Degenerate inputs degrade differently: 0-D tensors fall back to a lazy conj()
-# (deprecated in aten, the identity for real/int/bool dtypes) and 1-D tensors
-# raise RuntimeError. The op is autograd-aware and an involution (adjoint is
-# its own inverse), so d(adjoint(x))/dx == adjoint(dy).
-#
-# Coverage follows the regular-operator spec adapted to a view/metadata op:
-#   * dtypes: the 9 required spec dtypes (int8/uint8/fp8/fp32/bf16/fp16/int32/
-#     int64), plus the operator's float64 / int16 /
-#     complex32 / complex64 / bool storage dtypes, each over the five value
-#     ranges (tu.make_input clamps a negative bound to the dtype minimum, so
-#     unsigned dtypes realise such a range as a constant fill);
-#   * shape levels: the spec's 7 shapes filtered to ndim >= 2 (0-D/1-D get
-#     dedicated edge-case tests);
-#   * value ranges: tu.selected_ranges() over representative ranks so the five
-#     spec ranges reach every supported dtype (the aliasing view round-trips
-#     them exactly);
-#   * edge cases: non-contiguous (strided) inputs, the conj-bit toggle, writing
-#     through the returned alias, and nan/inf/+-0.0 special values;
-#   * backward: autograd.grad() through the candidate and ATen adjoint views
-#     (broadcast does not apply to a unary view op);
-#   * negative: 1-D inputs and non-tensor inputs raise on both the aten
-#     reference and the candidate.
-
-
-# Required spec dtypes plus the remaining storage dtypes, de-duplicated in
-# order. Collection must not run the operator or infer support from failures.
-_ADJOINT_DTYPES = list(
-    dict.fromkeys(
-        tu.REQUIRED_DTYPES
-        + utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.COMPLEX_DTYPES
-        + utils.BOOL_TYPES
-    )
+# adjoint swaps the last two dimensions and toggles the conjugate bit for
+# complex inputs. The result shares storage with the input.
+_ADJOINT_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16, torch.complex32])
+    + [torch.complex64, torch.bool]
 )
-
-# Shape levels aligned with the spec's 7 shapes. adjoint only accepts 2-D and
-# higher tensors (0-D falls back to a deprecated lazy conj() and 1-D raises
-# RuntimeError), so tu.selected_shapes() is filtered down to its ndim >= 2
-# members instead of using a bespoke matrix-shape list. 0-D/1-D behavior is
-# covered by the dedicated edge-case tests below.
+# Scalar and 1-D behavior is covered separately below.
 _ADJOINT_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) >= 2]
-
-# Representative ranks for the full value-range sweep (the same rank >= 2 shapes).
-_ADJOINT_RANGE_SHAPES = list(_ADJOINT_SHAPES)
-_ADJOINT_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
-_ADJOINT_TOGGLE_SHAPES = [(16, 32), (4, 8, 16)]
-_ADJOINT_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
-_ADJOINT_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
-
-
-def _adjoint_test_shapes():
-    # The rank >= 2 spec shapes; 0-D/1-D are covered by the edge-case tests.
-    return list(_ADJOINT_SHAPES)
-
-
-# The five spec ranges for every supported dtype: tu.make_input clamps a
-# negative bound to the dtype minimum, so an unsigned dtype realises a
-# negative-lower-bound range as a constant fill instead of rejecting it.
-_RANGE_CASES = [
-    (dtype, value_range)
-    for dtype in _ADJOINT_DTYPES
-    for value_range in tu.selected_ranges()
-]
 
 
 def _resolve_gems_op():
@@ -118,11 +56,9 @@ def _assert_view_semantics(res_out, ref_out, inp):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _adjoint_test_shapes())
+@pytest.mark.parametrize("shape", _ADJOINT_SHAPES)
 @pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
 def test_adjoint(shape, dtype):
-    # Shape levels x every supported dtype (including the required int8/uint8/
-    # fp8 dtypes) over a non-degenerate representative value range.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -134,12 +70,10 @@ def test_adjoint(shape, dtype):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _ADJOINT_RANGE_SHAPES)
-@pytest.mark.parametrize(("dtype", "value_range"), _RANGE_CASES)
+@pytest.mark.parametrize("shape", _ADJOINT_SHAPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
 def test_adjoint_value_ranges(shape, value_range, dtype):
-    # The op never transforms the stored values (beyond the lazy conjugate bit
-    # toggle for complex dtypes), so the full spec range sweep must round-trip
-    # exactly through the transposed/conjugated materialization.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -151,12 +85,9 @@ def test_adjoint_value_ranges(shape, value_range, dtype):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _ADJOINT_NONCONTIG_SHAPES)
+@pytest.mark.parametrize("shape", [(8, 16, 32), (4, 8, 16, 32)])
 @pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
 def test_adjoint_non_contiguous(shape, dtype):
-    # The transpose part of adjoint must preserve the strides of a
-    # non-contiguous input. Slice on both the test device and the reference
-    # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[..., ::2]
@@ -171,12 +102,10 @@ def test_adjoint_non_contiguous(shape, dtype):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _ADJOINT_TOGGLE_SHAPES)
+@pytest.mark.parametrize("shape", [(16, 32), (4, 8, 16)])
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES + utils.COMPLEX_DTYPES)
 def test_adjoint_toggle(shape, dtype):
-    # The conj bit is a toggle: applying adjoint to an already-adjointed tensor
-    # clears the bit and the materialized values come back to the base input
-    # (adjoint is an involution).
+    # An already-conjugated input must produce an unconjugated view.
     base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
 
@@ -195,9 +124,6 @@ def test_adjoint_toggle(shape, dtype):
 @pytest.mark.adjoint
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_adjoint_special_values(dtype):
-    # adjoint is a pure view for real dtypes: +inf/-inf/nan/+-0.0 round-trip
-    # unchanged through the transposed materialization; equal_nan=True in
-    # assert_result_close tolerates the nan output.
     values = torch.tensor(
         [
             [
@@ -225,13 +151,10 @@ def test_adjoint_special_values(dtype):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _ADJOINT_MUTATION_SHAPES)
+@pytest.mark.parametrize("shape", [(16, 32), (4, 8, 16)])
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_adjoint_mutation(shape, dtype):
-    # The result is a true alias of the input (Tensor(a)): writing through the
-    # returned view stores into the shared storage and must be observable on
-    # the candidate-side input. The reference runs on an independent clone so
-    # the two aliases are validated separately.
+    # Writing through the returned view must update the input.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -247,7 +170,7 @@ def test_adjoint_mutation(shape, dtype):
 
 
 @pytest.mark.adjoint
-@pytest.mark.parametrize("shape", _ADJOINT_BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(16, 64), (7, 13, 29)])
 @pytest.mark.parametrize(
     "dtype",
     tu.selected_cases(
@@ -275,10 +198,7 @@ def test_adjoint_backward(shape, dtype):
 @pytest.mark.adjoint
 @pytest.mark.parametrize("dtype", _ADJOINT_DTYPES)
 def test_adjoint_0d(dtype):
-    # 0-D tensors cannot be transposed; aten degrades to a lazy conj() (with a
-    # deprecation warning): the identity for real/int/bool dtypes and a lazy
-    # conj view for complex dtypes. The candidate must match both the value and
-    # the conjugation state.
+    # ATen accepts scalars as a lazy conj(), with a deprecation warning.
     inp = tu.make_input(dtype, (), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -292,8 +212,6 @@ def test_adjoint_0d(dtype):
 @pytest.mark.adjoint
 @pytest.mark.parametrize("dtype", [torch.float32, torch.complex64])
 def test_adjoint_1d_raises(dtype):
-    # 1-D tensors are neither matrices nor batches of matrices: aten raises
-    # RuntimeError and the candidate must do the same.
     inp = tu.make_input(dtype, (5,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -306,9 +224,6 @@ def test_adjoint_1d_raises(dtype):
 
 @pytest.mark.adjoint
 def test_adjoint_rejects_non_tensor():
-    # The aten op requires a Tensor (a Python float hits a different overload
-    # and raises); the candidate must fail too rather than silently accept
-    # scalars.
     with pytest.raises(RuntimeError):
         torch.ops.aten.adjoint(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
@@ -322,10 +237,10 @@ def test_adjoint_rejects_non_tensor():
 def test_adjoint_special_scenarios(dtype, scenario):
     inp = tu.make_special_input(dtype, scenario)
     inp = inp.reshape(1, -1)
-    reference = tu.to_reference(inp)
-    candidate = flag_gems.testing.resolve_gems_op(
-        "adjoint", getattr(flag_gems, "adjoint", None)
-    )
-    expected = torch.ops.aten.adjoint(reference)
-    actual = candidate(inp)
-    tu.assert_result_equal(actual, expected)
+    ref_inp = tu.to_reference(inp)
+    gems_op = _resolve_gems_op()
+
+    ref_out = torch.ops.aten.adjoint(ref_inp)
+    res_out = gems_op(inp)
+
+    tu.assert_result_equal(res_out, ref_out)

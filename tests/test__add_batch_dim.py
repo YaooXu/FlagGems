@@ -22,90 +22,28 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_add_batch_dim`` starts with an underscore, and ``pytest.mark`` refuses to
-# generate a marker via attribute access for such names. Register it directly
-# on the MarkGenerator so ``@pytest.mark._add_batch_dim`` and ``-m
-# _add_batch_dim`` both work.
+# Register the underscore-prefixed pytest marker explicitly.
 setattr(
     pytest.mark,
     "_add_batch_dim",
     MarkDecorator(Mark("_add_batch_dim", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# aten::_add_batch_dim(Tensor self, int batch_dim, int level) -> Tensor is the
-# functorch/vmap "wrap" primitive: it hides the physical dimension ``batch_dim``
-# of ``self`` behind a lazy vmap batch dimension at nesting ``level``. The
-# returned tensor is a zero-copy BatchedTensorImpl (legacy batched tensor): the
-# storage is kept whole and the observable (logical) shape is ``self.shape``
-# with ``batch_dim`` removed. Removing the hidden dim again with the matching
-# level/batch_size/batch_dim reproduces the physical input exactly.
-#
-# The op performs no arithmetic (the result is a lazy metadata view), so every
-# storage dtype is supported and the value-range tests only verify that
-# unwrapping reproduces the exact stored values.
-#
-# Coverage map:
-#   * shapes: the spec's seven shape levels minus the 0-dim scalar, which the op
-#     rejects because there is no dimension to hide (covered as a negative case);
-#     ranks 1-5, driven by ``pytest --quick`` through ``tu.selected_shapes()``;
-#   * batch_dim: both ends (front / back) and the middle of the valid range;
-#   * levels: vmap nesting levels 0, 1 and 3 (level is pure bookkeeping and must
-#     not change the visible values);
-#   * value ranges: all five spec ranges over every supported dtype, using the
-#     shared ``tu.make_input`` helper;
-#   * dtypes: fp16/bf16/fp32/fp64, int16/int32/int64, int8/uint8, float8_e4m3fn
-#     /float8_e5m2 and bool (the op is a view, so all are accepted);
-#   * non-contiguous inputs (strides and storage offset must survive);
-#   * nan/inf/-inf and signed zeros must round-trip unchanged;
-#   * negative: 0-dim input, negative ``level`` and non-tensor inputs are
-#     rejected (matching aten's own validation).
-#
-# No broadcast dimension applies (the op is unary) and autograd does not run
-# through the functorch batch wrapper (``torch.autograd.grad`` raises inside a
-# BatchedTensor), so neither is tested here.
-
-# The op is a pure metadata view, so it accepts every storage dtype. int8/uint8
-# and the two float8 flavours are added on top of the shared dtype sets to meet
-# the required dtype coverage.
-_SPECIAL_VALUE_DTYPES = [
-    torch.int8,
-    torch.uint8,
-    torch.float8_e4m3fn,
-    torch.float8_e5m2,
-]
-
+# _add_batch_dim hides a physical dimension in a legacy BatchedTensor view.
+# Unwrapping with the same level must recover the original values and layout.
+# Autograd rejects legacy BatchedTensor outputs, so there are no backward cases.
 _ADD_BATCH_DIM_DTYPES = (
     utils.ALL_FLOAT_DTYPES
     + utils.ALL_INT_DTYPES
-    + utils.BOOL_TYPES
-    + _SPECIAL_VALUE_DTYPES
+    + [torch.bool, torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
 )
-
-
-def _view_shapes():
-    # _add_batch_dim needs an existing dimension to hide: rank >= 1. The shared
-    # shape set contains a 0-dim scalar, which is filtered out here and covered
-    # as an explicit negative case instead.
-    return [shape for shape in tu.selected_shapes() if len(shape) >= 1]
-
-
-def _batch_dims(shape):
-    # Front, back and middle of the valid batch_dim range (deduplicated for
-    # short shapes).
-    return sorted({0, len(shape) // 2, len(shape) - 1})
-
-
-def _add_batch_dim_cases():
-    shapes = _view_shapes()
-    return [(shape, batch_dim) for shape in shapes for batch_dim in _batch_dims(shape)]
-
-
-def _dtype_range_pairs():
-    return [
-        (dtype, value_range)
-        for dtype in _ADD_BATCH_DIM_DTYPES
-        for value_range in tu.selected_ranges()
-    ]
+# Scalars have no dimension to hide and are covered by a rejection test.
+_ADD_BATCH_DIM_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) >= 1]
+_ADD_BATCH_DIM_CASES = [
+    (shape, batch_dim)
+    for shape in _ADD_BATCH_DIM_SHAPES
+    for batch_dim in sorted({0, len(shape) // 2, len(shape) - 1})
+]
 
 
 def _resolve_gems_op():
@@ -130,12 +68,10 @@ def _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level):
 
 
 @pytest.mark._add_batch_dim
-@pytest.mark.parametrize("shape, batch_dim", _add_batch_dim_cases())
+@pytest.mark.parametrize("shape, batch_dim", _ADD_BATCH_DIM_CASES)
 @pytest.mark.parametrize("level", [0, 1, 3])
 @pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim(shape, batch_dim, level, dtype):
-    # [-1, 1] keeps every storage dtype valid (bool ignores the range); the
-    # value-range sweep below covers all five spec ranges.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -146,11 +82,10 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
 
 
 @pytest.mark._add_batch_dim
-@pytest.mark.parametrize("shape", _view_shapes())
-@pytest.mark.parametrize("dtype, value_range", _dtype_range_pairs())
+@pytest.mark.parametrize("shape", _ADD_BATCH_DIM_SHAPES)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim_value_ranges(shape, dtype, value_range):
-    # The lazy view must round-trip the exact stored values for every spec range
-    # (int/bool bit-exact, floats with equal_nan=True).
     batch_dim = len(shape) // 2
     level = 0
     inp = tu.make_input(dtype, shape, value_range)
@@ -167,9 +102,6 @@ def test__add_batch_dim_value_ranges(shape, dtype, value_range):
 @pytest.mark.parametrize("level", [0, 1])
 @pytest.mark.parametrize("dtype", _ADD_BATCH_DIM_DTYPES)
 def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
-    # The lazy view must preserve the strides and storage offset of a
-    # non-contiguous input. Slice on both the test device and the reference
-    # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[..., ::2]
@@ -199,8 +131,6 @@ def test__add_batch_dim_nan_inf(dtype, scenario):
 
 @pytest.mark._add_batch_dim
 def test__add_batch_dim_rejects_0dim_input():
-    # A 0-dim (scalar) input has no dimension to hide behind a vmap batch dim:
-    # aten rejects it with RuntimeError and the candidate must too.
     inp = tu.make_input(torch.float32, (), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._add_batch_dim(inp, 0, 0)
@@ -210,9 +140,6 @@ def test__add_batch_dim_rejects_0dim_input():
 
 @pytest.mark._add_batch_dim
 def test__add_batch_dim_rejects_negative_level():
-    # level must be non-negative: a vmap batch dim always has a nesting level
-    # >= 0, and aten enforces this with an internal assert that surfaces as
-    # RuntimeError. The candidate must reproduce the validation.
     inp = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._add_batch_dim(inp, 1, -1)
@@ -222,8 +149,6 @@ def test__add_batch_dim_rejects_negative_level():
 
 @pytest.mark._add_batch_dim
 def test__add_batch_dim_rejects_non_tensor():
-    # The aten schema requires a Tensor; a Python scalar is rejected. The
-    # candidate must fail too rather than silently wrapping a non-tensor.
     with pytest.raises(RuntimeError):
         torch.ops.aten._add_batch_dim(3.14, 0, 0)
     with pytest.raises((TypeError, ValueError, AttributeError, RuntimeError)):

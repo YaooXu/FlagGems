@@ -20,120 +20,32 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::atleast_3d is a pure view/identity op: 0-dim tensors become (1, 1, 1),
-# 1-dim tensors (N,) become (1, N, 1), 2-dim tensors (M, N) become (M, N, 1)
-# and tensors with three or more dimensions are returned unchanged. No
-# arithmetic is performed, so the result must match bit-for-bit and alias the
-# input. It has two overloads:
-#   * atleast_3d(Tensor) -> Tensor
-#   * atleast_3d.Sequence(Tensor[]) -> Tensor[]
-# both of which are exercised below.
-#
-# Coverage follows the regular-operator test spec:
-#   * shape levels: the shared tu.selected_shapes() levels (the spec's seven
-#     shapes, one per rank 0..5) in the base dtype test, plus a representative
-#     rank-complete set for the value-range / sequence sweeps so the grid stays
-#     fast;
-#   * value ranges: the full tu.selected_ranges() sweep ([-1,1], [0,1], [-1,0],
-#     [0,max], [min,0]) per supported dtype (values must round-trip exactly
-#     through the view - the earlier randn-only generation is migrated onto this
-#     framework). Ranges that an unsigned dtype cannot represent are dropped;
-#   * dtypes: the spec's required list first (int8 / uint8 / fp8 are hard
-#     requirements),
-#     then the shared float/int/bool sets, plus a dedicated complex case;
-#   * no broadcast dimension exists (the op is unary), so broadcast is skipped;
-#   * edge cases: nan/inf/+-0.0 passthrough, complex tensors, an empty
-#     TensorList, and alias/view semantics (the result shares the input's
-#     storage);
-#   * backward: autograd.grad() of sum(atleast_3d(x)) is all-ones in x's shape;
-#   * negative: a non-tensor argument (including a non-tensor list element)
-#     must raise on both the reference and the candidate path.
-#
-# Both overloads are resolved through the shared public operator name
-# "atleast_3d" via flag_gems.testing.resolve_gems_op(...) inside each test
-# (never at import time), so the process-local override injected by KernelGen
-# wins. Resolution is unconditional: with no override and no native
-# implementation registered yet, resolve_gems_op raises LookupError and the
-# test fails loudly instead of measuring the PyTorch reference.
-
-_FP8_DTYPES = frozenset(
-    dtype
-    for dtype in (
-        getattr(torch, "float8_e4m3fn", None),
-        getattr(torch, "float8_e5m2", None),
-        getattr(torch, "float8_e4m3fnuz", None),
-        getattr(torch, "float8_e5m2fnuz", None),
-    )
-    if dtype is not None
-)
-
-# The required dtype list first (including int8/uint8/FP8), then the shared
-# float/int/bool sets.
-_DTYPE_CANDIDATES = []
-for _dtype in (
+# Scalars, vectors and matrices become (1, 1, 1), (1, N, 1) and (M, N, 1)
+# views respectively. Tensors with ndim >= 3 are returned unchanged.
+_FP8_DTYPES = [
+    getattr(torch, name)
+    for name in ("float8_e4m3fn", "float8_e4m3fnuz", "float8_e5m2", "float8_e5m2fnuz")
+    if getattr(torch, name, None) is not None
+]
+ATLEAST_3D_DTYPES = (
     [torch.int8, torch.uint8]
-    + sorted(_FP8_DTYPES, key=str)
-    + list(utils.ALL_FLOAT_DTYPES)
-    + list(utils.ALL_INT_DTYPES)
-    + list(utils.BOOL_TYPES)
-):
-    if _dtype not in _DTYPE_CANDIDATES:
-        _DTYPE_CANDIDATES.append(_dtype)
-
-
-ATLEAST_3D_DTYPES = list(_DTYPE_CANDIDATES)
-
-# Shape levels: the shared spec set (seven ranks, quick keeps a single 3-D
-# shape). These are used for the base dtype test.
-_SHAPES = tu.selected_shapes()
-
-# Representative rank-complete shapes for the range/sequence sweeps: one shape
-# per rank 0..4 plus a rank-4 and rank-5 case. Small, so the 5-range x dtype
-# grid stays fast while still covering every rank the op accepts.
-_RANGE_SHAPES = tu.selected_shapes()
-
-# The sequence overload mixes a 0-dim scalar, a 1-dim tensor, a 2-dim tensor
-# and the current shape so that all four view paths (scalar -> (1,1,1),
-# 1-dim -> (1,N,1), 2-dim -> (M,N,1), >= 3-dim identity) are exercised.
-_SEQUENCE_SHAPES = list(_RANGE_SHAPES)
-
-# Backward shapes stay small; the autograd graph is compared element-wise.
-_BACKWARD_SHAPES = [(), (3,), (4, 5), (16, 64), (7, 13, 29)]
-
-
-def _valid_ranges(dtype):
-    return [(dtype, value_range) for value_range in tu.selected_ranges()]
-
-
-_DTYPE_RANGE_PAIRS = []
-for _dtype in ATLEAST_3D_DTYPES:
-    _DTYPE_RANGE_PAIRS.extend(_valid_ranges(_dtype))
-
-
-def _resolve_named_gems_op(name):
-    """Resolve one operator name through resolve_gems_op.
-
-    Resolution order: (1) the process-local override installed by KernelGen,
-    (2) the direct flag_gems callable for that name. Resolution is
-    unconditional: when neither exists resolve_gems_op raises LookupError, so
-    the caller fails loudly instead of measuring the PyTorch reference.
-    """
-    default = getattr(flag_gems, name.replace(".", "_"), None)
-    if default is None:
-        default = getattr(flag_gems, name, None)
-    return flag_gems.testing.resolve_gems_op(name, default)
+    + _FP8_DTYPES
+    + utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + [torch.bool]
+)
 
 
 def _resolve_gems_op():
-    return _resolve_named_gems_op("atleast_3d")
+    return flag_gems.testing.resolve_gems_op(
+        "atleast_3d", getattr(flag_gems, "atleast_3d", None)
+    )
 
 
 @pytest.mark.atleast_3d
-@pytest.mark.parametrize("shape", _SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", ATLEAST_3D_DTYPES)
 def test_atleast_3d(shape, dtype):
-    # Shape levels x every supported dtype (incl. the required int8/uint8/fp8)
-    # with values drawn from a non-degenerate [-1, 1] range.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -146,12 +58,10 @@ def test_atleast_3d(shape, dtype):
 
 
 @pytest.mark.atleast_3d
-@pytest.mark.parametrize("shape", _RANGE_SHAPES)
-@pytest.mark.parametrize("dtype, value_range", _DTYPE_RANGE_PAIRS)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", ATLEAST_3D_DTYPES)
 def test_atleast_3d_value_ranges(shape, dtype, value_range):
-    # The op never transforms the stored values, so the full spec range sweep
-    # (including 0/max/min and the degenerate constant ranges) must round-trip
-    # exactly through the shape-changing view.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -163,7 +73,7 @@ def test_atleast_3d_value_ranges(shape, dtype, value_range):
 
 
 @pytest.mark.atleast_3d_sequence
-@pytest.mark.parametrize("shape", _SEQUENCE_SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", ATLEAST_3D_DTYPES)
 def test_atleast_3d_sequence(shape, dtype):
     # The Tensor[] overload must apply the same view per element: scalar ->
@@ -187,7 +97,8 @@ def test_atleast_3d_sequence(shape, dtype):
 
 
 @pytest.mark.atleast_3d_sequence
-@pytest.mark.parametrize("dtype, value_range", _DTYPE_RANGE_PAIRS)
+@pytest.mark.parametrize("value_range", tu.selected_ranges())
+@pytest.mark.parametrize("dtype", ATLEAST_3D_DTYPES)
 def test_atleast_3d_sequence_value_ranges(dtype, value_range):
     # Range sweep for the Tensor[] overload over the three shape-changing
     # paths (0-dim / 1-dim / 2-dim).
@@ -249,9 +160,6 @@ def test_atleast_3d_nan_inf(dtype):
 @pytest.mark.atleast_3d
 @pytest.mark.parametrize("dtype", utils.COMPLEX_DTYPES)
 def test_atleast_3d_complex(dtype):
-    # atleast_3d also supports complex tensors (a pure view: real and imaginary
-    # parts pass through untouched). One negative-and-positive range per dtype
-    # suffices because no arithmetic is performed.
     inp = tu.make_input(dtype, (2, 5), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -263,7 +171,7 @@ def test_atleast_3d_complex(dtype):
 
 
 @pytest.mark.atleast_3d_backward
-@pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(), (3,), (4, 5), (16, 64), (7, 13, 29)])
 @pytest.mark.parametrize(
     "dtype",
     tu.selected_cases(
@@ -315,10 +223,10 @@ def test_atleast_3d_rejects_non_tensor():
 )
 def test_atleast_3d_special_scenarios(dtype, scenario):
     inp = tu.make_special_input(dtype, scenario)
-    reference = tu.to_reference(inp)
-    candidate = flag_gems.testing.resolve_gems_op(
-        "atleast_3d", getattr(flag_gems, "atleast_3d", None)
-    )
-    expected = torch.ops.aten.atleast_3d(reference)
-    actual = candidate(inp)
-    tu.assert_result_equal(actual, expected)
+    ref_inp = tu.to_reference(inp)
+    gems_op = _resolve_gems_op()
+
+    ref_out = torch.ops.aten.atleast_3d(ref_inp)
+    res_out = gems_op(inp)
+
+    tu.assert_result_equal(res_out, ref_out)

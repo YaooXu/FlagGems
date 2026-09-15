@@ -12,17 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Correctness tests for ``aten::atleast_2d``.
-
-``aten::atleast_2d`` is a pure view/identity operator: a 0-dim tensor becomes
-``(1, 1)``, a 1-dim tensor ``(N,)`` becomes ``(1, N)`` (both views), and a
-tensor with two or more dimensions is returned unchanged. No arithmetic is
-performed, so the candidate must match the reference bit-for-bit, keep the
-dtype, and alias the input storage. The test uses the regular-operator
-value-range framework (``tests/test_utils.py``): the five shared value ranges
-x the seven shape levels, plus broadcast-free metadata, nan/inf, complex,
-backward and negative coverage.
-"""
 
 import pytest
 import torch
@@ -32,96 +21,44 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ---------------------------------------------------------------------------
-# Candidate resolution
-# ---------------------------------------------------------------------------
-
-
-def _resolve_candidate():
-    """Resolve the candidate injected by KernelGen (or the FlagGems callable).
-
-    Resolution is done *inside* the test function so an override installed by
-    ``override_gems_op`` is honoured. ``flag_gems.atleast_2d`` is not a
-    registered op yet, hence ``getattr(..., None)``. Resolution is
-    unconditional: when neither an override nor a native callable exists
-    ``resolve_gems_op`` raises ``LookupError`` and the test fails loudly instead
-    of silently measuring the PyTorch reference.
-    """
-    return flag_gems.testing.resolve_gems_op(
-        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
-    )
-
-
-# ---------------------------------------------------------------------------
-# Dtype coverage
-# ---------------------------------------------------------------------------
-
-_EXTRA_CANDIDATES = [
-    torch.float64,
-    torch.int16,
-    torch.bool,
-    torch.complex64,
-    torch.complex32,
-]
-
-# The spec requires int8/uint8/fp8 to be covered whenever the op supports them.
-# atleast_2d is a pure view, so keep them in the candidate list explicitly
-# (utils.ALL_INT_DTYPES only spans int16/int32/int64, and no shared set carries
-# fp8). Same pattern as test_atleast_1d.py / test_atleast_3d.py.
-_REQUIRED_EXTRA = [
+# Scalars become (1, 1), vectors become (1, N), and ndim >= 2 is unchanged.
+_SUPPORTED_DTYPES = (
+    utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + [torch.bool] + utils.COMPLEX_DTYPES
+)
+# These cases also exercise FP64 and the small integer/complex types omitted
+# by the shared device and quick selections.
+if not utils.fp64_is_supported:
+    _SUPPORTED_DTYPES.append(torch.float64)
+if tu.QUICK_MODE:
+    _SUPPORTED_DTYPES.extend([torch.int16, torch.complex32])
+_SUPPORTED_DTYPES += [
     torch.int8,
     torch.uint8,
     torch.float8_e4m3fn,
     torch.float8_e5m2,
 ]
-
-
-def _dedup(dtypes):
-    seen = set()
-    out = []
-    for dtype in dtypes:
-        if dtype not in seen:
-            seen.add(dtype)
-            out.append(dtype)
-    return out
-
-
-_SUPPORTED_DTYPES = _dedup(
-    utils.ALL_FLOAT_DTYPES
-    + utils.ALL_INT_DTYPES
-    + utils.BOOL_TYPES
-    + utils.COMPLEX_DTYPES
-    + _EXTRA_CANDIDATES
-    + _REQUIRED_EXTRA
-)
-
-
-_VALUE_DTYPES = [d for d in _SUPPORTED_DTYPES if not d.is_complex]
-_COMPLEX_DTYPES = [d for d in _SUPPORTED_DTYPES if d.is_complex]
-
-
-# ---------------------------------------------------------------------------
-# Value ranges
-# ---------------------------------------------------------------------------
-
-
-_VALUE_CASES = [(d, r) for d in _VALUE_DTYPES for r in tu.selected_ranges()]
+_VALUE_DTYPES = [dtype for dtype in _SUPPORTED_DTYPES if not dtype.is_complex]
+_COMPLEX_DTYPES = [dtype for dtype in _SUPPORTED_DTYPES if dtype.is_complex]
+_VALUE_CASES = [
+    (dtype, value_range)
+    for dtype in _VALUE_DTYPES
+    for value_range in tu.selected_ranges()
+]
 _VALUE_CASE_IDS = [
-    "{}-{}".format(str(d).replace("torch.", ""), "_".join(str(x) for x in r))
-    for d, r in _VALUE_CASES
+    f"{str(dtype).replace('torch.', '')}-{'_'.join(value_range)}"
+    for dtype, value_range in _VALUE_CASES
+]
+_SEQUENCE_CASES = [
+    (dtype, value_range)
+    for dtype, value_range in _VALUE_CASES
+    if dtype in utils.FLOAT_DTYPES + utils.ALL_INT_DTYPES + [torch.bool]
 ]
 
-_SEQUENCE_DTYPES = {
-    d
-    for d in _VALUE_DTYPES
-    if d in set(utils.FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES)
-}
-_SEQUENCE_CASES = [(d, r) for d, r in _VALUE_CASES if d in _SEQUENCE_DTYPES]
 
-
-# ---------------------------------------------------------------------------
-# Value-range x shape grid (one parametrization combo == one Workload)
-# ---------------------------------------------------------------------------
+def _resolve_gems_op():
+    return flag_gems.testing.resolve_gems_op(
+        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
+    )
 
 
 @pytest.mark.atleast_2d
@@ -132,7 +69,7 @@ def test_atleast_2d_value_ranges(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert isinstance(res_out, torch.Tensor)
     assert res_out.device == inp.device
@@ -162,16 +99,11 @@ def test_atleast_2d_shape_metadata(shape, expected):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert tuple(res_out.shape) == expected
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_equal(res_out, ref_out)
-
-
-# ---------------------------------------------------------------------------
-# Sequence overload
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.atleast_2d_sequence
@@ -180,8 +112,8 @@ def test_atleast_2d_shape_metadata(shape, expected):
     "dtype,value_range",
     _SEQUENCE_CASES,
     ids=[
-        "{}-{}".format(str(d).replace("torch.", ""), "_".join(str(x) for x in r))
-        for d, r in _SEQUENCE_CASES
+        f"{str(dtype).replace('torch.', '')}-{'_'.join(value_range)}"
+        for dtype, value_range in _SEQUENCE_CASES
     ],
 )
 def test_atleast_2d_sequence(shape, dtype, value_range):
@@ -196,7 +128,7 @@ def test_atleast_2d_sequence(shape, dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_2d.Sequence(ref_inp)
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert isinstance(res_out, (list, tuple))
     assert len(res_out) == len(ref_out)
@@ -210,13 +142,9 @@ def test_atleast_2d_sequence_empty():
     # A Tensor[] input may legitimately be empty: the reference returns an
     # empty list, and the candidate must return an empty list too.
     ref_out = torch.ops.aten.atleast_2d.Sequence([])
-    res_out = _resolve_candidate()([])
+    res_out = _resolve_gems_op()([])
     assert len(res_out) == len(ref_out)
 
-
-# ---------------------------------------------------------------------------
-# nan / inf preservation (float path)
-# ---------------------------------------------------------------------------
 
 _NAN_INF_VALUES = [
     float("inf"),
@@ -235,22 +163,15 @@ _NAN_INF_VALUES = [
 @pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
 def test_atleast_2d_nan_inf(shape, dtype):
-    # A pure view must preserve inf / -inf / nan and signed zeros unchanged
-    # (tu.assert_result_close compares with equal_nan=True on the float path).
     values = _NAN_INF_VALUES[: 1 if shape == () else len(_NAN_INF_VALUES)]
     inp = torch.tensor(values, dtype=dtype, device=flag_gems.device).reshape(shape)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_equal(res_out, ref_out)
-
-
-# ---------------------------------------------------------------------------
-# complex dtypes
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.atleast_2d_complex
@@ -262,21 +183,14 @@ def test_atleast_2d_complex(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_equal(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Backward (identity view: gradient of sum is all ones)
-# ---------------------------------------------------------------------------
-
-_BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
-
-
 @pytest.mark.atleast_2d_backward
-@pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(), (3,), (16, 64), (7, 13, 29)])
 @pytest.mark.parametrize(
     "dtype",
     tu.selected_cases(
@@ -293,17 +207,12 @@ def test_atleast_2d_backward(shape, dtype):
     ref_grad = tu.to_reference(grad)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    res_out = _resolve_candidate()(inp)
+    res_out = _resolve_gems_op()(inp)
     tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
     tu.assert_result_equal(res_in_grad, ref_in_grad)
-
-
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.atleast_2d_negative
@@ -317,11 +226,11 @@ def test_atleast_2d_rejects_non_tensor():
             [torch.zeros(2, device=flag_gems.device), 3.14]
         )
 
-    candidate = _resolve_candidate()
+    gems_op = _resolve_gems_op()
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        candidate(3.14)
+        gems_op(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        candidate([torch.zeros(2, device=flag_gems.device), 3.14])
+        gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
 @pytest.mark.atleast_2d
@@ -330,10 +239,10 @@ def test_atleast_2d_rejects_non_tensor():
 )
 def test_atleast_2d_special_scenarios(dtype, scenario):
     inp = tu.make_special_input(dtype, scenario)
-    reference = tu.to_reference(inp)
-    candidate = flag_gems.testing.resolve_gems_op(
-        "atleast_2d", getattr(flag_gems, "atleast_2d", None)
-    )
-    expected = torch.ops.aten.atleast_2d(reference)
-    actual = candidate(inp)
-    tu.assert_result_equal(actual, expected)
+    ref_inp = tu.to_reference(inp)
+    gems_op = _resolve_gems_op()
+
+    ref_out = torch.ops.aten.atleast_2d(ref_inp)
+    res_out = gems_op(inp)
+
+    tu.assert_result_equal(res_out, ref_out)

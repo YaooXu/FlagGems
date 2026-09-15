@@ -20,40 +20,18 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::atleast_1d is a pure view/identity op: a 0-dim tensor is reshaped to
-# (1,) (a view of the same storage) while tensors with one or more dimensions
-# are returned unchanged. No arithmetic is performed, so the result must match
-# bit-for-bit, alias the input, and every storage dtype the op supports is
-# covered. The value-range framework replaces plain randn input generation:
-# values pass through untouched, and the shared ranges cover negative/positive/
-# boundary magnitudes per dtype (int/bool are exact; floats use equal_nan).
-#
-# The .default overload is resolved through its public name "atleast_1d" (a
-# KernelGen override_gems_op("atleast_1d", ...) wins over the direct callable);
-# the .Sequence overload shares the same public name.
-
-_FLOAT_DTYPES = list(utils.ALL_FLOAT_DTYPES)
-_INT_DTYPES = [torch.int8, torch.uint8, *utils.ALL_INT_DTYPES]
+# Scalars become (1,) views; tensors with ndim >= 1 are returned unchanged.
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_SUPPORTED_DTYPES = _FLOAT_DTYPES + _INT_DTYPES + _FP8_DTYPES + list(utils.BOOL_TYPES)
-
-
-# nan/inf pass through a view untouched; float8 is included but compared through
-# the FP8 comparison path in tu.assert_result_equal.
-_NAN_INF_DTYPES = [
-    dtype for dtype in _SUPPORTED_DTYPES if dtype in _FLOAT_DTYPES + _FP8_DTYPES
-]
-
-# The shared shape levels cover the dim boundary that drives the op: 0-dim ->
-# (1,) view and 1-dim/higher identity. The 0-dim scalar is prepended defensively
-# in case a level ever drops it.
-_ATLEAST_1D_SHAPES = tuple(tu.selected_shapes())
-if () not in _ATLEAST_1D_SHAPES:
-    _ATLEAST_1D_SHAPES = ((),) + _ATLEAST_1D_SHAPES
-
-# Backward shapes stay small (the autograd graph is built on the reference and
-# the comparison is elementwise); 0-dim exercises the shape-changing view.
-_ATLEAST_1D_BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
+_SUPPORTED_DTYPES = (
+    utils.ALL_FLOAT_DTYPES
+    + [torch.int8, torch.uint8]
+    + utils.ALL_INT_DTYPES
+    + _FP8_DTYPES
+    + [torch.bool]
+)
+_NAN_INF_DTYPES = utils.ALL_FLOAT_DTYPES + _FP8_DTYPES
+# Keep the scalar boundary in quick mode as well.
+_ATLEAST_1D_SHAPES = [()] + [shape for shape in tu.selected_shapes() if shape]
 
 
 def _resolve_gems_op():
@@ -103,7 +81,6 @@ def test_atleast_1d_nan_inf(dtype):
     res_out = _resolve_gems_op()(inp)
 
     assert res_out.data_ptr() == inp.data_ptr()
-    # equal_nan=True is active on both comparison paths.
     tu.assert_result_equal(res_out, ref_out)
 
 
@@ -141,7 +118,7 @@ def test_atleast_1d_sequence_empty():
 
 
 @pytest.mark.atleast_1d_backward
-@pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
+@pytest.mark.parametrize("shape", [(), (3,), (16, 64), (7, 13, 29)])
 @pytest.mark.parametrize(
     "dtype",
     tu.selected_cases(
@@ -189,10 +166,10 @@ def test_atleast_1d_rejects_non_tensor():
 )
 def test_atleast_1d_special_scenarios(dtype, scenario):
     inp = tu.make_special_input(dtype, scenario)
-    reference = tu.to_reference(inp)
-    candidate = flag_gems.testing.resolve_gems_op(
-        "atleast_1d", getattr(flag_gems, "atleast_1d", None)
-    )
-    expected = torch.ops.aten.atleast_1d(reference)
-    actual = candidate(inp)
-    tu.assert_result_equal(actual, expected)
+    ref_inp = tu.to_reference(inp)
+    gems_op = _resolve_gems_op()
+
+    ref_out = torch.ops.aten.atleast_1d(ref_inp)
+    res_out = gems_op(inp)
+
+    tu.assert_result_equal(res_out, ref_out)
