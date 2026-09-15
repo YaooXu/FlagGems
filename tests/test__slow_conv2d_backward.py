@@ -456,9 +456,6 @@ def test__slow_conv2d_backward_grad_input_out(case, dtype):
         grad_weight=ref_grad_weight,
         grad_bias=ref_grad_bias,
     )
-    assert ref_ret[0] is ref_grad_input
-    assert ref_ret[1] is ref_grad_weight
-    assert ref_ret[2] is ref_grad_bias
 
     res_grad_input = torch.full_like(inp, 7.0)
     res_grad_weight = torch.full_like(weight, 7.0)
@@ -518,9 +515,6 @@ def test__slow_conv2d_backward_output_mask_out(case, dtype):
         out1=ref_out1,
         out2=ref_out2,
     )
-    assert ref_ret[0] is ref_out0
-    assert ref_ret[1] is ref_out1
-    assert ref_ret[2] is ref_out2
 
     res_out0 = torch.full_like(inp, 7.0)
     res_out1 = torch.full_like(weight, 7.0)

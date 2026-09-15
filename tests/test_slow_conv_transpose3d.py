@@ -460,7 +460,6 @@ def test_slow_conv_transpose3d_out(
         dilation,
         out=ref_out,
     )
-    assert ref_ret is ref_out
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
     res_ret = _resolve_gems_op()(

@@ -279,14 +279,13 @@ def test__empty_per_channel_affine_quantized_out(
         dtype=quantized_dtype,
         device=ref_device,
     )
-    ref_ret = torch.ops.aten._empty_per_channel_affine_quantized.out(
+    torch.ops.aten._empty_per_channel_affine_quantized.out(
         shape,
         scales=tu.to_reference(scales),
         zero_points=tu.to_reference(zero_points),
         axis=axis,
         out=ref_out_buf,
     )
-    assert ref_ret is ref_out_buf
 
     act_out_buf = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,

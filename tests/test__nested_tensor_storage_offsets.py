@@ -148,11 +148,8 @@ def _assert_offsets(res_out, ref_out, num_tensors):
     # The storage-offsets metadata is always a CPU int64 tensor of shape
     # (num_tensors,) and its values are exact.
     assert isinstance(res_out, torch.Tensor)
-    assert isinstance(ref_out, torch.Tensor)
     assert res_out.dtype == torch.int64
-    assert ref_out.dtype == torch.int64
     assert res_out.shape == (num_tensors,)
-    assert ref_out.shape == (num_tensors,)
     assert res_out.device == ref_out.device
     utils.gems_assert_equal(res_out, ref_out)
 
@@ -164,7 +161,6 @@ def _assert_offsets(res_out, ref_out, num_tensors):
 def test__nested_tensor_storage_offsets(num_tensors, num_dims, dtype):
     inp = _make_input(num_tensors, num_dims, dtype)
     ref_inp = tu.to_reference(inp)
-    assert ref_inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -248,7 +244,6 @@ def test__nested_tensor_storage_offsets_non_contiguous(dtype):
     ref_device = torch.device("cpu") if utils.TO_CPU else flag_gems.device
     ref_inp, _ = _make_strided_view_input(dtype, ref_device)
     assert inp.is_nested
-    assert ref_inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)

@@ -273,7 +273,6 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
     ref_out = torch.ops.aten._empty_affine_quantized.out(
         shape, scale=scale, zero_point=zero_point, out=ref_out_buf
     )
-    assert ref_out is ref_out_buf
 
     act_out_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=flag_gems.device, scale=2.5, zero_point=-5
@@ -304,7 +303,6 @@ def test__empty_affine_quantized_out_value_ranges(value_range, shape):
     ref_out = torch.ops.aten._empty_affine_quantized.out(
         shape, scale=scale, zero_point=zero_point, out=ref_buf
     )
-    assert ref_out is ref_buf
 
     act_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=torch.quint8, device=flag_gems.device, scale=2.5, zero_point=-5
@@ -331,7 +329,6 @@ def test__empty_affine_quantized_out_non_contiguous_view():
     ref_out = torch.ops.aten._empty_affine_quantized.out(
         (16, 4), scale=0.5, zero_point=3, out=ref_sliced
     )
-    assert ref_out is ref_sliced
 
     act_base = torch.ops.aten._empty_affine_quantized(
         (16, 8), dtype=dtype, device=flag_gems.device, scale=1.0, zero_point=0

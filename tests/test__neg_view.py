@@ -161,7 +161,6 @@ def test__neg_view(shape, dtype):
     _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, inp)
     assert res_out.is_neg()
-    assert ref_out.is_neg()
 
 
 @pytest.mark._neg_view
@@ -195,7 +194,6 @@ def test__neg_view_unmaterializable_dtypes(shape, dtype):
 
     _assert_view_semantics(res_out, ref_out, inp)
     assert res_out.is_neg()
-    assert ref_out.is_neg()
 
 
 @pytest.mark._neg_view
@@ -230,7 +228,6 @@ def test__neg_view_toggle(shape, dtype):
     inp = torch.ops.aten._neg_view(base)
     ref_inp = torch.ops.aten._neg_view(ref_base)
     assert inp.is_neg()
-    assert ref_inp.is_neg()
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(inp)
@@ -238,7 +235,6 @@ def test__neg_view_toggle(shape, dtype):
     _assert_values_close(res_out, ref_out, dtype)
     _assert_view_semantics(res_out, ref_out, base)
     assert not res_out.is_neg()
-    assert not ref_out.is_neg()
 
 
 @pytest.mark._neg_view

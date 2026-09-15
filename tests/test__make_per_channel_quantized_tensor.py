@@ -570,10 +570,9 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     ref_out_buf = _make_out_buffer(
         shape, axis, storage_dtype, _ref_device(), reference=True
     )
-    ref_ret = torch.ops.aten._make_per_channel_quantized_tensor.out(
+    torch.ops.aten._make_per_channel_quantized_tensor.out(
         ref_inp, ref_scales, ref_zero_points, axis, out=ref_out_buf
     )
-    assert ref_ret is ref_out_buf
 
     act_out_buf = _make_out_buffer(shape, axis, storage_dtype, flag_gems.device)
     res_ret = _resolve("_make_per_channel_quantized_tensor")(

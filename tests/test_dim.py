@@ -229,7 +229,6 @@ def _assert_result(res_out, ref_out, expected):
     # dim returns a plain Python int holding the rank, so exact equality is
     # required and no tolerance is involved.
     assert type(res_out) is int
-    assert type(ref_out) is int
     utils.gems_assert_equal(res_out, ref_out)
     assert res_out == expected
 

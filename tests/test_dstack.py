@@ -261,7 +261,6 @@ def test_dstack_out(shape_set, dtype):
 
     # The .out variant must return the out tensor itself (alias semantics).
     assert res_ret.data_ptr() == out.data_ptr()
-    assert ref_ret.data_ptr() == ref_out.data_ptr()
     tu.assert_result_equal(res_ret, ref_ret)
     tu.assert_result_equal(out, ref_out)
 

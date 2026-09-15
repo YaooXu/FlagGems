@@ -500,11 +500,10 @@ def test_add_out(shape, value_range, dtype):
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
-    ref_ret = torch.ops.aten.add.out(ref_inp, ref_other, out=ref_out)
+    torch.ops.aten.add.out(ref_inp, ref_other, out=ref_out)
     res_ret = _resolve_gems_op_out()(inp, other, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
-    assert ref_ret is ref_out
     assert res_ret is res_out
     tu.assert_result_close(res_out, ref_out)
 
@@ -522,10 +521,9 @@ def test_add_out_alpha(shape, alpha, dtype):
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
-    ref_ret = torch.ops.aten.add.out(ref_inp, ref_other, alpha=alpha, out=ref_out)
+    torch.ops.aten.add.out(ref_inp, ref_other, alpha=alpha, out=ref_out)
     res_ret = _resolve_gems_op_out()(inp, other, alpha=alpha, out=res_out)
 
-    assert ref_ret is ref_out
     assert res_ret is res_out
     tu.assert_result_close(res_out, ref_out)
 

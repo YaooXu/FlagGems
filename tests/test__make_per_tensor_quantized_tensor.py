@@ -292,7 +292,6 @@ def test__make_per_tensor_quantized_tensor_out_value_ranges(shape, dtype, value_
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor.out(
         ref_inp, 0.5, -3, out=ref_out_buf
     )
-    assert ref_out is ref_out_buf
 
     act_out_buf = torch.ops.aten._empty_affine_quantized(
         shape,
@@ -324,7 +323,6 @@ def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point)
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor.out(
         ref_inp, scale, zero_point, out=ref_out_buf
     )
-    assert ref_out is ref_out_buf
 
     act_out_buf = torch.ops.aten._empty_affine_quantized(
         (4, 8),

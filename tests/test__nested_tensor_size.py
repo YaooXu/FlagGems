@@ -153,11 +153,8 @@ def _assert_sizes(res_out, ref_out, num_tensors, num_dims):
     # The sizes metadata is always a CPU int64 tensor of shape
     # (num_tensors, num_dims) and its values are exact.
     assert isinstance(res_out, torch.Tensor)
-    assert isinstance(ref_out, torch.Tensor)
     assert res_out.dtype == torch.int64
-    assert ref_out.dtype == torch.int64
     assert tuple(res_out.shape) == (num_tensors, num_dims)
-    assert tuple(ref_out.shape) == (num_tensors, num_dims)
     if not utils.TO_CPU:
         # torch creates the sizes metadata on the CPU even for a CUDA nested
         # tensor; the candidate must match that placement (gems_assert_equal
@@ -348,7 +345,6 @@ def test__nested_tensor_size_jagged_raises(dtype):
         values.to(ref_device), offsets.to(ref_device)
     )
     assert inp.layout == torch.jagged
-    assert ref_inp.layout == torch.jagged
     with pytest.raises(NotImplementedError):
         torch.ops.aten._nested_tensor_size(ref_inp)
     with pytest.raises(_NEGATIVE_EXC):

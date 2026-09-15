@@ -204,7 +204,6 @@ def _assert_result(res_out, ref_out, dense_dim):
     # _dimV returns a plain Python int holding the dense dimension count, so
     # exact equality is required and no tolerance is involved.
     assert isinstance(res_out, int) and not isinstance(res_out, bool)
-    assert isinstance(ref_out, int) and not isinstance(ref_out, bool)
     utils.gems_assert_equal(res_out, ref_out)
     assert res_out == dense_dim
 

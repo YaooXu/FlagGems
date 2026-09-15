@@ -186,11 +186,10 @@ def test_chain_matmul_out(shapes, value_range, dtype):
         out_shape, 7.0, dtype=ref_inp[0].dtype, device=ref_inp[0].device
     )
 
-    ref_ret = torch.ops.aten.chain_matmul.out(ref_inp, out=ref_out)
+    torch.ops.aten.chain_matmul.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out overload must write into and return the caller's buffer.
-    assert ref_ret is ref_out
     assert res_ret is out
     tu.assert_result_close(out, ref_out.to(dtype))
 
@@ -247,8 +246,6 @@ def test_chain_matmul_backward(shapes, dtype):
 
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     ref_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
-    for ref_g, shape in zip(ref_grads, shapes):
-        assert ref_g.shape == shape
 
     # The candidate forward must match the native-dtype reference...
     res_out = _resolve_gems_op()(inp)

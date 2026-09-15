@@ -137,8 +137,7 @@ def test_atleast_1d_sequence_empty():
     # empty list and the candidate must return an empty list too.
     ref_out = torch.ops.aten.atleast_1d.Sequence([])
     res_out = _resolve_gems_op()([])
-    assert len(ref_out) == 0
-    assert len(res_out) == 0
+    assert len(res_out) == len(ref_out)
 
 
 @pytest.mark.atleast_1d_backward

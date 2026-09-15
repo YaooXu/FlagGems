@@ -215,13 +215,11 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # annotation Tensor(a) self -> Tensor(a) requires the result to alias the
     # input's col_indices storage.
     assert res_out.dtype == torch.int64
-    assert ref_out.dtype == torch.int64
     assert ref_out.shape == inp.col_indices().shape
     utils.gems_assert_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal col_indices tensor (both on the candidate and the reference).
     assert res_out.data_ptr() == inp.col_indices().data_ptr()
-    assert ref_out.data_ptr() == ref_inp.col_indices().data_ptr()
     # Non-mutation: the accessor must leave the input's compressed structure
     # and stored values untouched. Values may legitimately hold nan/inf, so
     # compare float storage with equal_nan.

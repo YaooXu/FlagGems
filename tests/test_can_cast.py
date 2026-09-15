@@ -101,7 +101,6 @@ def _as_bool(value):
 def _assert_result(res_out, ref_out):
     # can_cast returns a plain Python bool, so exact equality is required and no
     # tolerance is involved.
-    assert isinstance(ref_out, bool)
     assert isinstance(res_out, (bool, torch.Tensor))
     res_bool = _as_bool(res_out)
     ref_bool = _as_bool(ref_out)

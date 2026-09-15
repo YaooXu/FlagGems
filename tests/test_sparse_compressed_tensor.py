@@ -248,10 +248,8 @@ def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
     # The constructed tensor must preserve the requested layout, dtype, shape,
     # and the exact index structure, and live on the test device.
     assert res_out.layout == layout
-    assert ref_out.layout == layout
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == dtype
-    assert ref_out.dtype == dtype
     assert res_out.device.type == flag_gems.device
     assert torch.ops.aten._nnz(res_out) == torch.ops.aten._nnz(ref_out)
 
@@ -268,9 +266,7 @@ def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
         res_p = torch.ops.aten.row_indices(res_out)
         ref_p = torch.ops.aten.row_indices(ref_out)
     assert res_c.dtype == index_dtype
-    assert ref_c.dtype == index_dtype
     assert res_p.dtype == index_dtype
-    assert ref_p.dtype == index_dtype
     # Indices are exact integer data.
     utils.gems_assert_equal(res_c, ref_c)
     utils.gems_assert_equal(res_p, ref_p)

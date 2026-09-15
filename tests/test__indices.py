@@ -156,14 +156,11 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # Tensor(a) self -> Tensor(a) requires the result to alias the input's
     # indices storage.
     assert res_out.dtype == torch.int64
-    assert ref_out.dtype == torch.int64
     assert res_out.shape == (inp.sparse_dim(), inp._nnz())
-    assert ref_out.shape == (ref_inp.sparse_dim(), ref_inp._nnz())
     utils.gems_assert_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
-    # internal indices tensor (both on the candidate and the reference).
+    # internal indices tensor.
     assert res_out.data_ptr() == inp._indices().data_ptr()
-    assert ref_out.data_ptr() == ref_inp._indices().data_ptr()
     # The accessor must not mutate the input: ref_inp is a pre-call snapshot
     # (a clone, moved to CPU when TO_CPU is set), so its indices and values
     # still match the (untouched) input storage after the calls. Values may

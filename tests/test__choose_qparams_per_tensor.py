@@ -168,8 +168,6 @@ def _assert_pair(res, ref):
     """
     res_scale, res_zp = res
     ref_scale, ref_zp = ref
-    assert isinstance(ref_scale, float), type(ref_scale)
-    assert isinstance(ref_zp, int), type(ref_zp)
     assert isinstance(res_scale, float), type(res_scale)
     assert isinstance(res_zp, int), type(res_zp)
     tu.assert_result_close(

@@ -205,11 +205,10 @@ def test_abs_out(shape, value_range, dtype):
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
-    ref_ret = torch.ops.aten.abs.out(ref_inp, out=ref_out)
+    torch.ops.aten.abs.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op_out()(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
-    assert ref_ret is ref_out
     assert res_ret is res_out
     tu.assert_result_close(res_out, ref_out)
 

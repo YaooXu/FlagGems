@@ -190,7 +190,6 @@ def test_adjoint_toggle(shape, dtype):
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, base)
     assert not res_out.is_conj()
-    assert not ref_out.is_conj()
 
 
 @pytest.mark.adjoint

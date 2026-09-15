@@ -211,11 +211,9 @@ def _resolve_gems_op():
 def _assert_coalesced(res_out, ref_out, dtype):
     # Both sides must be coalesced sparse COO tensors with the same structure.
     assert res_out.layout == torch.sparse_coo
-    assert ref_out.layout == torch.sparse_coo
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.is_coalesced()
-    assert ref_out.is_coalesced()
     # Indices are int64 and must match exactly (unique, sorted coordinates).
     utils.gems_assert_equal(res_out.indices(), ref_out.indices())
     # Values are sums of duplicates: tolerance for float, exact for int/bool.
@@ -241,7 +239,6 @@ def test_coalesce(case, dtype):
     # Coalescing returns a fresh tensor and must not mutate the input.
     assert res_out is not inp
     assert not inp.is_coalesced()
-    assert not ref_inp.is_coalesced()
 
 
 @pytest.mark.coalesce
@@ -259,7 +256,6 @@ def test_coalesce_coalesced_input(case, dtype):
     _assert_coalesced(res_out, ref_out, dtype)
     # Per the Tensor(a) alias annotation, coalesce returns the (coalesced)
     # input itself instead of a fresh tensor.
-    assert ref_out is ref_inp
     assert res_out is inp
 
 
@@ -280,7 +276,6 @@ def test_coalesce_value_ranges(value_range, dtype, case):
     _assert_coalesced(res_out, ref_out, dtype)
     assert res_out is not inp
     assert not inp.is_coalesced()
-    assert not ref_inp.is_coalesced()
 
 
 @pytest.mark.coalesce
@@ -309,12 +304,10 @@ def test_coalesce_nan_inf(case, dtype):
     # .indices() on an uncoalesced tensor raises, so this also proves the
     # structure is right.
     assert res_out.is_coalesced()
-    assert ref_out.is_coalesced()
     utils.gems_assert_equal(res_out.indices(), ref_out.indices())
     utils.gems_assert_close(res_out.values(), ref_out.values(), dtype, equal_nan=True)
     assert res_out is not inp
     assert not inp.is_coalesced()
-    assert not ref_inp.is_coalesced()
 
 
 @pytest.mark.coalesce

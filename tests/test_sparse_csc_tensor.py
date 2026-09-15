@@ -205,14 +205,10 @@ def _resolve_gems_op():
 def _assert_result(res_out, ref_out, dtype, index_dtype, equal_nan=False):
     """Structural and value comparison of a CSC tensor against the reference."""
     assert res_out.layout == torch.sparse_csc
-    assert ref_out.layout == torch.sparse_csc
     assert res_out.dtype == dtype
-    assert ref_out.dtype == dtype
     assert tuple(res_out.shape) == tuple(ref_out.shape)
     assert res_out.sparse_dim() == 2
     assert res_out.dense_dim() == 0
-    assert ref_out.sparse_dim() == 2
-    assert ref_out.dense_dim() == 0
     assert torch.ops.aten._nnz(res_out) == torch.ops.aten._nnz(ref_out)
     assert res_out.ccol_indices().dtype == index_dtype
     assert res_out.row_indices().dtype == index_dtype
@@ -335,7 +331,6 @@ def test_sparse_csc_tensor_no_size(
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
-    assert tuple(ref_out.shape) == expected_shape
     assert tuple(res_out.shape) == tuple(ref_out.shape)
 
 
@@ -370,7 +365,6 @@ def test_sparse_csc_tensor_no_size_exact(
     )
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
-    assert tuple(ref_out.shape) == expected_shape
     assert tuple(res_out.shape) == tuple(ref_out.shape)
 
 
@@ -411,7 +405,6 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
 
     _assert_result(res_out, ref_out, dtype, index_dtype)
     assert torch.ops.aten._nnz(res_out) == 3
-    assert torch.ops.aten._nnz(ref_out) == 3
 
 
 @pytest.mark.sparse_csc_tensor

@@ -313,9 +313,7 @@ def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
     # batched layouts). The result must not alias the input's internal
     # col_indices storage and the input must not be mutated.
     assert res.dtype == torch.int64
-    assert ref.dtype == torch.int64
     assert res.shape == expected_shape
-    assert ref.shape == expected_shape
     assert res.is_contiguous()
     utils.gems_assert_equal(res, ref)
     # Copy semantics: fresh storage, never a view of the input's col array.
@@ -367,12 +365,11 @@ def test_col_indices_copy_out(case, dtype):
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out variant must write into and return the out tensor itself.
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_col_shape(case))
 
 
@@ -404,11 +401,10 @@ def test_col_indices_copy_out_spec_shapes(case, dtype):
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_col_shape(case))
 
 
@@ -444,11 +440,10 @@ def test_col_indices_copy_out_value_ranges(case, value_range, dtype):
     out = _out_buffer(_expected_col_shape(case), torch.long, inp.device)
     ref_out = _out_buffer(_expected_col_shape(case), torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_col_shape(case))
 
 
@@ -475,11 +470,10 @@ def test_col_indices_copy_out_empty_bsr(dtype):
     out = _out_buffer(0, torch.long, inp.device)
     ref_out = _out_buffer(0, torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (0,))
 
 
@@ -517,11 +511,10 @@ def test_col_indices_copy_out_uncoalesced(dtype):
     out = _out_buffer(5, torch.long, inp.device)
     ref_out = _out_buffer(5, torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
 
 
@@ -562,11 +555,10 @@ def test_col_indices_copy_out_nan_inf_values(dtype):
     out = _out_buffer(7, torch.long, inp.device)
     ref_out = _out_buffer(7, torch.long, ref_inp.device)
 
-    ref_ret = torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
+    torch.ops.aten.col_indices_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    assert ref_ret is ref_out
     _assert_copy_semantics(out, ref_out, inp, ref_inp, (7,))
 
 

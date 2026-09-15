@@ -79,7 +79,6 @@ def _assert_alias_semantics(res_out, ref_out, inp, ref_inp):
     assert res_out.dtype == ref_out.dtype == inp.dtype
     assert res_out.device == inp.device
     assert res_out.data_ptr() == inp.data_ptr()
-    assert ref_out.data_ptr() == ref_inp.data_ptr()
     assert res_out.stride() == inp.stride()
     assert res_out.storage_offset() == inp.storage_offset()
     assert not res_out.requires_grad

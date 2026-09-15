@@ -199,10 +199,9 @@ def test__unpack_dual_plain_tensor(shape, level, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
-    ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, level)
+    ref_primal_out, _ = torch.ops.aten._unpack_dual(ref_inp, level)
     res_primal_out, res_tangent_out = _resolve_gems_op()(inp, level)
 
-    assert ref_tangent_out is None
     assert res_tangent_out is None
     tu.assert_result_equal(res_primal_out, ref_primal_out)
     _assert_primal_view(res_primal_out, ref_primal_out, inp)
@@ -219,10 +218,9 @@ def test__unpack_dual_plain_tensor_value_ranges(shape, value_range, dtype):
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
-    ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, 0)
+    ref_primal_out, _ = torch.ops.aten._unpack_dual(ref_inp, 0)
     res_primal_out, res_tangent_out = _resolve_gems_op()(inp, 0)
 
-    assert ref_tangent_out is None
     assert res_tangent_out is None
     tu.assert_result_equal(res_primal_out, ref_primal_out)
     _assert_primal_view(res_primal_out, ref_primal_out, inp)

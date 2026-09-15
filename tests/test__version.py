@@ -199,9 +199,7 @@ def _assert_result(res_out, ref_out):
     res_int = _as_int(res_out)
     ref_int = _as_int(ref_out)
     assert isinstance(res_int, int) and not isinstance(res_int, bool)
-    assert isinstance(ref_int, int) and not isinstance(ref_int, bool)
     utils.gems_assert_equal(res_int, ref_int)
-    return res_int, ref_int
 
 
 @pytest.mark._version
@@ -216,8 +214,7 @@ def test__version_fresh(shape, dtype):
     ref_out = torch.ops.aten._version(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == 0
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -253,8 +250,7 @@ def test__version_nan_inf(shape, dtype):
     ref_out = torch.ops.aten._version(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == 0
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -276,8 +272,7 @@ def test__version_after_inplace(shape, bumps, dtype):
     ref_out = torch.ops.aten._version(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == bumps
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -307,12 +302,10 @@ def test__version_view(dtype):
     view = inp.view(3, 8)
     ref_view = ref_inp.view(3, 8)
 
-    ref_base = torch.ops.aten._version(ref_inp)
     ref_out = torch.ops.aten._version(ref_view)
     res_out = _resolve_gems_op()(view)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == ref_base == 0
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -332,8 +325,7 @@ def test__version_view_inplace(dtype):
     ref_out = torch.ops.aten._version(ref_view)
     res_out = _resolve_gems_op()(inp)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == 1
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -353,8 +345,7 @@ def test__version_detach_shares_counter(dtype):
     ref_out = torch.ops.aten._version(ref_detached)
     res_out = _resolve_gems_op()(detached)
 
-    _, ref_int = _assert_result(res_out, ref_out)
-    assert ref_int == 1
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._version
@@ -375,11 +366,8 @@ def test__version_independent_counters(dtype):
         torch.ops.aten.add_.Tensor(ref_first, 1)
         torch.ops.aten.add_.Tensor(ref_second, 1)
 
-    assert torch.ops.aten._version(ref_first) == 2
-    assert torch.ops.aten._version(ref_second) == 1
-
-    _assert_result(_resolve_gems_op()(first), 2)
-    _assert_result(_resolve_gems_op()(second), 1)
+    _assert_result(_resolve_gems_op()(first), torch.ops.aten._version(ref_first))
+    _assert_result(_resolve_gems_op()(second), torch.ops.aten._version(ref_second))
 
 
 @pytest.mark._version

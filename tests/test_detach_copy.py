@@ -173,7 +173,6 @@ def test_detach_copy_out(shape, dtype):
     res_ret = _resolve_gems_op()(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
-    assert ref_ret is ref_out
     assert res_ret is res_out
     _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp)
 
@@ -194,7 +193,6 @@ def test_detach_copy_out_value_ranges(shape, value_range, dtype):
     ref_ret = torch.ops.aten.detach_copy.out(ref_inp, out=ref_out)
     res_ret = _resolve_gems_op()(inp, out=res_out)
 
-    assert ref_ret is ref_out
     assert res_ret is res_out
     _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp)
 

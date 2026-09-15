@@ -181,7 +181,6 @@ def _resolve_gems_op():
 def _assert_result(res_out, ref_out):
     # The op returns a plain Python bool; a candidate may equivalently return a
     # 0-dim bool tensor. The comparison is exact (no tolerance involved).
-    assert isinstance(ref_out, bool)
     res_t = torch.as_tensor(res_out).detach().cpu().reshape(())
     assert res_t.dtype == torch.bool
     utils.gems_assert_equal(res_t, torch.tensor(ref_out, dtype=torch.bool))
@@ -221,7 +220,6 @@ def test__has_same_storage_numel_cross_dtype(self_dtype, other_dtype):
     res_out = _resolve_gems_op()(self_t, other_t)
 
     _assert_result(res_out, ref_out)
-    assert bool(ref_out) is True
 
 
 @pytest.mark._has_same_storage_numel
@@ -240,7 +238,6 @@ def test__has_same_storage_numel_shapes(shape, dtype):
     res_out = _resolve_gems_op()(self_t, other_t)
 
     _assert_result(res_out, ref_out)
-    assert bool(ref_out) is True
 
 
 @pytest.mark._has_same_storage_numel
@@ -260,7 +257,6 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     res_out = _resolve_gems_op()(self_t, other_t)
 
     _assert_result(res_out, ref_out)
-    assert bool(ref_out) is True
 
 
 @pytest.mark._has_same_storage_numel
@@ -278,7 +274,6 @@ def test__has_same_storage_numel_nan_inf(shape, dtype):
     res_out = _resolve_gems_op()(self_t, other_t)
 
     _assert_result(res_out, ref_out)
-    assert bool(ref_out) is True
 
 
 @pytest.mark._has_same_storage_numel

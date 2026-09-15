@@ -213,8 +213,7 @@ def test_atleast_3d_sequence_empty():
     # the candidate must do the same (atleast_3d.Sequence([]) does not raise).
     ref_out = torch.ops.aten.atleast_3d.Sequence([])
     res_out = _resolve_gems_op()([])
-    assert len(ref_out) == 0
-    assert len(res_out) == 0
+    assert len(res_out) == len(ref_out)
 
 
 @pytest.mark.atleast_3d

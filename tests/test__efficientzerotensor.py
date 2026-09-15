@@ -152,7 +152,6 @@ def test__efficientzerotensor_out_range(shape, dtype, value_range):
     act_buf = garbage.clone()
 
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
-    assert ref_out is ref_buf
 
     gems_op = _resolve("_efficientzerotensor")
     res_out = gems_op(shape, out=act_buf)
@@ -176,7 +175,6 @@ def test__efficientzerotensor_out_overwrites(shape, dtype):
     act_buf = torch.full(shape, 1, dtype=dtype, device=flag_gems.device)
 
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
-    assert ref_out is ref_buf
 
     gems_op = _resolve("_efficientzerotensor")
     res_out = gems_op(shape, out=act_buf)

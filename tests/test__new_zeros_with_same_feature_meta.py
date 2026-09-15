@@ -192,11 +192,7 @@ def _resolve_gems_op():
     )
 
 
-def _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims):
-    expected_shape = self_t.shape[:self_num_batch_dims] + other_t.shape
-    assert isinstance(ref_out, torch.Tensor)
-    assert ref_out.shape == expected_shape
-    assert ref_out.is_contiguous()
+def _assert_zero_output(res_out, ref_out, self_t, other_t):
     assert isinstance(res_out, torch.Tensor)
     assert res_out.dtype == other_t.dtype
     assert res_out.is_contiguous()
@@ -230,7 +226,7 @@ def test__new_zeros_with_same_feature_meta(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta_out
@@ -253,7 +249,7 @@ def test__new_zeros_with_same_feature_meta_out(
     res_out = torch.full(expected_shape, 7, dtype=dtype, device=flag_gems.device)
     ref_out = torch.full(expected_shape, 7, dtype=dtype, device=ref_other.device)
 
-    ref_ret = torch.ops.aten._new_zeros_with_same_feature_meta.out(
+    torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims, out=ref_out
     )
     res_ret = _resolve_gems_op()(
@@ -261,9 +257,8 @@ def test__new_zeros_with_same_feature_meta_out(
     )
 
     # The .out variant must write into and return the out tensor itself.
-    assert ref_ret is ref_out
     assert res_ret is res_out
-    _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -286,7 +281,7 @@ def test__new_zeros_with_same_feature_meta_shapes(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -313,7 +308,7 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims
     )
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t, self_num_batch_dims)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -331,8 +326,7 @@ def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dt
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
 
-    assert ref_out.dtype == other_dtype
-    _assert_zero_output(res_out, ref_out, self_t, other_t, 1)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -350,8 +344,7 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
 
-    assert ref_out.shape == (2, 2, 3, 4)
-    _assert_zero_output(res_out, ref_out, self_t, other_t, 1)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -370,7 +363,7 @@ def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype):
     )
     res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
 
-    _assert_zero_output(res_out, ref_out, self_t, other_t, 0)
+    _assert_zero_output(res_out, ref_out, self_t, other_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta

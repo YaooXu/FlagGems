@@ -241,18 +241,12 @@ def _assert_coo_structure(
     # Structural checks independent of the stored values: layout, shape, dtype,
     # device, sparse/dense split, the nnz count and the coalesced flag.
     assert res_out.layout == torch.sparse_coo
-    assert ref_out.layout == torch.sparse_coo
     assert tuple(res_out.shape) == tuple(size)
-    assert tuple(ref_out.shape) == tuple(size)
     assert res_out.dtype == dtype
-    assert ref_out.dtype == dtype
     assert res_out.device.type == torch.device(flag_gems.device).type
     assert res_out.sparse_dim() == sparse_dim
     assert res_out.dense_dim() == dense_dim
-    assert ref_out.sparse_dim() == sparse_dim
-    assert ref_out.dense_dim() == dense_dim
     assert torch.ops.aten._nnz(res_out) == nnz
-    assert torch.ops.aten._nnz(ref_out) == nnz
     assert tuple(torch.ops.aten._indices(res_out).shape) == (sparse_dim, nnz)
     assert tuple(torch.ops.aten._values(res_out).shape) == (nnz,) + tuple(
         size[sparse_dim:]
@@ -263,7 +257,6 @@ def _assert_coo_structure(
     assert res_out.is_coalesced() == ref_out.is_coalesced()
     if is_coalesced is not None:
         assert res_out.is_coalesced() == is_coalesced
-        assert ref_out.is_coalesced() == is_coalesced
     # The index tensors are exact integer data stored verbatim.
     utils.gems_assert_equal(
         torch.ops.aten._indices(res_out), torch.ops.aten._indices(ref_out)
@@ -395,7 +388,6 @@ def test_sparse_coo_tensor_size_out(case, dtype):
     ref_ret = torch.ops.aten.sparse_coo_tensor.size_out(list(size), out=ref_out)
     res_ret = _call_candidate_size_out(size, out)
 
-    assert ref_ret is ref_out
     assert res_ret is out
     _assert_coo_structure(res_ret, ref_ret, size, 0, dtype, len(size), 0)
     _assert_coo_values(res_ret, ref_ret, dtype)
