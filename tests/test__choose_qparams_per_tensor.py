@@ -178,12 +178,8 @@ def _resolve_gems_op():
 
 
 def _assert_pair(res, ref):
-    """Compare a candidate ``(scale, zero_point)`` pair against the reference.
-
-    Both pairs must be Python ``(float, int)`` tuples. ``scale`` is compared as
-    fp64 with the tolerance the op's fp32-internal reference arithmetic needs;
-    ``zero_point`` must match exactly (the razor-thin exact half-integer
-    ratios are deliberately not pinned by any case in this file).
+    """Use the shared float64 tolerance for scale and exact integer equality
+    for zero_point, preserving the Python scalar return types.
     """
     res_scale, res_zp = res
     ref_scale, ref_zp = ref
@@ -191,11 +187,9 @@ def _assert_pair(res, ref):
     assert isinstance(ref_zp, int), type(ref_zp)
     assert isinstance(res_scale, float), type(res_scale)
     assert isinstance(res_zp, int), type(res_zp)
-    torch.testing.assert_close(
+    tu.assert_result_close(
         torch.tensor(res_scale, dtype=torch.float64),
         torch.tensor(ref_scale, dtype=torch.float64),
-        atol=1e-4,
-        rtol=1e-4,
     )
     assert res_zp == ref_zp, f"zero_point {res_zp} != {ref_zp}"
 
