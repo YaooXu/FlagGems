@@ -82,15 +82,12 @@ def _resolve_gems_op():
     )
 
 
-def _assert_result(res_out, ref_out, inp, shape):
-    # The result is a fresh 1-D int64 CPU tensor holding the logical shape,
-    # never a view/alias of the input.
-    assert res_out.shape == ref_out.shape == (len(shape),)
-    assert res_out.dtype == ref_out.dtype == torch.int64
-    assert res_out.device == ref_out.device == torch.device("cpu")
+def _assert_result(res_out, ref_out, inp):
+    # Shape metadata is a fresh CPU tensor, even for a device input.
+    assert res_out.device == torch.device("cpu")
     assert not res_out._is_view()
     assert res_out.data_ptr() != inp.data_ptr()
-    utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 def _transposed_view(base):
@@ -130,7 +127,7 @@ def test__shape_as_tensor_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, shape)
+    _assert_result(res_out, ref_out, inp)
 
 
 @pytest.mark._shape_as_tensor
@@ -146,7 +143,7 @@ def test__shape_as_tensor_empty(shape, value_range, dtype):
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, shape)
+    _assert_result(res_out, ref_out, inp)
 
 
 @pytest.mark._shape_as_tensor
@@ -166,7 +163,7 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, expected)
+    _assert_result(res_out, ref_out, inp)
 
 
 @pytest.mark._shape_as_tensor
@@ -182,7 +179,7 @@ def test__shape_as_tensor_nan_inf(dtype, scenario):
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, inp, (4, 8, 5))
+    _assert_result(res_out, ref_out, inp)
 
 
 @pytest.mark._shape_as_tensor
@@ -197,7 +194,7 @@ def test__shape_as_tensor_ignores_autograd(shape):
     res_out = _resolve_gems_op()(inp)
 
     assert not res_out.requires_grad
-    _assert_result(res_out, ref_out, inp.detach(), shape)
+    _assert_result(res_out, ref_out, inp.detach())
 
 
 @pytest.mark._shape_as_tensor

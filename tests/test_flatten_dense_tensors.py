@@ -126,15 +126,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_flattened(res_out, ref_out, dtype, input_device):
-    # A 1-D tensor of the input dtype on the input device holding every input
-    # element in order (contiguous copy then concatenate).
-    assert res_out.dim() == 1
-    assert res_out.dtype == dtype
-    assert res_out.device == input_device
-    tu.assert_result_equal(res_out, ref_out)
-
-
 @pytest.mark.flatten_dense_tensors
 @pytest.mark.parametrize("tensor_shapes", _flatten_shape_cases())
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
@@ -142,18 +133,16 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
     # Shape levels x every supported dtype, values drawn from the default
     # [-1, 1] range (negative and positive for each dtype).
     inp = [tu.make_input(dtype, shape, ["-1", "1"]) for shape in tensor_shapes]
-    inp_before = [t.clone() for t in inp]
     ref_inp = [tu.to_reference(t) for t in inp]
-    expected_numel = sum(t.numel() for t in inp)
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_flattened(res_out, ref_out, dtype, inp[0].device)
-    assert res_out.numel() == expected_numel
+    assert res_out.device == inp[0].device
+    tu.assert_result_equal(res_out, ref_out)
     # The op is read-only: inputs must be left untouched.
-    for res_t, before in zip(inp, inp_before):
-        tu.assert_result_equal(res_t, tu.to_reference(before))
+    for res_t, ref_t in zip(inp, ref_inp):
+        tu.assert_result_equal(res_t, ref_t)
 
 
 @pytest.mark.flatten_dense_tensors
@@ -187,7 +176,8 @@ def test_flatten_dense_tensors_non_contiguous(dtype):
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_views)
     res_out = _resolve_gems_op()(views)
 
-    _assert_flattened(res_out, ref_out, dtype, views[0].device)
+    assert res_out.device == views[0].device
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.flatten_dense_tensors

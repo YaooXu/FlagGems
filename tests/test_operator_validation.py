@@ -578,3 +578,16 @@ def test_detach_copy_rejects_an_implemented_backward():
     with testing.override_gems_op("detach_copy", lambda inp: inp.clone()):
         with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
             cases.test_detach_copy_no_backward((3, 4), torch.float32)
+
+
+@pytest.mark.parametrize("operator", ["_nested_tensor_size", "_nested_tensor_strides"])
+def test_nested_metadata_stays_on_cpu_with_cpu_reference(operator, monkeypatch):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
+    monkeypatch.setattr(utils, "TO_CPU", True)
+
+    def misplaced(inp):
+        return getattr(torch.ops.aten, operator)(inp).to(inp.device)
+
+    with testing.override_gems_op(operator, misplaced):
+        with pytest.raises(AssertionError):
+            getattr(cases, f"test_{operator}_nan_inf_values")(torch.float32, "nan")

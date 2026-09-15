@@ -148,12 +148,6 @@ def _expected_shape(shape, out_dim, batch_size):
     return tuple(sizes)
 
 
-def _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype):
-    assert res_out.shape == ref_out.shape == _expected_shape(shape, out_dim, batch_size)
-    assert res_out.dtype == ref_out.dtype == dtype
-    tu.assert_result_equal(res_out, ref_out)
-
-
 def _dtype_range_pairs():
     pairs = []
     for dtype in _REMOVE_BATCH_DIM_DTYPES:
@@ -176,7 +170,7 @@ def test__remove_batch_dim(shape, out_dim, batch_size, level, dtype):
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
 
-    _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._remove_batch_dim
@@ -194,7 +188,7 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
 
-    _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._remove_batch_dim
@@ -210,7 +204,7 @@ def test__remove_batch_dim_value_ranges_broadcast(dtype, value_range):
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
 
-    _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._remove_batch_dim
@@ -231,7 +225,7 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
     res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
 
-    _assert_output(res_out, ref_out, inp.shape, out_dim, batch_size, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._remove_batch_dim

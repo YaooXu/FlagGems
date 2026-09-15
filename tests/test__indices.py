@@ -153,9 +153,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # index tensor. The values are exact, and the schema annotation
     # Tensor(a) self -> Tensor(a) requires the result to alias the input's
     # indices storage.
-    assert res_out.dtype == torch.int64
-    assert res_out.shape == (inp.sparse_dim(), inp._nnz())
-    utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal indices tensor.
     assert res_out.data_ptr() == inp._indices().data_ptr()

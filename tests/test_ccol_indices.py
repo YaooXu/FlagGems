@@ -162,9 +162,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # batch_dims + (ncols + 1,) int64 compressed column index tensor. The
     # entries are exact, and the schema annotation Tensor(a) self -> Tensor(a)
     # requires the result to alias the input's ccol storage.
-    assert res_out.dtype == torch.int64
-    assert ref_out.shape == inp.shape[:-2] + (inp.shape[-1] + 1,)
-    utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal ccol tensor (both on the candidate and the reference).
     assert res_out.data_ptr() == torch.ops.aten.ccol_indices(inp).data_ptr()

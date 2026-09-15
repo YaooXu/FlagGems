@@ -94,8 +94,7 @@ def _make_nested(
     fixed at ``trailing``. Component values are drawn from ``value_range``
     through the shared value-range helper; the operator never reads them, but
     the component dtype is varied so the candidate must accept every storage
-    dtype the nested-tensor runtime supports. Returns the nested tensor and the
-    per-component dim-0 lengths used for the expected column 0.
+    dtype the nested-tensor runtime supports.
     """
     gen = torch.Generator("cpu").manual_seed(seed)
     lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
@@ -104,7 +103,7 @@ def _make_nested(
         for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-    return inp, lengths
+    return inp
 
 
 def _shape_level_ranks():
@@ -148,18 +147,10 @@ def _resolve_gems_op():
     )
 
 
-def _assert_sizes(res_out, ref_out, num_tensors, num_dims):
-    # The sizes metadata is always a CPU int64 tensor of shape
-    # (num_tensors, num_dims) and its values are exact.
-    assert isinstance(res_out, torch.Tensor)
-    assert res_out.dtype == torch.int64
-    assert tuple(res_out.shape) == (num_tensors, num_dims)
-    if not utils.TO_CPU:
-        # torch creates the sizes metadata on the CPU even for a CUDA nested
-        # tensor; the candidate must match that placement (gems_assert_equal
-        # would otherwise compare across devices).
-        assert res_out.device == ref_out.device
-    utils.gems_assert_equal(res_out, ref_out)
+def _assert_sizes(res_out, ref_out):
+    # Nested metadata stays on CPU even when the input is on an accelerator.
+    assert res_out.device == torch.device("cpu")
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -172,16 +163,13 @@ def test__nested_tensor_size(num_tensors, num_dims, dtype):
     # representable set, unsigned dtypes clamp the low bound). The reported
     # sizes depend only on component shapes, so column 0 holds the ragged dim-0
     # lengths and every other column the fixed component extent (4).
-    inp, lengths = _make_nested(num_tensors, num_dims, dtype)
+    inp = _make_nested(num_tensors, num_dims, dtype)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
-    assert bool(torch.all(res_out[:, 0] == torch.tensor(lengths, dtype=torch.int64)))
-    if num_dims >= 2:
-        assert bool(torch.all(res_out[:, 1:] == _TRAILING_EXTENT))
+    _assert_sizes(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -192,9 +180,8 @@ def test__nested_tensor_size_shape_levels(case, dtype):
     # dim-0 extent is ragged per component, so the reported num_dims must equal
     # the rank of the shared shape. Rank-0 shapes are excluded (a 0-dim
     # component cannot form a strided nested tensor).
-    shape, trailing = case
+    _, trailing = case
     num_tensors = 3
-    num_dims = len(shape)
     gen = torch.Generator("cpu").manual_seed(0)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     components = [
@@ -206,9 +193,7 @@ def test__nested_tensor_size_shape_levels(case, dtype):
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
-    assert tuple(res_out.shape) == (num_tensors, len(shape))
-    assert bool(torch.all(res_out[:, 0] == torch.tensor(lengths, dtype=torch.int64)))
+    _assert_sizes(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -221,16 +206,13 @@ def test__nested_tensor_size_value_ranges(case, value_range, dtype):
     # operator reads only layout metadata. This proves the candidate accepts
     # every storage dtype and value range the nested-tensor runtime supports.
     num_tensors, num_dims = case
-    inp, lengths = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
+    inp = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
-    assert bool(torch.all(res_out[:, 0] == torch.tensor(lengths, dtype=torch.int64)))
-    if num_dims >= 2:
-        assert bool(torch.all(res_out[:, 1:] == _TRAILING_EXTENT))
+    _assert_sizes(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -239,7 +221,7 @@ def test__nested_tensor_size_uniform(dtype):
     # Every component has the same shape: the nested tensor is not ragged, but
     # _nested_tensor_size must still return the (num_tensors, num_dims) sizes
     # tensor rather than a strided-tensor shape.
-    num_tensors, num_dims = 6, 3
+    num_tensors = 6
     components = [
         tu.make_input(dtype, (4, 4, 4), _VALUE_RANGE) for _ in range(num_tensors)
     ]
@@ -250,9 +232,7 @@ def test__nested_tensor_size_uniform(dtype):
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
-    # Every component is (4, 4, 4), so every sizes entry is exactly 4.
-    assert bool(torch.all(res_out == 4))
+    _assert_sizes(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -260,7 +240,7 @@ def test__nested_tensor_size_uniform(dtype):
 def test__nested_tensor_size_with_empty_components(dtype):
     # Some sub-tensors are empty (dim 0 length 0); their sizes row is (0, 4)
     # and the running batch is still fully described.
-    num_tensors, num_dims = 4, 2
+    num_tensors = 4
     gen = torch.Generator("cpu").manual_seed(1)
     lengths = [
         int(torch.randint(0, 4, (1,), generator=gen).item()) for _ in range(num_tensors)
@@ -272,9 +252,7 @@ def test__nested_tensor_size_with_empty_components(dtype):
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
-    assert bool(torch.all(res_out[:, 0] == torch.tensor(lengths, dtype=torch.int64)))
-    assert bool(torch.all(res_out[:, 1] == 4))
+    _assert_sizes(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_size
@@ -282,7 +260,7 @@ def test__nested_tensor_size_with_empty_components(dtype):
     "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COMPONENT_DTYPES))
 )
 def test__nested_tensor_size_nan_inf_values(dtype, scenario):
-    num_tensors, num_dims = 4, 2
+    num_tensors = 4
     gen = torch.Generator("cpu").manual_seed(3)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     special = tu.make_special_input(dtype, scenario)
@@ -298,7 +276,7 @@ def test__nested_tensor_size_nan_inf_values(dtype, scenario):
     ref_out = torch.ops.aten._nested_tensor_size(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_sizes(res_out, ref_out, num_tensors, num_dims)
+    _assert_sizes(res_out, ref_out)
 
 
 # A candidate may legitimately surface a "not supported" failure as a

@@ -122,11 +122,8 @@ def _make_strided_view_input(dtype, device=None):
     nested_size = torch.tensor([[2, 3], [4, 3], [1, 3], [3, 3]], dtype=torch.int64)
     nested_strides = torch.tensor([[6, 1], [6, 1], [6, 1], [6, 1]], dtype=torch.int64)
     storage_offsets = torch.tensor([0, 12, 30, 36], dtype=torch.int64)
-    return (
-        torch.ops.aten._nested_view_from_buffer(
-            buf, nested_size, nested_strides, storage_offsets
-        ),
-        storage_offsets,
+    return torch.ops.aten._nested_view_from_buffer(
+        buf, nested_size, nested_strides, storage_offsets
     )
 
 
@@ -137,14 +134,10 @@ def _resolve_gems_op():
     )
 
 
-def _assert_offsets(res_out, ref_out, num_tensors):
-    # The storage-offsets metadata is always a CPU int64 tensor of shape
-    # (num_tensors,) and its values are exact.
-    assert isinstance(res_out, torch.Tensor)
-    assert res_out.dtype == torch.int64
-    assert res_out.shape == (num_tensors,)
-    assert res_out.device == ref_out.device
-    utils.gems_assert_equal(res_out, ref_out)
+def _assert_offsets(res_out, ref_out):
+    # Nested metadata stays on CPU even when the input is on an accelerator.
+    assert res_out.device == torch.device("cpu")
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -158,7 +151,7 @@ def test__nested_tensor_storage_offsets(num_tensors, num_dims, dtype):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -168,7 +161,6 @@ def test__nested_tensor_storage_offsets_ragged_non_zero_dim(dtype):
     # dim differs between components builds fine and the operator must still
     # return the running element count of the preceding components (here the
     # (2, 3)/(2, 5)/(2, 1)/(2, 4) components pack to 0/6/16/18).
-    num_tensors = 4
     components = [
         tu.make_input(dtype, (2, length), _DEFAULT_VALUE_RANGE)
         for length in (3, 5, 1, 4)
@@ -180,8 +172,7 @@ def test__nested_tensor_storage_offsets_ragged_non_zero_dim(dtype):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
-    utils.gems_assert_equal(res_out, torch.tensor([0, 6, 16, 18], dtype=torch.int64))
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -202,7 +193,7 @@ def test__nested_tensor_storage_offsets_uniform(dtype):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -223,7 +214,7 @@ def test__nested_tensor_storage_offsets_with_empty_components(dtype):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -233,16 +224,15 @@ def test__nested_tensor_storage_offsets_non_contiguous(dtype):
     # nested tensor is built over a buffer with gaps between sub-tensors, the
     # operator must return the stored offsets (0, 12, 30, 36) rather than the
     # packed contiguous offsets (0, 6, 18, 21).
-    inp, storage_offsets = _make_strided_view_input(dtype)
+    inp = _make_strided_view_input(dtype)
     ref_device = torch.device("cpu") if utils.TO_CPU else flag_gems.device
-    ref_inp, _ = _make_strided_view_input(dtype, ref_device)
+    ref_inp = _make_strided_view_input(dtype, ref_device)
     assert inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, 4)
-    utils.gems_assert_equal(res_out, storage_offsets)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -260,7 +250,7 @@ def test__nested_tensor_storage_offsets_value_ranges(dtype, value_range):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets
@@ -284,7 +274,7 @@ def test__nested_tensor_storage_offsets_nan_inf(dtype, scenario):
     ref_out = torch.ops.aten._nested_tensor_storage_offsets(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_offsets(res_out, ref_out, num_tensors)
+    _assert_offsets(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_storage_offsets

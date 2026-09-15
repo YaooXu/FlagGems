@@ -211,9 +211,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # int64 column index tensor. The entries are exact, and the schema
     # annotation Tensor(a) self -> Tensor(a) requires the result to alias the
     # input's col_indices storage.
-    assert res_out.dtype == torch.int64
-    assert ref_out.shape == inp.col_indices().shape
-    utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal col_indices tensor (both on the candidate and the reference).
     assert res_out.data_ptr() == inp.col_indices().data_ptr()

@@ -300,14 +300,12 @@ def _resolve_gems_op():
     )
 
 
-def _assert_copy_semantics(res, ref, inp, ref_inp, expected_shape):
+def _assert_copy_semantics(res, ref, inp, ref_inp):
     # ccol_indices_copy returns a fresh contiguous int64 tensor holding the
     # input's raw compressed-column array. The result must not alias the
     # input's internal ccol storage and the input must not be mutated.
-    assert res.dtype == torch.int64
-    assert res.shape == expected_shape
     assert res.is_contiguous()
-    utils.gems_assert_equal(res, ref)
+    tu.assert_result_equal(res, ref)
     # Copy semantics: fresh storage, never a view of the input's ccol array.
     assert res.data_ptr() != inp.ccol_indices().data_ptr()
     # The accessor must not mutate the input: ref_inp is a pre-call snapshot.
@@ -327,7 +325,7 @@ def test_ccol_indices_copy(case, dtype):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 # The .out buffers are garbage-prefilled rather than torch.empty: the .out
@@ -358,7 +356,7 @@ def test_ccol_indices_copy_out(case, dtype):
 
     # The .out variant must write into and return the out tensor itself.
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy
@@ -376,7 +374,7 @@ def test_ccol_indices_copy_spec_shapes(case, dtype):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy_out
@@ -393,7 +391,7 @@ def test_ccol_indices_copy_out_spec_shapes(case, dtype):
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy
@@ -412,7 +410,7 @@ def test_ccol_indices_copy_value_ranges(case, value_range, dtype):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy_out
@@ -432,7 +430,7 @@ def test_ccol_indices_copy_out_value_ranges(case, value_range, dtype):
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, _expected_ccol_shape(case))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy
@@ -446,7 +444,7 @@ def test_ccol_indices_copy_empty_bsc(dtype):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (4,))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy_out
@@ -461,7 +459,7 @@ def test_ccol_indices_copy_out_empty_bsc(dtype):
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, (4,))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 def _uncoalesced_csc(dtype):
@@ -486,7 +484,7 @@ def test_ccol_indices_copy_uncoalesced(dtype):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (5,))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy_out
@@ -501,7 +499,7 @@ def test_ccol_indices_copy_out_uncoalesced(dtype):
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 def _special_csc(dtype, scenario):
@@ -525,7 +523,7 @@ def test_ccol_indices_copy_nan_inf_values(dtype, scenario):
     ref_out = torch.ops.aten.ccol_indices_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (5,))
+    _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.ccol_indices_copy_out
@@ -542,7 +540,7 @@ def test_ccol_indices_copy_out_nan_inf_values(dtype, scenario):
     res_ret = _resolve_gems_op()(inp, out=out)
 
     assert res_ret is out
-    _assert_copy_semantics(out, ref_out, inp, ref_inp, (5,))
+    _assert_copy_semantics(out, ref_out, inp, ref_inp)
 
 
 # ---------------------------------------------------------------------------

@@ -112,17 +112,7 @@ def _make_nested(
         for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=device)
-    return inp, lengths
-
-
-def _contiguous_strides(shape):
-    """Strides of a contiguous tensor of ``shape`` as a Python tuple of ints."""
-    strides = []
-    acc = 1
-    for dim in reversed(shape):
-        strides.append(acc)
-        acc *= dim
-    return tuple(reversed(strides))
+    return inp
 
 
 def _shape_level_ranks():
@@ -166,22 +156,10 @@ def _resolve_gems_op():
     )
 
 
-def _assert_strides(res_out, ref_out, num_tensors, num_dims, expected_strides=None):
-    # The strides metadata is always a CPU int64 tensor of shape
-    # (num_tensors, num_dims) and its values are exact.
-    assert isinstance(res_out, torch.Tensor)
-    assert res_out.dtype == torch.int64
-    assert tuple(res_out.shape) == (num_tensors, num_dims)
-    if not utils.TO_CPU:
-        # torch creates the strides metadata on the CPU even for a CUDA nested
-        # tensor; the candidate must match that placement (gems_assert_equal
-        # would otherwise compare across devices).
-        assert res_out.device == ref_out.device
-    utils.gems_assert_equal(res_out, ref_out)
-    res_cpu = res_out.detach().cpu()
-    if expected_strides is not None:
-        expected = torch.tensor(expected_strides, dtype=torch.int64)
-        assert bool(torch.all(res_cpu == expected))
+def _assert_strides(res_out, ref_out):
+    # Nested metadata stays on CPU even when the input is on an accelerator.
+    assert res_out.device == torch.device("cpu")
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -194,14 +172,13 @@ def test__nested_tensor_strides(num_tensors, num_dims, dtype):
     # representable set, unsigned dtypes clamp the low bound). Every component is
     # a contiguous copy, so its strides row is the contiguous strides of
     # (L, trailing * (num_dims - 1)), independent of the ragged dim-0 length L.
-    inp, _lengths = _make_nested(num_tensors, num_dims, dtype)
+    inp = _make_nested(num_tensors, num_dims, dtype)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    expected = _contiguous_strides((0,) + (_TRAILING_EXTENT,) * (num_dims - 1))
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, expected)
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -213,9 +190,8 @@ def test__nested_tensor_strides_shape_levels(case, dtype):
     # the rank of the shared shape and the row must be the contiguous strides of
     # that rank. Rank-0 shapes are excluded (a 0-dim component cannot form a
     # strided nested tensor).
-    shape, trailing = case
+    _, trailing = case
     num_tensors = 3
-    num_dims = len(shape)
     gen = torch.Generator("cpu").manual_seed(0)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     components = [
@@ -227,8 +203,7 @@ def test__nested_tensor_strides_shape_levels(case, dtype):
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    expected = _contiguous_strides((0,) + trailing)
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, expected)
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -241,14 +216,13 @@ def test__nested_tensor_strides_value_ranges(case, value_range, dtype):
     # operator reads only layout metadata. This proves the candidate accepts
     # every storage dtype and value range the nested-tensor runtime supports.
     num_tensors, num_dims = case
-    inp, _lengths = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
+    inp = _make_nested(num_tensors, num_dims, dtype, value_range=value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    expected = _contiguous_strides((0,) + (_TRAILING_EXTENT,) * (num_dims - 1))
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, expected)
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -258,7 +232,7 @@ def test__nested_tensor_strides_uniform(dtype):
     # _nested_tensor_strides must still return the (num_tensors, num_dims)
     # strides tensor rather than a strided-tensor stride. Every component is a
     # contiguous (4, 4, 4) copy, so every strides row is exactly (16, 4, 1).
-    num_tensors, num_dims = 6, 3
+    num_tensors = 6
     components = [
         tu.make_input(dtype, (4, 4, 4), _VALUE_RANGE) for _ in range(num_tensors)
     ]
@@ -269,7 +243,7 @@ def test__nested_tensor_strides_uniform(dtype):
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, (16, 4, 1))
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -278,7 +252,7 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     # Some sub-tensors are empty (dim 0 length 0); their strides row still
     # describes the component layout (the contiguous strides (4, 1) of a
     # zero-extent leading dim) and the running batch is still fully described.
-    num_tensors, num_dims = 4, 2
+    num_tensors = 4
     gen = torch.Generator("cpu").manual_seed(1)
     lengths = [
         int(torch.randint(0, 4, (1,), generator=gen).item()) for _ in range(num_tensors)
@@ -293,7 +267,7 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     # Every component is contiguous: the innermost stride is 1 regardless of the
     # dim-0 extent (including extent 0), and the outer stride is the trailing
     # extent 4.
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -304,15 +278,13 @@ def test__nested_tensor_strides_transposed(dtype):
     # (1, 4). The operator must report the actual strides metadata, not recompute
     # contiguous strides from the sizes.
     num_tensors, num_dims = 5, 2
-    inp, _lengths = _make_nested(num_tensors, num_dims, dtype, seed=2)
+    inp = _make_nested(num_tensors, num_dims, dtype, seed=2)
     inp = inp.transpose(1, 2)
     # A non-contiguous nested tensor cannot be moved with Tensor.to()
     # ("NestedTensor must be contiguous to get buffer"), so build the reference
     # view directly on CPU when the TO_CPU reference is in use.
     ref_device = torch.device("cpu") if utils.TO_CPU else flag_gems.device
-    ref_inp, _ref_lengths = _make_nested(
-        num_tensors, num_dims, dtype, seed=2, device=ref_device
-    )
+    ref_inp = _make_nested(num_tensors, num_dims, dtype, seed=2, device=ref_device)
     ref_inp = ref_inp.transpose(1, 2)
     assert inp.is_nested
 
@@ -321,9 +293,7 @@ def test__nested_tensor_strides_transposed(dtype):
 
     # The transposed view is non-contiguous: the innermost stride is the leading
     # component extent (4) rather than 1.
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, (1, 4))
-    res_cpu = res_out.detach().cpu()
-    assert bool(torch.all(res_cpu[:, -1] == 4))
+    _assert_strides(res_out, ref_out)
 
 
 @pytest.mark._nested_tensor_strides
@@ -331,7 +301,7 @@ def test__nested_tensor_strides_transposed(dtype):
     "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COMPONENT_DTYPES))
 )
 def test__nested_tensor_strides_nan_inf_values(dtype, scenario):
-    num_tensors, num_dims = 4, 2
+    num_tensors = 4
     gen = torch.Generator("cpu").manual_seed(3)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     special = tu.make_special_input(dtype, scenario)
@@ -347,7 +317,7 @@ def test__nested_tensor_strides_nan_inf_values(dtype, scenario):
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_strides(res_out, ref_out, num_tensors, num_dims, (4, 1))
+    _assert_strides(res_out, ref_out)
 
 
 # A candidate may legitimately surface a "not supported" failure as a

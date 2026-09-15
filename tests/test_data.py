@@ -72,11 +72,8 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("data", getattr(flag_gems, "data", None))
 
 
-def _assert_alias_semantics(res_out, ref_out, inp, ref_inp):
-    # The observable result must match aten exactly: same shape/dtype on the
-    # same device as the input, aliasing the input storage with the identical
-    # layout, and detached from autograd.
-    assert res_out.dtype == ref_out.dtype == inp.dtype
+def _assert_alias_semantics(res_out, ref_out, inp):
+    # Preserve storage, layout and detached autograd state.
     assert res_out.device == inp.device
     assert res_out.data_ptr() == inp.data_ptr()
     assert res_out.stride() == inp.stride()
@@ -99,7 +96,7 @@ def test_data(shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
+    _assert_alias_semantics(res_out, ref_out, inp)
 
 
 @pytest.mark.data
@@ -116,7 +113,7 @@ def test_data_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
+    _assert_alias_semantics(res_out, ref_out, inp)
 
 
 @pytest.mark.data
@@ -138,7 +135,7 @@ def test_data_non_contiguous(layout, shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
+    _assert_alias_semantics(res_out, ref_out, inp)
 
 
 @pytest.mark.data
@@ -198,7 +195,7 @@ def test_data_autograd_detach(shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
+    _assert_alias_semantics(res_out, ref_out, inp)
 
 
 @pytest.mark.data

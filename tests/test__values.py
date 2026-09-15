@@ -158,11 +158,9 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
     # filtering of explicit zeros) with the storage dtype preserved, and the
     # schema annotation Tensor(a) self -> Tensor(a) requires the result to
     # alias the input's values storage.
-    assert res_out.dtype == ref_out.dtype == inp.dtype
-    assert res_out.shape == ref_out.shape == inp._values().shape
     # The view must preserve the stored values bit-for-bit (nan/inf included),
     # so exact equality is required for every dtype.
-    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
+    tu.assert_result_equal(res_out, ref_out)
     # Alias semantics: the returned tensor shares storage with the input's
     # internal values tensor.
     assert res_out.data_ptr() == inp._values().data_ptr()

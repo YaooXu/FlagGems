@@ -98,16 +98,12 @@ def _resolve_gems_op():
     )
 
 
-def _assert_arange_result(res_out, ref_out, inp, expected_len):
-    # The result is a fresh 1-D int64 tensor on the ``like`` device holding
-    # [0, ..., size(dim)-1]; it is never a view/alias of ``like``.
-    assert tuple(res_out.shape) == tuple(ref_out.shape) == (expected_len,)
-    assert res_out.dtype == ref_out.dtype == torch.int64
+def _assert_arange_result(res_out, ref_out, inp):
+    # The result is fresh storage on the input device.
     assert res_out.device == inp.device
-    assert ref_out.device == inp.device or ref_out.device == torch.device("cpu")
     assert not res_out._is_view()
     assert res_out.data_ptr() != inp.data_ptr()
-    utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark._dim_arange
@@ -125,7 +121,7 @@ def test__dim_arange_value_ranges(shape, dim, value_range, dtype):
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
     res_out = _resolve_gems_op()(inp, dim)
 
-    _assert_arange_result(res_out, ref_out, inp, shape[dim])
+    _assert_arange_result(res_out, ref_out, inp)
 
 
 @pytest.mark._dim_arange
@@ -145,7 +141,7 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     ref_out = torch.ops.aten._dim_arange(ref_inp, dim)
     res_out = _resolve_gems_op()(inp, dim)
 
-    _assert_arange_result(res_out, ref_out, inp, expected_len)
+    _assert_arange_result(res_out, ref_out, inp)
 
 
 @pytest.mark._dim_arange
@@ -161,7 +157,7 @@ def test__dim_arange_nan_inf(dtype, scenario):
     ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
     res_out = _resolve_gems_op()(inp, 1)
 
-    _assert_arange_result(res_out, ref_out, inp, 8)
+    _assert_arange_result(res_out, ref_out, inp)
 
 
 @pytest.mark._dim_arange
@@ -169,17 +165,16 @@ def test__dim_arange_nan_inf(dtype, scenario):
 def test__dim_arange_no_autograd(dtype):
     # Backward is N/A: the int64 index output is not differentiable, so the
     # result must never carry a grad_fn (and the op must not mutate ``like``).
-    inp = tu.make_input(dtype, (3, 5), ["-1", "1"])
-    before = inp.clone().detach()
+    inp = tu.make_input(dtype, (3, 5), ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, 1)
     res_out = _resolve_gems_op()(inp, 1)
 
-    _assert_arange_result(res_out, ref_out, inp, 5)
+    _assert_arange_result(res_out, ref_out, inp)
     assert res_out.grad_fn is None
     assert not res_out.requires_grad
-    utils.gems_assert_equal(inp, before)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._dim_arange
