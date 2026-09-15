@@ -35,13 +35,9 @@ uses the same public callable with the actual ``out`` keyword.
 
 dtype coverage
 --------------
-The reference probe below (``tu.supported_dtypes``) confirms that the CUDA
-``addmm`` path behind ``chain_matmul`` only accepts floating dtypes: int8 /
-uint8 / float8_e4m3fn / float8_e5m2 / int32 / int64 / bool all raise
-``"addmm_cuda" not implemented``. The candidate dtype list is therefore the
-intersection of the supported floating set with ``utils.FLOAT_DTYPES`` (fp16 /
-fp32 / bf16), matching the mm/bmm convention of not exercising fp64 on the
-Triton matmul path.
+The positive cases use the shared regular floating-point dtypes, including
+float64. The CUDA addmm path rejects integer, bool and FP8 operands; those
+restrictions are covered by the negative dtype cases.
 
 Value ranges
 ------------
@@ -60,32 +56,11 @@ from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # ---------------------------------------------------------------------------
-# dtype probe
+# Dtype coverage
 # ---------------------------------------------------------------------------
 
-# The spec's required dtype candidates, probed against the real aten op below.
-
-
-def _probe_chain_dtype(_op_name, dtype):
-    """Return True when ``dtype`` runs through ``aten::chain_matmul``."""
-    try:
-        left = tu.make_input(dtype, (4, 8), ["-1", "1"])
-        right = tu.make_input(dtype, (8, 4), ["-1", "1"])
-        torch.ops.aten.chain_matmul([left, right])
-    except Exception:
-        return False
-    return True
-
-
-# chain_matmul dispatches to addmm, which only has floating-point CUDA kernels
-# ("addmm_cuda" is not implemented for int8/uint8/fp8/int32/int64/bool), so the
-# float dtype set IS this operator's complete dtype set. The fallback therefore
-# keeps the full (float-only) candidate set rather than dropping any of it.
-_CHAIN_DTYPES = tu.supported_dtypes(
-    "chain_matmul", list(utils.ALL_FLOAT_DTYPES), probe=_probe_chain_dtype
-)
-if not _CHAIN_DTYPES:
-    _CHAIN_DTYPES = list(utils.FLOAT_DTYPES)
+# The CUDA addmm kernel accepts the regular floating-point dtypes.
+_CHAIN_DTYPES = list(utils.ALL_FLOAT_DTYPES)
 
 # ---------------------------------------------------------------------------
 # chain shapes / value ranges

@@ -43,10 +43,9 @@ from . import test_utils as tu
 #
 # Dtype coverage (regular-operator spec): the required int8 / uint8 /
 # float8_e4m3fn / float8_e5m2 / fp32 / bf16 / fp16 / int32 / int64 set, plus
-# the shared fp64 / int16 sets and bool, probed at import time so a backend that
-# cannot materialise a storage dtype is skipped cleanly (tu.supported_dtypes).
+# the shared fp64 / int16 sets and bool.
 # Both supported index dtypes (int32, int64) are exercised for the structure.
-_BSC_DTYPE_CANDIDATES = list(
+_BSC_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -70,34 +69,6 @@ _BSC_DTYPE_CANDIDATES = list(
 _BSC_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
-def _bsc_dtype_probe(op_name, dtype):
-    """Report whether the sparse BSC factory accepts ``dtype`` storage."""
-    del op_name
-    try:
-        ccol = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
-        row = torch.tensor([0, 1], dtype=torch.int64, device=flag_gems.device)
-        values = torch.zeros((2, 2, 2), dtype=dtype, device=flag_gems.device)
-        out = torch.ops.aten.sparse_bsc_tensor.ccol_row_value_size(
-            ccol,
-            row,
-            values,
-            size=[4, 4],
-            dtype=dtype,
-            layout=torch.sparse_bsc,
-            device=flag_gems.device,
-        )
-        return out.layout == torch.sparse_bsc and out.dtype == dtype
-    except Exception:
-        return False
-
-
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_BSC_DTYPES = tu.supported_dtypes(
-    "sparse_bsc_tensor", candidates=_BSC_DTYPE_CANDIDATES, probe=_bsc_dtype_probe
-) or list(_BSC_DTYPE_CANDIDATES)
 _BSC_FLOAT_DTYPES = [dtype for dtype in _BSC_DTYPES if dtype.is_floating_point]
 # nan/inf/-inf are representable in every float family here, fp8 included (see
 # the fp8 note above); the comparisons carry equal_nan where needed.
@@ -300,7 +271,7 @@ def test_sparse_bsc_tensor_shape_levels(case, dtype, index_dtype):
 def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
     # Value-range sweep: construction copies the block values verbatim, so
     # every range (including the dtype-extreme [0, max] / [min, 0] ranges) must
-    # round-trip exactly for every probed storage dtype.
+    # round-trip exactly for every declared storage dtype.
     shape, block, nnz = case
     ccol, row, values = _make_bsc_inputs(shape, block, nnz, dtype, value_range)
 

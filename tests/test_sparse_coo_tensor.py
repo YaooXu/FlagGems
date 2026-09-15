@@ -67,9 +67,8 @@ from . import test_utils as tu
 #     the shared dense ``tu.selected_shapes()`` set does not map onto
 #     (indices, values), so a dedicated sparse grid replaces it: 1..4 logical
 #     dims, dense dims, nnz == 0 and a zero-extent logical dim;
-#   * dtypes -- the full spec dtype contract probed locally (all nine required
-#     dtypes plus float64 / int16 / bool are accepted by this factory on the
-#     active device), one workload per dtype;
+#   * dtypes -- all nine required dtypes plus float64 / int16 / bool,
+#     one workload per dtype;
 #   * nan / inf -- float dtypes over nan / +-inf / huge-magnitude values (the
 #     factory copies values verbatim, so the comparison uses equal_nan=True);
 #   * negative -- malformed indices / size / values, the wrong layout and a
@@ -158,12 +157,8 @@ _NAN_INF_PATTERN = [
 ]
 
 
-# Probe the storage dtypes the factory actually accepts on the active device
-# (spec: never guess). ``tu.supported_dtypes`` cannot probe this operator -- its
-# default probe calls ``packet.default(x)`` on a dense tensor, which is not how
-# ``sparse_coo_tensor`` is invoked -- so a local probe builds a real
-# (indices, values) pair instead.
-_REQUIRED_CANDIDATE_DTYPES = [
+# The COO factory accepts all declared storage dtypes.
+_COO_DTYPES = [
     torch.int8,
     torch.uint8,
     torch.float8_e4m3fn,
@@ -179,21 +174,6 @@ _REQUIRED_CANDIDATE_DTYPES = [
 ]
 
 
-def _coo_dtype_supported(dtype):
-    try:
-        indices = torch.zeros((2, 2), dtype=torch.long, device=flag_gems.device)
-        values = torch.zeros(2, dtype=dtype, device=flag_gems.device)
-        torch.ops.aten.sparse_coo_tensor(
-            indices, values, [4, 4], dtype=dtype, device=flag_gems.device
-        )
-    except Exception:
-        return False
-    return True
-
-
-_COO_DTYPES = [
-    dtype for dtype in _REQUIRED_CANDIDATE_DTYPES if _coo_dtype_supported(dtype)
-]
 _FLOAT_COO_DTYPES = [dtype for dtype in _COO_DTYPES if dtype.is_floating_point]
 _EXACT_COO_DTYPES = [dtype for dtype in _COO_DTYPES if not dtype.is_floating_point]
 
@@ -204,24 +184,12 @@ def _reference_device():
     return "cpu" if cfg.TO_CPU else flag_gems.device
 
 
-def _range_supported(dtype, value_range):
-    try:
-        tu.make_input(dtype, (4,), value_range)
-    except Exception:
-        return False
-    return True
-
-
 def _value_range_cases():
-    # One pytest case per (range, layout, dtype): uint8 cannot represent the
-    # spec's [-1, 0] range, so that pair is filtered out at collection time and
-    # every remaining pair is a real workload.
+    # One case per (range, layout, dtype); tu.make_input clamps unsigned bounds.
     cases = []
     for case in _COO_VALUE_CASES:
         for dtype in _COO_DTYPES:
             for value_range in tu.selected_ranges():
-                if not _range_supported(dtype, value_range):
-                    continue
                 cases.append((value_range, case, dtype))
     return cases
 

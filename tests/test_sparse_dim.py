@@ -31,7 +31,7 @@ from . import test_utils as tu
 # asserts exact equality.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * dtypes -- the probe-selected set of the required dtypes
+#   * dtypes -- the required dtypes
 #     (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64) plus
 #     fp64/int16/bool where the device supports them;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
@@ -49,10 +49,9 @@ from . import test_utils as tu
 # plain Python int (there is nothing to broadcast against or differentiate).
 
 # ---------------------------------------------------------------------------
-# Dtype probing (device-portable: never turn an unsupported op/dtype pair into
-# a red test)
+# Storage dtype coverage
 # ---------------------------------------------------------------------------
-_DTYPE_CANDIDATES = list(
+_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -64,25 +63,6 @@ _DTYPE_CANDIDATES = list(
 )
 
 
-def _sparse_dtype_probe(op_name, dtype):
-    """Report whether ``op_name`` accepts a tiny sparse COO tensor of ``dtype``."""
-    del op_name
-    try:
-        indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
-        values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        return isinstance(torch.ops.aten.sparse_dim(tu.to_reference(inp)), int)
-    except Exception:
-        return False
-
-
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_DTYPES = tu.supported_dtypes(
-    "sparse_dim", candidates=_DTYPE_CANDIDATES, probe=_sparse_dtype_probe
-) or list(_DTYPE_CANDIDATES)
 _FLOAT_DTYPES = [dtype for dtype in _DTYPES if dtype.is_floating_point]
 
 # ---------------------------------------------------------------------------

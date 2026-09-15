@@ -50,8 +50,8 @@ _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
 _INT8_DTYPES = [torch.int8, torch.uint8]
 
 # Candidate dtypes: the spec's required 9 dtypes plus the wider float/int/bool
-# sets; each one is probed for real support before it is parametrized.
-_CANDIDATE_DTYPES = list(
+# sets, deduplicated in order.
+_SUPPORTED_DTYPES = list(
     dict.fromkeys(
         _FP8_DTYPES
         + _INT8_DTYPES
@@ -61,31 +61,6 @@ _CANDIDATE_DTYPES = list(
     )
 )
 
-
-def _probe_dtype(operator, dtype):
-    """Return whether the real aten op accepts ``dtype`` on this device.
-
-    ``tu.supported_dtypes``'s default probe calls the op with a single tensor,
-    which does not match the list-of-1-D-tensors schema, so pass a custom probe
-    that builds two 1-D inputs. Any exception means "unsupported".
-    """
-    try:
-        first = tu.make_input(dtype, (4,), ["-1", "1"])
-        second = tu.make_input(dtype, (3,), ["-1", "1"])
-        getattr(torch.ops.aten, operator).default([first, second])
-    except Exception:
-        return False
-    return True
-
-
-_SUPPORTED_DTYPES = tu.supported_dtypes(
-    "cartesian_prod", candidates=_CANDIDATE_DTYPES, probe=_probe_dtype
-)
-if not _SUPPORTED_DTYPES:
-    # Never collect zero dtype cases: fall back to the full candidate list so a
-    # failed/absent probe never silently drops the spec-required int8/uint8/fp8
-    # dtypes.
-    _SUPPORTED_DTYPES = list(_CANDIDATE_DTYPES)
 
 _FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
 

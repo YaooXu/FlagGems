@@ -39,9 +39,8 @@ setattr(
 #   * value ranges: tu.selected_ranges() (the five spec ranges), so every
 #                   supported dtype round-trips negative, positive, extreme and
 #                   degenerate value windows bit-for-bit;
-#   * dtypes:       the spec's required dtypes plus float64/complex/bool, probed
-#                   on the active device (a pure view accepts every storage
-#                   dtype, fp8 included);
+#   * dtypes:       the required dtypes plus float64/complex/bool; this pure
+#                   view accepts every storage dtype, FP8 included;
 #   * levels:       the documented level 0 plus higher levels, which aten also
 #                   accepts for plain tensors with no registered tangent;
 #   * edge cases:   non-contiguous strided inputs, empty tensors, nan/inf/+-0.0,
@@ -55,35 +54,12 @@ setattr(
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 
-def _probe_dtype(dtype):
-    """Return True if the reference op accepts this storage dtype on device."""
-    try:
-        probe_inp = torch.testing.make_tensor(
-            (4,), dtype=dtype, device=flag_gems.device, low=0, high=1
-        )
-        torch.ops.aten._fw_primal(probe_inp, 0)
-        return True
-    except Exception:
-        return False
-
-
-_FW_PRIMAL_CANDIDATE_DTYPES = (
+_FW_PRIMAL_DTYPES = (
     utils.ALL_FLOAT_DTYPES
     + [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
     + utils.ALL_INT_DTYPES
     + utils.BOOL_TYPES
     + utils.COMPLEX_DTYPES
-)
-# tu.supported_dtypes() cannot probe this op with its default path (the
-# ``default`` overload needs the extra ``level`` argument), so hand it a
-# two-argument probe and keep the static list as a fallback.
-_FW_PRIMAL_DTYPES = (
-    tu.supported_dtypes(
-        "_fw_primal",
-        _FW_PRIMAL_CANDIDATE_DTYPES,
-        probe=lambda _op, dtype: _probe_dtype(dtype),
-    )
-    or _FW_PRIMAL_CANDIDATE_DTYPES
 )
 
 # ``level`` is the forward-AD level: 0 is the documented level, while 1/3

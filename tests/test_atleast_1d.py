@@ -35,14 +35,8 @@ from . import test_utils as tu
 _FLOAT_DTYPES = list(utils.ALL_FLOAT_DTYPES)
 _INT_DTYPES = [torch.int8, torch.uint8, *utils.ALL_INT_DTYPES]
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_DTYPE_CANDIDATES = _FLOAT_DTYPES + _INT_DTYPES + _FP8_DTYPES + list(utils.BOOL_TYPES)
+_SUPPORTED_DTYPES = _FLOAT_DTYPES + _INT_DTYPES + _FP8_DTYPES + list(utils.BOOL_TYPES)
 
-# The op supports every storage dtype (it is a pure view), so probe the device
-# once and drop any dtype the active backend cannot build/call. The fallback
-# keeps parametrization non-empty so collection never fails on an empty set.
-_SUPPORTED_DTYPES = (
-    tu.supported_dtypes("atleast_1d", candidates=_DTYPE_CANDIDATES) or _DTYPE_CANDIDATES
-)
 
 # nan/inf pass through a view untouched; float8 is included but compared through
 # the FP8 comparison path in tu.assert_result_equal.

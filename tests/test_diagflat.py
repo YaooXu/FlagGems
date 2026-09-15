@@ -23,9 +23,9 @@ and whole ranks rather than the generic multi-million-element levels are used.
 
 Coverage follows the regular-operator spec adapted to a pure data-movement op:
 
-* dtype coverage is probed with :func:`tu.supported_dtypes` (all of the spec's
+* dtype coverage explicitly includes all of the spec's
   required dtypes -- int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64
-  -- plus bool are supported on the active backend here);
+  -- plus float64/int16/bool;
 * shape levels: the spec's 7 shapes (0-D, which torch.diagflat accepts, through
   the large dense levels), bounded to inputs whose quadratic output stays small,
   plus the empty input;
@@ -46,10 +46,10 @@ import flag_gems
 from . import test_utils as tu
 
 # ---------------------------------------------------------------------------
-# Dtype support (probe before writing cases, per the spec)
+# Dtype coverage
 # ---------------------------------------------------------------------------
 
-_PROBE_DTYPES = [
+_DIAGFLAT_DTYPES = [
     torch.int8,
     torch.uint8,
     torch.float8_e4m3fn,
@@ -63,14 +63,6 @@ _PROBE_DTYPES = [
     torch.float64,
     torch.bool,
 ]
-# The probe builds a tiny input per dtype and calls the real aten op, treating
-# any exception as "unsupported" (see tests/test_utils.py). If the probe yields
-# nothing, keep the full candidate list rather than a float32-only fallback, so
-# a failed/absent probe never silently drops the spec-required int8/uint8/fp8
-# dtypes.
-_DIAGFLAT_DTYPES = tu.supported_dtypes("diagflat", _PROBE_DTYPES)
-if not _DIAGFLAT_DTYPES:
-    _DIAGFLAT_DTYPES = list(_PROBE_DTYPES)
 
 # Every floating dtype is exercised here, fp8 included. The narrow types do
 # carry the special values: float8_e5m2 stores +/-inf and nan bit-for-bit and

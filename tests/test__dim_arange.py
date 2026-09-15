@@ -68,8 +68,7 @@ _DIM_ARANGE_CASES = [
 
 # The op ignores the values *and* the dtype of ``like`` -- it only reads its
 # shape/device -- so the spec's full required dtype set (int8, uint8, fp8,
-# fp32/bf16/fp16, int32/int64, bool) must be covered wherever the runtime can
-# actually build such a tensor and call the op. Probe instead of guessing.
+# fp32/bf16/fp16, int32/int64, bool) is included in the case list.
 _DTYPE_CANDIDATES = []
 for _dtype in (
     list(tu.REQUIRED_DTYPES)
@@ -81,16 +80,7 @@ for _dtype in (
         _DTYPE_CANDIDATES.append(_dtype)
 
 
-def _probe_like_dtype(dtype):
-    try:
-        probe = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
-        torch.ops.aten._dim_arange(probe, 0)
-    except Exception:
-        return False
-    return True
-
-
-_DIM_ARANGE_INPUT_DTYPES = [d for d in _DTYPE_CANDIDATES if _probe_like_dtype(d)]
+_DIM_ARANGE_INPUT_DTYPES = list(_DTYPE_CANDIDATES)
 
 # Non-contiguous views of a (4, 8, 6) base: (view_fn, logical_shape, dim,
 # expected_len). The logical shape, not the storage, must drive the result.

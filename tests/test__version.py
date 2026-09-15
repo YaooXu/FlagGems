@@ -45,7 +45,7 @@ except AttributeError:
 # torch.ops.aten._version.
 #
 # Coverage map (regular-operator spec):
-#   * dtypes: the 9 required dtypes probed with tu.supported_dtypes (int8 /
+#   * dtypes: the 9 required dtypes (int8 /
 #     uint8 / float8_e4m3fn / float8_e5m2 / fp32 / bf16 / fp16 / int32 /
 #     int64) plus the shared float / int / bool / complex families where the
 #     active backend supports them (the counter ignores the storage dtype);
@@ -93,26 +93,17 @@ def _dedup(dtypes):
     return ordered
 
 
-def _supported_or(candidates, fallback):
-    supported = tu.supported_dtypes("_version", candidates=candidates)
-    return list(supported) if supported else list(fallback)
+# The five-range / seven-shape grid runs on the required dtype set.
+_GRID_DTYPES = list(tu.REQUIRED_DTYPES)
 
-
-# The five-range / seven-shape grid runs on the required dtype set, probed on
-# the active device so unsupported storages are skipped instead of failing.
-_GRID_DTYPES = _supported_or(tu.REQUIRED_DTYPES, tu.REQUIRED_DTYPES)
-
-# Additional dtype families from the shared selector, probed the same way so a
-# backend without fp64 / fp8 / complex storage degrades cleanly.
+# Additional dtype families from the shared selector.
 _EXTRA_DTYPE_CANDIDATES = _dedup(
     list(utils.ALL_FLOAT_DTYPES)
     + list(utils.ALL_INT_DTYPES)
     + list(utils.BOOL_TYPES)
     + list(utils.COMPLEX_DTYPES)
 )
-_VERSION_DTYPES = _dedup(
-    _GRID_DTYPES + _supported_or(_EXTRA_DTYPE_CANDIDATES, _EXTRA_DTYPE_CANDIDATES)
-)
+_VERSION_DTYPES = _dedup(_GRID_DTYPES + _EXTRA_DTYPE_CANDIDATES)
 
 # nan / inf / -inf need a dtype with an inf value (fp8 has none).
 _FLOAT_VALUE_DTYPES = [dtype for dtype in _VERSION_DTYPES if dtype.is_floating_point]

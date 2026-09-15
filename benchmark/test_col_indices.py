@@ -93,34 +93,6 @@ def _build_input(layout, size, nnz, blocks, dtype, device):
     raise ValueError(f"unknown layout {layout}")
 
 
-def _probe_layout(layout):
-    """BSR is supported through the sparse row-compressed composite fallback on
-    most builds; keep it portable by probing the tiny structure once."""
-    try:
-        inp = _build_input(layout, (4, 6), 4, (2, 2), torch.float32, flag_gems.device)
-        out = torch.ops.aten.col_indices(inp)
-    except Exception:
-        return False
-    return out.dtype == torch.int64 and out.shape == (4,)
-
-
-_BSR_SUPPORTED = _probe_layout("bsr")
-_BSR_BATCH_SUPPORTED = _probe_layout("bsr_batch")
-
-
-def _supported(case):
-    layout = case[0]
-    if layout == "bsr":
-        return _BSR_SUPPORTED
-    if layout == "bsr_batch":
-        return _BSR_BATCH_SUPPORTED
-    return True
-
-
-def _col_cases():
-    return [case for case in _COL_CASES if _supported(case)]
-
-
 def _case_fn(shape, dtype):
     del dtype
     layout, size, nnz, blocks = shape
@@ -142,7 +114,7 @@ class ColIndicesBenchmark(base.GenericBenchmark):
     # shapes in core_shapes.yaml, so benchmark dedicated (layout, size, nnz,
     # blocks) cases instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _col_cases()
+        self.shapes = _COL_CASES
 
 
 @pytest.mark.col_indices

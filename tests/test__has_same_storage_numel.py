@@ -61,41 +61,22 @@ setattr(
 # via the pytest ``--quick`` flag): tu.selected_shapes() (0-D through 5-D).
 
 # ---------------------------------------------------------------------------
-# Dtype coverage -- probe, never guess
+# Dtype coverage
 # ---------------------------------------------------------------------------
 # The comparison ignores the storage values and dtype, so every storage dtype
 # the runtime can allocate must be accepted. The spec's 9 required dtypes
-# (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64) are probed with
-# tu.supported_dtypes(); the wider float/int/bool families are added where the
-# probe reports support.
+# (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64) and the shared
+# dtype families are included.
 _EXTRA_DTYPES = (
     utils.ALL_FLOAT_DTYPES
     + utils.ALL_INT_DTYPES
     + [torch.int8, torch.uint8]
     + utils.BOOL_TYPES
 )
-_CANDIDATE_DTYPES = list(dict.fromkeys(list(tu.REQUIRED_DTYPES) + _EXTRA_DTYPES))
+_HAS_SAME_STORAGE_NUMEL_DTYPES = list(
+    dict.fromkeys(list(tu.REQUIRED_DTYPES) + _EXTRA_DTYPES)
+)
 
-
-def _dtype_probe(op_name, dtype):
-    """Call the aten op on two tiny tensors of ``dtype``; any error = unsupported."""
-    try:
-        lhs = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
-        rhs = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
-        getattr(torch.ops.aten, op_name)(lhs, rhs)
-        return True
-    except Exception:
-        return False
-
-
-# If the probe yields nothing, keep the full candidate list rather than a
-# float32-only fallback, so a failed/absent probe never silently drops the
-# spec-required int8/uint8/fp8 dtypes.
-_HAS_SAME_STORAGE_NUMEL_DTYPES = tu.supported_dtypes(
-    "_has_same_storage_numel",
-    candidates=_CANDIDATE_DTYPES,
-    probe=_dtype_probe,
-) or list(_CANDIDATE_DTYPES)
 
 # Floating storage families used for the nan/inf payload case.
 _FLOAT_STORAGE_DTYPES = [

@@ -40,9 +40,8 @@ from . import test_utils as tu
 #   * value ranges: tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over representative 0/1/3-dim shapes for every supported dtype;
 #   * dtypes: the 9 spec dtypes the op accepts (int8, uint8, float8_e4m3fn,
-#     float8_e5m2, float32, bfloat16, float16, int32, int64), all of which
-#     tu.supported_dtypes reports for this device, plus float64, int16, bool and
-#     complex64 which it also supports;
+#     float8_e5m2, float32, bfloat16, float16, int32, int64), plus float64,
+#     int16, bool and complex64;
 #   * edge cases: non-contiguous (transposed) inputs, empty tensors, nan/inf
 #     and signed zero, and storage independence of the copy;
 #   * backward: detach_copy has no autograd formula, so the negative contract
@@ -50,7 +49,7 @@ from . import test_utils as tu
 #   * negative: non-tensor input and a dtype-mismatched .out buffer must raise.
 _DETACH_COPY_FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 _DETACH_COPY_INT_DTYPES = utils.ALL_INT_DTYPES + [torch.int8, torch.uint8]
-# The probe reports both fp8 formats as supported on this device; they need a
+# Both FP8 formats are covered; they need a
 # dedicated bit-exact comparison because torch.testing.assert_close cannot
 # compare float8 tensors on CPU.
 _DETACH_COPY_FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]

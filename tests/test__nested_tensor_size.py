@@ -58,9 +58,8 @@ setattr(
 # autograd support) do not apply. The op never reads the stored values, yet the
 # value-range and nan/inf workloads below still build components through the
 # shared tests/test_utils.py helpers so a candidate that wrongly derives sizes
-# from the stored values is caught. Dtypes are filtered by a device probe (see
-# ``_supported_component_dtypes``) so int8/uint8/fp8 are covered where the
-# runtime can actually materialise them. The negative cases (plain non-nested
+# from the stored values is caught. The declared storage dtype list includes
+# int8/uint8/FP8. The negative cases (plain non-nested
 # tensor, jagged layout, non-tensor argument) must raise on both the reference
 # and the candidate.
 _NUM_TENSORS = [1, 8, 64]
@@ -68,9 +67,7 @@ _VALUE_RANGE = ["-1", "1"]
 _TRAILING_EXTENT = 4
 _MAX_TRAILING_EXTENT = 4
 
-# Required dtype coverage first (int8/uint8/fp8), then the shared float/int/bool
-# sets. The probe below removes duplicates and anything the active device cannot
-# store in a strided nested tensor.
+# Required dtypes first (int8/uint8/FP8), then the shared float/int/bool sets.
 _COMPONENT_DTYPE_CANDIDATES = (
     [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
     + list(utils.ALL_FLOAT_DTYPES)
@@ -79,64 +76,8 @@ _COMPONENT_DTYPE_CANDIDATES = (
 )
 
 
-def _supported_component_dtypes():
-    """Probe which candidate dtypes can be stored in a strided nested tensor
-    that ``_nested_tensor_size`` accepts on the active device.
-
-    ``tu.supported_dtypes`` builds a *dense* probe input, which always raises
-    NotImplementedError for this op, so the check has to go through a nested
-    tensor. Both the direct reference path and the ``utils.to_reference`` path
-    (CPU move when ``--ref cpu`` is used) are exercised; any exception marks the
-    dtype unsupported. Falls back to the shared float/int/bool sets if the probe
-    cannot establish anything, so the file never collects zero cases.
-    """
-    supported = []
-    for dtype in _COMPONENT_DTYPE_CANDIDATES:
-        if dtype in supported:
-            continue
-        try:
-            components = [
-                tu.make_input(dtype, (2, 4), ["0", "1"]),
-                tu.make_input(dtype, (3, 4), ["0", "1"]),
-            ]
-            inp = torch.nested.nested_tensor(components, device=flag_gems.device)
-            ref_inp = tu.to_reference(inp)
-            ref = torch.ops.aten._nested_tensor_size(ref_inp)
-        except Exception:
-            continue
-        if (
-            torch.is_tensor(ref)
-            and ref.dtype == torch.int64
-            and tuple(ref.shape) == (2, 2)
-        ):
-            supported.append(dtype)
-    if not supported:
-        return (
-            list(utils.ALL_FLOAT_DTYPES)
-            + list(utils.ALL_INT_DTYPES)
-            + list(utils.BOOL_TYPES)
-        )
-    return supported
-
-
-_COMPONENT_DTYPES = _supported_component_dtypes()
+_COMPONENT_DTYPES = list(dict.fromkeys(_COMPONENT_DTYPE_CANDIDATES))
 _FLOAT_COMPONENT_DTYPES = [d for d in _COMPONENT_DTYPES if d.is_floating_point]
-
-
-def _supports_inf(dtype):
-    """Whether ``dtype`` can represent the inf value.
-
-    fp8 e4m3fn has nan but no inf representation: assigning inf raises
-    "value cannot be converted to type at::Float8_e4m3fn without overflow",
-    so the nan/inf test guards the inf/-inf writes with this probe.
-    """
-    try:
-        probe = torch.tensor(float("inf"), dtype=dtype)
-    except Exception:
-        return False
-    # e4m3fn silently maps inf to nan instead of raising, so check the stored
-    # value rather than relying on the conversion to throw.
-    return bool(torch.isinf(probe.to(torch.float64)))
 
 
 def _make_nested(
@@ -351,7 +292,7 @@ def test__nested_tensor_size_nan_inf_values(dtype):
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     # fp8 e4m3fn has nan but no inf representation (assigning inf overflows),
     # so the inf/-inf writes are guarded; nan is always covered.
-    has_inf = _supports_inf(dtype)
+    has_inf = dtype != torch.float8_e4m3fn
     components = []
     for length in lengths:
         values = tu.make_input(dtype, (length, 4), _VALUE_RANGE)

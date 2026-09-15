@@ -28,8 +28,7 @@ from . import test_utils as tu
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtypes: the spec's required int8 / uint8 / float8_e4m3fn / float8_e5m2
-#     plus fp16/fp32/bf16/fp64/int16/int32/int64/bool, probed at import time so
-#     a backend that cannot materialise a storage dtype is skipped cleanly;
+#     plus fp16/fp32/bf16/fp64/int16/int32/int64/bool;
 #   * shape levels: the shared tu.selected_shapes() levels mapped onto CSC
 #     layouts (rank >= 2) and dedicated (shape, nnz) layouts from the quick/default
 #     levels, ranks 2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank
@@ -49,9 +48,8 @@ from . import test_utils as tu
 # of the input's own storage (there is nothing to broadcast against) and its
 # result is an int64 metadata tensor (nothing to differentiate).
 
-# Required dtype coverage first, then the shared float/int/bool sets; the probe
-# below removes duplicates and anything the active device cannot build.
-_CCOL_DTYPE_CANDIDATES = list(
+# Required dtypes first, then the shared float/int/bool sets, deduplicated.
+_CSC_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -63,27 +61,6 @@ _CCOL_DTYPE_CANDIDATES = list(
 )
 
 
-def _csc_dtype_probe(op_name, dtype):
-    """Report whether ``op_name`` accepts a tiny sparse CSC tensor of ``dtype``."""
-    del op_name
-    try:
-        ccol = torch.tensor([0, 1, 2], dtype=torch.long, device=flag_gems.device)
-        rows = torch.tensor([0, 1], dtype=torch.long, device=flag_gems.device)
-        values = torch.zeros(2, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_csc_tensor(ccol, rows, values, (2, 2))
-        ref = torch.ops.aten.ccol_indices(tu.to_reference(inp))
-        return torch.is_tensor(ref) and ref.dtype == torch.int64
-    except Exception:
-        return False
-
-
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_CSC_DTYPES = tu.supported_dtypes(
-    "ccol_indices", candidates=_CCOL_DTYPE_CANDIDATES, probe=_csc_dtype_probe
-) or list(_CCOL_DTYPE_CANDIDATES)
 _CSC_FLOAT_DTYPES = [dtype for dtype in _CSC_DTYPES if dtype.is_floating_point]
 # fp8_e4m3fn cannot represent inf, so the nan/inf/-0.0 case only covers the
 # real floating families.
@@ -218,7 +195,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
 def test_ccol_indices_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every probed storage dtype (bool/int snap the range to the
+    # for every declared storage dtype (bool/int snap the range to the
     # representable set). The returned (batch_dims + (ncols + 1,)) ccol view
     # must match the reference exactly and alias the input's ccol storage.
     shape, nnz = case

@@ -34,11 +34,10 @@ from . import test_utils as tu
 # Coverage follows the regular-operator spec adapted to this fixed-rank (1-D)
 # gather op:
 #   * dtypes -- the full required set (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/
-#     bf16/fp16/int32/int64) plus fp64/int16/bool where the active device
-#     supports them, probed at import time with tu.supported_dtypes;
+#     bf16/fp16/int32/int64) plus fp64/int16/bool;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over the 1-D entries of tu.selected_shapes() (the shared set is
-#     multi-dim, and combinations only accepts 1-D inputs) for every probed
+#     multi-dim, and combinations only accepts 1-D inputs) for every declared
 #     dtype, so each dtype x range pair is one Workload;
 #   * shapes -- level-driven 1-D sizes crossed with r and with_replacement,
 #     including the r == 0 and r > n boundaries and the empty input;
@@ -54,10 +53,8 @@ from . import test_utils as tu
 # Broadcast does not apply: the op is unary and takes a single labelled tensor.
 # Each pytest parametrization combo below is one Workload.
 
-# Probe the storage dtypes the combinations kernel actually accepts on the
-# active device (spec: never guess). Every required dtype plus fp64/int16/bool
-# is accepted by the CUDA implementation, including the fp8 types.
-_CANDIDATE_DTYPES = list(
+# Combinations gathers stored values, including both FP8 formats.
+_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -68,9 +65,6 @@ _CANDIDATE_DTYPES = list(
     )
 )
 
-_DTYPES = tu.supported_dtypes("combinations", candidates=_CANDIDATE_DTYPES) or [
-    torch.float32
-]
 
 # assert_close does not support float8 tensors, and combinations is a pure
 # bit-exact gather, so fp8 is compared with the exact helper. All other floats
@@ -163,7 +157,7 @@ def _expected_combination_grad(n, r, with_replacement, grad_output):
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_combinations_spec_shapes_value_ranges(shape, value_range, dtype):
     # The 1-D entries of the shared spec shape set crossed with the five spec
-    # value ranges for every probed dtype. The op never transforms the stored
+    # value ranges for every declared dtype. The op never transforms the stored
     # values, so the full range sweep (including 0/max/min and degenerate
     # constant ranges) must round-trip exactly through the gather
     # materialization. bool ignores the range and is covered here as well.

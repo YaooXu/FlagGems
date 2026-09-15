@@ -42,9 +42,7 @@ setattr(
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtype grid: every storage dtype the sparse-COO runtime and the aten
 #     reference accept (int8/uint8/fp8-e4m3fn/fp8-e5m2/fp16/fp32/bf16, plus
-#     fp64/int16/int32/int64/bool when supported), probed on a real sparse input
-#     through tu.supported_dtypes so a backend lacking e.g. fp8 drops that dtype
-#     instead of failing;
+#     fp64/int16/int32/int64/bool);
 #   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/default levels,
 #     ranks 1-7, all-sparse and hybrid sparse+dense, with varying nnz so the
 #     (nnz,) + dense_shape shape of the result is exercised;
@@ -62,11 +60,11 @@ setattr(
 # its result is a non-differentiable metadata tensor (nothing to differentiate).
 
 # ---------------------------------------------------------------------------
-# Dtype support (probed on a real sparse COO input)
+# Storage dtype coverage
 # ---------------------------------------------------------------------------
 
 # Required spec dtypes first, followed by the shared float/int/bool families.
-_VALUES_DTYPE_CANDIDATES = list(
+_VALUES_DTYPES = list(
     dict.fromkeys(
         tu.REQUIRED_DTYPES
         + utils.ALL_FLOAT_DTYPES
@@ -75,30 +73,6 @@ _VALUES_DTYPE_CANDIDATES = list(
     )
 )
 
-
-def _probe_values_sparse(operator, dtype):
-    """Return True when ``aten::<operator>`` accepts a sparse COO tensor of dtype.
-
-    The generic dense probe in ``tu.supported_dtypes`` cannot be used here:
-    ``_values`` is a Sparse-only operator, so a dense input always raises. Build
-    the smallest real sparse COO input instead and call the reference op.
-    """
-    try:
-        indices = torch.zeros(1, 1, dtype=torch.long, device=flag_gems.device)
-        values = torch.ones(1, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_coo_tensor(indices, values, (2,), device=flag_gems.device)
-        getattr(torch.ops.aten, operator).default(inp)
-        return True
-    except Exception:
-        return False
-
-
-# If the probe yields nothing, keep the full candidate list rather than a
-# float32-only fallback, so a failed/absent probe never silently drops the
-# spec-required int8/uint8/fp8 dtypes.
-_VALUES_DTYPES = tu.supported_dtypes(
-    "_values", candidates=_VALUES_DTYPE_CANDIDATES, probe=_probe_values_sparse
-) or list(_VALUES_DTYPE_CANDIDATES)
 
 _VALUES_FLOAT_DTYPES = [d for d in _VALUES_DTYPES if d.is_floating_point]
 

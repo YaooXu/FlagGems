@@ -54,13 +54,12 @@ setattr(
 # scalar (mapped to the empty 1-D output) and ranks up to 5.
 
 # ---------------------------------------------------------------------------
-# Dtype coverage -- probe, never guess
+# Dtype coverage
 # ---------------------------------------------------------------------------
 # The op ignores the input values and dtype, so every storage dtype family the
 # runtime can allocate must be accepted. The spec's 9 required dtypes
-# (int8/uint8/fp8/fp32/bf16/fp16/int32/int64 plus fp16) are probed with
-# tu.supported_dtypes(); the wider float/int/bool/complex families are added
-# where the probe reports support.
+# (int8/uint8/both FP8 formats/fp32/bf16/fp16/int32/int64) and the shared
+# dtype families are included.
 _EXTRA_INPUT_DTYPES = (
     utils.ALL_FLOAT_DTYPES
     + utils.ALL_INT_DTYPES
@@ -68,15 +67,9 @@ _EXTRA_INPUT_DTYPES = (
     + utils.BOOL_TYPES
     + utils.COMPLEX_DTYPES
 )
-_CANDIDATE_INPUT_DTYPES = list(
+_SHAPE_AS_TENSOR_INPUT_DTYPES = list(
     dict.fromkeys(list(tu.REQUIRED_DTYPES) + _EXTRA_INPUT_DTYPES)
 )
-# If the probe yields nothing, keep the full candidate list rather than a
-# float32-only fallback, so a failed/absent probe never silently drops the
-# spec-required int8/uint8/fp8 dtypes.
-_SHAPE_AS_TENSOR_INPUT_DTYPES = tu.supported_dtypes(
-    "_shape_as_tensor", candidates=_CANDIDATE_INPUT_DTYPES
-) or list(_CANDIDATE_INPUT_DTYPES)
 
 # Zero-size dimensions are part of the logical shape and must be reported
 # faithfully; a ``numel == 0`` fast path would silently drop them.

@@ -48,8 +48,7 @@ setattr(
 #     plus explicit all-sparse/hybrid higher-rank layouts selected by the pytest
 #     --quick flag;
 #   * dtypes: int8 / uint8 / float8_e4m3fn / float8_e5m2 / fp32 / bf16 / fp16 /
-#     int32 / int64 (the spec's required set) plus fp64/int16/bool, filtered by
-#     a device probe so backends that cannot store a dtype are skipped cleanly;
+#     int32 / int64 (the spec's required set) plus fp64/int16/bool;
 #   * boundary cases: empty (nnz == 0, all-sparse and hybrid), single entry,
 #     uncoalesced, nan/inf/-inf/±0.0 payloads (all ignored by the query);
 #   * negative cases: dense tensors, SparseCsr tensors and non-tensor inputs are
@@ -59,8 +58,7 @@ setattr(
 # Python int, and has no autograd formula (there is nothing to broadcast against
 # or differentiate).
 
-# Required dtype coverage first, then the shared float/int/bool sets (the probe
-# below removes duplicates and anything the active backend cannot build).
+# Required dtypes first, then the shared float/int/bool sets, deduplicated.
 _DIMV_DTYPE_CANDIDATES = (
     [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
     + list(utils.ALL_FLOAT_DTYPES)
@@ -104,42 +102,7 @@ def _make_empty_coo(shape, dense_dim, dtype):
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
-def _supported_sparse_dtypes():
-    """Probe which candidate dtypes can be stored in a sparse COO tensor that
-    ``_dimV`` accepts on the active device.
-
-    ``tu.supported_dtypes`` builds a *dense* probe input, which always raises
-    NotImplementedError for this op, so the check has to go through a sparse
-    tensor. Any exception (missing sparse/fp8 storage support or a missing op
-    kernel) marks the dtype unsupported. Falls back to the shared float/int/bool
-    sets if the probe cannot establish anything, so the file never collects zero
-    cases.
-    """
-    supported = []
-    for dtype in _DIMV_DTYPE_CANDIDATES:
-        if dtype in supported:
-            continue
-        try:
-            values = tu.make_input(dtype, (3, 2), ["0", "1"])
-            indices = torch.tensor([[0, 1, 2]], dtype=torch.long)
-            inp = torch.sparse_coo_tensor(
-                indices, values, (4, 2), device=flag_gems.device
-            )
-            ref = torch.ops.aten._dimV(inp)
-        except Exception:
-            continue
-        if isinstance(ref, int) and not isinstance(ref, bool):
-            supported.append(dtype)
-    if not supported:
-        return (
-            list(utils.ALL_FLOAT_DTYPES)
-            + list(utils.ALL_INT_DTYPES)
-            + list(utils.BOOL_TYPES)
-        )
-    return supported
-
-
-_DIMV_DTYPES = _supported_sparse_dtypes()
+_DIMV_DTYPES = list(dict.fromkeys(_DIMV_DTYPE_CANDIDATES))
 _DIMV_FLOAT_DTYPES = [dtype for dtype in _DIMV_DTYPES if dtype.is_floating_point]
 
 # (shape, dense_dim) pairs: dense_dim is the reported result and

@@ -36,13 +36,10 @@ from . import test_utils as tu
 # test_copy_sparse_to_sparse_rejects_backward).
 
 # ---------------------------------------------------------------------------
-# Dtype probing
+# Dtype coverage
 # ---------------------------------------------------------------------------
 # The required dtype grid (int8 / uint8 / fp8 / fp32 / bf16 / fp16 / int32 /
-# int64) plus the extra storage dtypes this op supports. The probe calls the
-# *reference* op with a tiny sparse input per dtype, so the selected set does
-# not depend on the candidate being installed and unsupported dtypes are never
-# advertised.
+# int64) plus the extra storage dtypes this op supports.
 
 _FP8_DTYPES = tuple(
     d
@@ -198,22 +195,7 @@ def _make_nan_inf_values(values_shape, dtype):
     )
 
 
-def _probe_supported_dtypes():
-    supported = []
-    for dtype in _REQUIRED_DTYPES + _EXTRA_DTYPES:
-        try:
-            src = _make_sparse_input((4, 5), 2, 3, dtype)
-            dst = torch.zeros_like(src)
-            torch.ops.aten.copy_sparse_to_sparse_(dst, src, False)
-        except Exception:
-            continue
-        supported.append(dtype)
-    # Fall back to float32 so the module still collects on a backend where the
-    # reference sparse op is unavailable; the tests then fail on the real call.
-    return tuple(supported) or (torch.float32,)
-
-
-_SUPPORTED_DTYPES = _probe_supported_dtypes()
+_SUPPORTED_DTYPES = tuple(_REQUIRED_DTYPES + _EXTRA_DTYPES)
 _FLOAT_DTYPES = tuple(d for d in _SUPPORTED_DTYPES if d.is_floating_point) or (
     torch.float32,
 )

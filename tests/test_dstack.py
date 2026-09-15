@@ -30,10 +30,8 @@ from . import test_utils as tu
 # passing through untouched.
 #
 # Coverage follows the regular-operator test spec adapted to a Tensor[] op:
-#   * dtypes -- probed with tu.supported_dtypes; the default single-tensor probe
-#     does not apply because dstack takes a TensorList, so a custom probe builds
-#     a two-element list. int8/uint8/fp8 are hard requirements and are kept
-#     because the active backend supports them (fp8 is compared through the
+#   * dtypes -- the required set includes int8/uint8/FP8, plus the shared
+#     float/int/bool families (FP8 is compared through the
 #     exact device-resident helper since torch.testing cannot compare float8 on
 #     CPU);
 #   * value ranges -- the full tu.selected_ranges() sweep ([-1,1], [0,1],
@@ -50,7 +48,7 @@ from . import test_utils as tu
 #   * edge cases -- empty tensors, nan/inf/+-0.0 passthrough, complex inputs;
 #   * negative -- empty TensorList, mismatched non-depth dims and non-tensor
 #     list elements raise on both the reference and the candidate path;
-#   * the .out overload is probed invocable on the active backend and is tested
+#   * the .out overload is tested
 #     with alias (write-into-and-return-out) semantics.
 #
 # The candidate is resolved through flag_gems.testing.resolve_gems_op(...)
@@ -70,9 +68,7 @@ _FP8_DTYPES = frozenset(
     if dtype is not None
 )
 
-# The spec's required dtype list first (int8 / uint8 / fp8 are hard
-# requirements when the backend supports them), then the shared float/int/bool
-# sets. The probe below removes anything the active backend cannot handle.
+# Required dtypes first, then the shared float/int/bool/complex sets.
 _DTYPE_CANDIDATES = []
 for _dtype in (
     list(tu.REQUIRED_DTYPES)
@@ -85,40 +81,11 @@ for _dtype in (
         _DTYPE_CANDIDATES.append(_dtype)
 
 
-def _probe_dstack(operator, dtype):
-    """Backend-support probe for the Tensor[] op.
-
-    The shared default probe passes a single tensor, but dstack requires a
-    TensorList, so build a two-element list and compare the result dtype. Any
-    exception means the active backend cannot run dstack for that dtype.
-    """
-    del operator
-    try:
-        x = tu.make_input(dtype, (4,), ["0", "1"])
-        out = torch.ops.aten.dstack([x, x])
-    except Exception:
-        return False
-    return out.dtype == dtype
-
-
-DSTACK_DTYPES = tu.supported_dtypes(
-    "dstack", candidates=_DTYPE_CANDIDATES, probe=_probe_dstack
-)
-if not DSTACK_DTYPES:
-    # Never collect zero cases: fall back to the full candidate list so a
-    # failed/absent probe never silently drops the spec-required int8/uint8/fp8
-    # dtypes. (_DTYPE_CANDIDATES also carries the complex dtypes; those are
-    # additionally covered by the dedicated DSTACK_COMPLEX_DTYPES cases below,
-    # so the overlap is harmless.)
-    DSTACK_DTYPES = list(_DTYPE_CANDIDATES)
+DSTACK_DTYPES = list(_DTYPE_CANDIDATES)
 
 # Complex dtypes are covered as their own case (make_tensor fills the real and
-# imaginary parts); they are probed separately for the same reason as above.
-DSTACK_COMPLEX_DTYPES = [
-    dtype for dtype in utils.COMPLEX_DTYPES if _probe_dstack("dstack", dtype)
-]
-if not DSTACK_COMPLEX_DTYPES:
-    DSTACK_COMPLEX_DTYPES = list(utils.COMPLEX_DTYPES)
+# imaginary parts).
+DSTACK_COMPLEX_DTYPES = list(utils.COMPLEX_DTYPES)
 
 _MAIN_RANGE = ["-1", "1"]
 

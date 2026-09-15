@@ -70,38 +70,9 @@ _NUM_DIMS = [1, 2, 3, 5]
 _DEFAULT_VALUE_RANGE = ["-1", "1"]
 
 
-def _can_represent_inf(dtype):
-    """True when ``dtype`` can hold +inf (float8_e4m3fn cannot).
-
-    The check performs the same scalar store the nan/inf workload does, because
-    constructing a float8_e4m3fn ``inf`` tensor does not raise but silently
-    overflows (and float8 casts do not implement isinf).
-    """
-    try:
-        probe = torch.zeros(1, dtype=dtype, device=flag_gems.device)
-        probe[0] = float("inf")
-    except (RuntimeError, ValueError, TypeError):
-        return False
-    return bool(torch.isinf(probe.float()).item())
-
-
-def _nested_dtype_supported(dtype):
-    """Probe whether a strided nested tensor of components of ``dtype`` can be
-    built on the test device and fed to the reference operator."""
-    try:
-        low = tu.make_input(dtype, (2, 2), ["0", "1"])
-        high = tu.make_input(dtype, (3, 2), ["0", "1"])
-        inp = torch.nested.nested_tensor([low, high], device=flag_gems.device)
-        torch.ops.aten._nested_tensor_storage_offsets(inp)
-    except Exception:
-        return False
-    return True
-
-
 # Spec dtype coverage: the required 9 dtypes (int8/uint8/fp8 included) plus the
-# extra float/int/bool dtypes FlagGems tests use, deduplicated and then probed
-# so a backend that rejects a component dtype is skipped instead of failing.
-_DTYPE_CANDIDATES = list(
+# extra float/int/bool dtypes FlagGems tests use, deduplicated.
+_COMPONENT_DTYPES = list(
     dict.fromkeys(
         tu.REQUIRED_DTYPES
         + utils.ALL_FLOAT_DTYPES
@@ -109,18 +80,12 @@ _DTYPE_CANDIDATES = list(
         + utils.BOOL_TYPES
     )
 )
-# Fallback keeps the full candidate list rather than a float32-only one, so a
-# failed/absent nested-dtype probe never silently drops the spec-required
-# int8/uint8/fp8 dtypes.
-_COMPONENT_DTYPES = [
-    dtype for dtype in _DTYPE_CANDIDATES if _nested_dtype_supported(dtype)
-] or list(_DTYPE_CANDIDATES)
 # nan/inf are only representable by some floating dtypes (float8_e4m3fn has no
 # inf), so the nan/inf workload is restricted to the ones that can hold them.
 _NAN_INF_DTYPES = [
     dtype
     for dtype in _COMPONENT_DTYPES
-    if dtype.is_floating_point and _can_represent_inf(dtype)
+    if dtype.is_floating_point and dtype != torch.float8_e4m3fn
 ]
 
 

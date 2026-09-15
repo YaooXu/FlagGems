@@ -48,8 +48,8 @@ from . import test_utils as tu
 #     3-D, hybrid (dense trailing dims), the no-op path, sparse-dimension growth
 #     on a non-empty tensor, and free reshapes of the empty tensor;
 #   * dtypes: every sparse COO storage dtype the runtime supports, including the
-#     spec-required int8 / uint8 / float8_e4m3fn / float8_e5m2 (probed on the
-#     active device before parametrization) plus fp16/fp32/bf16/fp64,
+#     spec-required int8 / uint8 / float8_e4m3fn / float8_e5m2 plus
+#     fp16/fp32/bf16/fp64,
 #     int16/int32/int64 and bool;
 #   * value ranges: the shared five per-dtype ranges, plus an explicit
 #     nan / inf / -inf / -0.0 payload case;
@@ -79,42 +79,17 @@ _VALUE_RANGE_CASES = [
 ]
 
 # Dtype coverage: the spec-required 9 dtypes where the operator supports them.
-# int8 / uint8 / fp8 are hard requirements when the CUDA kernel supports them,
-# so they are probed on the active device rather than assumed. float8 dtypes are
-# looked up defensively (older torch builds have no float8 attribute).
+# int8 / uint8 / FP8 are included in the declared case list.
 _EXTRA_DTYPES = [torch.int8, torch.uint8]
 for _fp8_name in ("float8_e4m3fn", "float8_e5m2"):
     _fp8_dtype = getattr(torch, _fp8_name, None)
     if _fp8_dtype is not None:
         _EXTRA_DTYPES.append(_fp8_dtype)
 
-_CANDIDATE_DTYPES = (
+_RESIZE_DTYPES = (
     utils.ALL_FLOAT_DTYPES + utils.ALL_INT_DTYPES + _EXTRA_DTYPES + utils.BOOL_TYPES
 )
 
-
-def _sparse_dtype_probe(op_name, dtype):
-    # tu.supported_dtypes' default probe calls the operator with a *dense*
-    # tensor, which sparse_resize_ rejects for every dtype; use a tiny 1-D
-    # sparse COO tensor instead and treat any exception as "unsupported".
-    try:
-        index = torch.tensor([0, 1], dtype=torch.long, device=flag_gems.device)
-        values = torch.ones((2,), dtype=torch.float32, device=flag_gems.device).to(
-            dtype
-        )
-        inp = torch.sparse_coo_tensor(
-            index.unsqueeze(0), values, (4,), device=flag_gems.device
-        )
-        torch.ops.aten.sparse_resize_(inp, [6], 1, 0)
-        return True
-    except Exception:
-        return False
-
-
-# Only the dtypes this device's sparse COO storage actually accepts.
-_RESIZE_DTYPES = tu.supported_dtypes(
-    "sparse_resize_", _CANDIDATE_DTYPES, probe=_sparse_dtype_probe
-)
 
 # Shape-level dimension: the shared selected_shapes (quick/default levels via
 # --quick) minus the 0-dim scalar, which is not representable as a sparse

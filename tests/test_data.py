@@ -30,9 +30,7 @@ from . import test_utils as tu
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
 #   * dtype grid: the nine required spec dtypes (int8, uint8, fp8-e4m3fn,
 #     fp8-e5m2, fp32, bf16, fp16, int32, int64), plus fp64/int16/complex32/
-#     complex64/bool when the runtime accepts them, probed with
-#     tu.supported_dtypes so a backend that lacks e.g. fp8 drops that dtype
-#     instead of failing;
+#     complex64/bool;
 #   * shape levels: tu.selected_shapes() (ranks 0-5, selected by --quick);
 #   * value ranges: tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) crossed with every shape level, so each supported dtype sees
@@ -46,7 +44,7 @@ from . import test_utils as tu
 #     unary detach-and-alias op, so they are not covered);
 #   * negative: a non-tensor input raises on both the aten reference and the
 #     candidate.
-_DATA_DTYPE_CANDIDATES = list(
+_DATA_DTYPES = list(
     dict.fromkeys(
         tu.REQUIRED_DTYPES
         + utils.ALL_FLOAT_DTYPES
@@ -56,14 +54,6 @@ _DATA_DTYPE_CANDIDATES = list(
     )
 )
 
-# Probe on the real device: aten::data is dtype-agnostic (pure alias), but the
-# probe keeps the file portable to backends where a storage dtype is missing. If
-# the probe yields nothing, keep the full candidate list rather than a
-# float32-only fallback, so a failed/absent probe never silently drops the
-# spec-required int8/uint8/fp8 dtypes.
-_DATA_DTYPES = tu.supported_dtypes("data", candidates=_DATA_DTYPE_CANDIDATES) or list(
-    _DATA_DTYPE_CANDIDATES
-)
 
 # Representative non-contiguous layouts: strided slice (::2), offset slice
 # (1:) and transpose. Each one aliases the input storage but has a layout the

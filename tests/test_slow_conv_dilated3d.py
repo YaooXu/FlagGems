@@ -30,9 +30,7 @@ from .conftest import QUICK_MODE
 #   D_out = (D + 2*pD - dil_d*(kD - 1) - 1) // sD + 1
 # and likewise for H and W.
 #
-# Dtype probe (direct ATen calls on the active device; this file does not use
-# tu.supported_dtypes because the probe needs the full 6-arg conv signature):
-# the CUDA kernel is implemented only for the floating dtypes fp16 / fp32 /
+# Dtype coverage: the CUDA kernel implements the floating dtypes fp16 / fp32 /
 # bf16 / fp64 -- int8, uint8, float8_e4m3fn, float8_e5m2, int32 and int64 all
 # raise `"slow_conv_dilated<>" not implemented for '<Int/Float8...>'`. The
 # correctness grid therefore uses utils.ALL_FLOAT_DTYPES; integer/fp8 rejection

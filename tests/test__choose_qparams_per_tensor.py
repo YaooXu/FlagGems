@@ -78,8 +78,7 @@ setattr(
     ),
 )
 
-# Dtype coverage: every dtype the reference accepts (probed on the active
-# device). ALL_FLOAT_DTYPES / ALL_INT_DTYPES already honour the device's
+# Dtype coverage: ALL_FLOAT_DTYPES / ALL_INT_DTYPES honour the device's
 # bf16 / fp64 / int64 support flags.
 _CQPT_DTYPES = (
     utils.ALL_FLOAT_DTYPES
@@ -112,20 +111,6 @@ _CQPT_INF_INPUT = [float("inf"), float("-inf"), 0.0]
 
 # fp64 extreme symbols are bounded below the fp32-internal reference overflow.
 _FP64_EXTREME_BOUND = 1e30
-
-
-def _fp8_available():
-    """True when the active device can materialise an fp8 tensor at all."""
-    try:
-        torch.zeros((1,), dtype=torch.float8_e4m3fn, device=flag_gems.device)
-    except Exception:
-        return False
-    return True
-
-
-_FP8_MARK = pytest.mark.skipif(
-    not _fp8_available(), reason="fp8 tensors are not supported on this device"
-)
 
 
 def _make_input(shape, dtype, value_range):
@@ -331,7 +316,6 @@ def test__choose_qparams_per_tensor_rejects_complex():
 
 
 @pytest.mark._choose_qparams_per_tensor
-@_FP8_MARK
 def test__choose_qparams_per_tensor_rejects_fp8():
     """fp8 has no min/max reduction kernel; reject the dtype."""
     inp = torch.zeros((4,), dtype=torch.float8_e4m3fn, device=flag_gems.device)

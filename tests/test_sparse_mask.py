@@ -51,13 +51,13 @@ from . import test_utils as tu
 # installed by KernelGen for this run wins.
 
 # ---------------------------------------------------------------------------
-# Dtype support (probed on a real sparse COO mask, spec: never guess).
+# Dtype coverage for a sparse COO mask.
 # ---------------------------------------------------------------------------
 # Required spec dtypes first (int8/uint8/fp8e4m3/fp8e5m2/fp32/bf16/fp16/int32/
 # int64), followed by the shared float/int/bool families. fp8 self operands are
 # rejected by the aten reference itself ("Promotion for Float8 Types is not
-# supported, attempted to promote Float8_e4m3fn and Bool"), so the probe drops
-# them; int8/uint8 are accepted and are kept.
+# supported, attempted to promote Float8_e4m3fn and Bool"). The successful
+# cases therefore exclude FP8 and retain int8/uint8.
 _SPARSE_MASK_DTYPE_CANDIDATES = list(
     dict.fromkeys(
         tu.REQUIRED_DTYPES
@@ -75,37 +75,12 @@ def _make_mask(shape, density=0.5):
     return (torch.rand(shape, device=flag_gems.device) > density).to_sparse()
 
 
-def _sparse_mask_dtype_supported(dtype):
-    try:
-        inp = tu.make_input(dtype, (4, 5), ["0", "1"])
-        mask = _make_mask((4, 5))
-        torch.ops.aten.sparse_mask(inp, mask)
-    except Exception:
-        return False
-    return True
-
-
 _SPARSE_MASK_DTYPES = [
     dtype
     for dtype in _SPARSE_MASK_DTYPE_CANDIDATES
-    if _sparse_mask_dtype_supported(dtype)
+    if dtype not in (torch.float8_e4m3fn, torch.float8_e5m2)
 ]
 
-
-def _sparse_mask_out_supported():
-    # Probe the real .out overload; a backend without a registered
-    # sparse_mask.out kernel must not get a simulated test.
-    try:
-        inp = tu.make_input(torch.float32, (4, 5), ["0", "1"])
-        mask = _make_mask((4, 5))
-        out = torch.empty_like(mask, dtype=inp.dtype)
-        torch.ops.aten.sparse_mask.out(inp, mask, out=out)
-    except Exception:
-        return False
-    return True
-
-
-_OUT_SUPPORTED = _sparse_mask_out_supported()
 
 # Dedicated structural shapes: element counts stay small (<= 420) for the
 # structure-heavy tests (sparse self, non-contiguous self, .out variant) since
@@ -250,10 +225,6 @@ def test_sparse_mask_non_contiguous(base_shape, shape, dtype):
 
 
 @pytest.mark.sparse_mask_out
-@pytest.mark.skipif(
-    not _OUT_SUPPORTED,
-    reason="aten::sparse_mask.out has no kernel on this backend",
-)
 @pytest.mark.parametrize("shape", _SPARSE_MASK_STRUCT_SHAPES)
 @pytest.mark.parametrize("dtype", _SPARSE_MASK_DTYPES)
 def test_sparse_mask_out(shape, dtype):

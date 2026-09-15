@@ -35,9 +35,8 @@ from . import test_utils as tu
 #     multi-tensor workloads, plus mixed-rank / empty / 0-dim / high-rank lists;
 #   * value ranges: tu.selected_ranges() over small input lists for every
 #     supported dtype (the values must round-trip exactly through the copy);
-#   * dtype coverage: the required int8/uint8/float8_e4m3fn/float8_e5m2 set is
-#     probed with a real list input (the default probe passes a bare tensor,
-#     which this op's schema rejects);
+#   * dtype coverage: the declared list includes the required
+#     int8/uint8/float8_e4m3fn/float8_e5m2 storage types;
 #   * edge cases: non-contiguous (transposed and strided) inputs and
 #     nan/inf/-inf/+-0.0 passthrough;
 #   * backward: autograd.grad() against the analytic narrow-and-view gradient
@@ -49,7 +48,7 @@ _UNSIGNED_DTYPES = {torch.uint8}
 
 # The spec's required dtype set first (int8/uint8/fp8 + the standard
 # float/int dtypes), then the remaining dtypes shared helpers expose.
-_CANDIDATE_DTYPES = list(
+_SUPPORTED_DTYPES = list(
     dict.fromkeys(
         [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
         + list(utils.ALL_FLOAT_DTYPES)
@@ -59,23 +58,6 @@ _CANDIDATE_DTYPES = list(
 )
 
 
-def _flatten_dtype_probe(dtype):
-    # flatten_dense_tensors takes a Tensor[]; probe with a real list because the
-    # default proof path in tu.supported_dtypes passes a bare tensor, which the
-    # schema rejects for every dtype.
-    try:
-        x = tu.make_input(dtype, (4,), ["0", "1"])
-        torch.ops.aten.flatten_dense_tensors([x])
-    except Exception:
-        return False
-    return True
-
-
-_SUPPORTED_DTYPES = tu.supported_dtypes(
-    "flatten_dense_tensors",
-    _CANDIDATE_DTYPES,
-    probe=lambda _op, dtype: _flatten_dtype_probe(dtype),
-)
 _FLOAT_DTYPES = [
     d for d in _SUPPORTED_DTYPES if d.is_floating_point and d not in _FP8_SET
 ]

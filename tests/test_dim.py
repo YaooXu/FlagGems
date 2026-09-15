@@ -30,8 +30,7 @@ from . import test_utils as tu
 #
 # Coverage (regular-operator spec, metadata adaptation):
 #   * dtypes -- int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64 plus
-#     fp64/int16/bool where the device supports them, probed at import time
-#     with tu.supported_dtypes;
+#     fp64/int16/bool;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over the spec shape set and representative dense / sparse COO /
 #     sparse CSR layouts;
@@ -46,7 +45,7 @@ from . import test_utils as tu
 # plain Python int (there is nothing to broadcast against, and an int result has
 # no autograd graph).
 
-_DIM_DTYPE_CANDIDATES = list(
+_DIM_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -57,13 +56,6 @@ _DIM_DTYPE_CANDIDATES = list(
     )
 )
 
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_DIM_DTYPES = tu.supported_dtypes("dim", candidates=_DIM_DTYPE_CANDIDATES) or list(
-    _DIM_DTYPE_CANDIDATES
-)
 _DIM_FLOAT_DTYPES = [dtype for dtype in _DIM_DTYPES if dtype.is_floating_point]
 
 # Dense (strided) tensors: dim == len(shape). Ranks 0 through 5 cover the full
@@ -246,7 +238,7 @@ def _assert_result(res_out, ref_out, expected):
 @pytest.mark.parametrize("shape, expected", _dense_cases())
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
 def test_dim_dense_layouts(shape, expected, dtype):
-    # Values from [-1, 1]: negative and positive stored values for every probed
+    # Values from [-1, 1]: negative and positive stored values for every declared
     # dtype; the reported rank depends only on the layout.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)

@@ -53,7 +53,7 @@ setattr(
 #     supported dtype is exercised with negative, positive, extreme and
 #     degenerate ranges (the aliasing view round-trips all of them bit-for-bit,
 #     and the tangent is preserved unchanged);
-#   * dtype coverage: the probe-verified required dtypes (int8, uint8,
+#   * dtype coverage: the required dtypes (int8, uint8,
 #     float8_e4m3fn, float8_e5m2, fp32, bf16, fp16, int32, int64) plus
 #     float64/complex64 where the backend supports them. The dual path only
 #     accepts floating-point/complex primals, so the int/bool dtypes are
@@ -77,25 +77,8 @@ def _unique(items):
     return list(dict.fromkeys(items))
 
 
-def _dual_dtype_supported(dtype):
-    """Probe the forward-AD dual path for ``dtype`` on the active device."""
-    try:
-        primal = torch.zeros((2,), dtype=dtype, device=flag_gems.device)
-        tangent = torch.zeros((2,), dtype=dtype, device=flag_gems.device)
-        with dual_level() as level:
-            dual = torch.ops.aten._make_dual(primal, tangent, level)
-            primal_out, tangent_out = torch.autograd.forward_ad.unpack_dual(dual)
-        return (
-            tangent_out is not None
-            and tangent_out.dtype == dtype
-            and primal_out.dtype == dtype
-        )
-    except Exception:
-        return False
-
-
-# Dtypes required by the operator-test spec. int8/uint8/int32/int64 are probed
-# out because a forward tangent only exists for floating-point/complex storage.
+# A forward tangent requires floating-point/complex storage; integer and bool
+# primals are exercised by the negative cases.
 _REQUIRED_DTYPES = [
     torch.int8,
     torch.uint8,
@@ -113,7 +96,7 @@ _REQUIRED_DTYPES = [
 DUAL_DTYPES = [
     d
     for d in _unique(_REQUIRED_DTYPES + utils.ALL_FLOAT_DTYPES + [torch.complex64])
-    if _dual_dtype_supported(d)
+    if d.is_floating_point or d.is_complex
 ]
 
 # Representative ranks for the full value-range sweep (0-dim, 1-dim, 3-dim);
@@ -124,7 +107,7 @@ _MAKE_DUAL_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _MAKE_DUAL_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _MAKE_DUAL_EMPTY_SHAPES = [(0,), (2, 0, 3)]
 
-# Levels probed on a plain tensor with no active dual_level(): every index,
+# Levels on a plain tensor with no active dual_level(): every index,
 # including 0, is inactive outside the context and must be rejected.
 _INACTIVE_LEVELS = [-1, 0, 1, 3]
 

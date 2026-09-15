@@ -36,7 +36,7 @@ from . import test_utils as tu
 #     with negative, positive, extreme and degenerate value ranges (the
 #     returned col_indices is identical for all of them);
 #   * dtype coverage: every storage dtype the sparse row-compressed runtime
-#     accepts, probed on the active device -- int8/uint8/fp8/fp16/bf16/fp32/
+#     accepts -- int8/uint8/fp8/fp16/bf16/fp32/
 #     fp64/int16/int32/int64/bool are all accepted because the accessor never
 #     reads the values payload;
 #   * edge cases: empty (nnz == 0, unbatched and batched, CSR and BSR), single
@@ -121,21 +121,6 @@ def _build_input(layout, shape, nnz, blocks, dtype, value_range=("-1", "1"), see
     raise ValueError(f"unknown layout {layout}")
 
 
-def _probe_bsr(batched):
-    shape = (2, 4, 6) if batched else (4, 6)
-    try:
-        inp = _build_bsr(shape, 4, (2, 2), torch.float32, ["-1", "1"])
-        out = torch.ops.aten.col_indices(inp)
-    except Exception:
-        return False
-    expected = tuple(shape[:-2]) + (4,)
-    return out.dtype == torch.int64 and out.shape == expected
-
-
-_BSR_SUPPORTED = _probe_bsr(False)
-_BSR_BATCH_SUPPORTED = _probe_bsr(True)
-
-
 # ---------------------------------------------------------------------------
 # Layout cases by level
 # ---------------------------------------------------------------------------
@@ -169,37 +154,22 @@ _COL_CASES_ALL = [
 ]
 
 
-def _supported(case):
-    layout = case[0]
-    if layout == "bsr":
-        return _BSR_SUPPORTED
-    if layout == "bsr_batch":
-        return _BSR_BATCH_SUPPORTED
-    return True
-
-
-def _select(cases):
-    return [case for case in cases if _supported(case)]
-
-
 def _col_cases():
     """Layouts selected by pytest --quick (quick) vs default."""
     if tu.QUICK_MODE:
-        return _select([("csr", (2, 19, 7), 8, None)])
-    return _select(_COL_CASES_CORE + _COL_CASES_ALL)
+        return [("csr", (2, 19, 7), 8, None)]
+    return _COL_CASES_CORE + _COL_CASES_ALL
 
 
 def _col_value_range_cases():
     """Representative 2-D / batched CSR + BSR layouts for the value-range sweep."""
     if tu.QUICK_MODE:
-        return _select([("csr", (2, 19, 7), 8, None)])
-    return _select(
-        [
-            ("csr", (5, 4), 7, None),
-            ("csr", (3, 5, 4), 7, None),
-            ("bsr", (4, 6), 4, (2, 2)),
-        ]
-    )
+        return [("csr", (2, 19, 7), 8, None)]
+    return [
+        ("csr", (5, 4), 7, None),
+        ("csr", (3, 5, 4), 7, None),
+        ("bsr", (4, 6), 4, (2, 2)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +179,7 @@ def _col_value_range_cases():
 # The result ignores the stored values, but the candidate must accept any
 # storage dtype the sparse row-compressed runtime supports: every required
 # spec dtype (int8/uint8/fp8/...) plus the wider float/int families and bool.
-_COL_DTYPE_CANDIDATES = [
+_COL_DTYPES = [
     torch.int8,
     torch.uint8,
     torch.float8_e4m3fn,
@@ -224,21 +194,6 @@ _COL_DTYPE_CANDIDATES = [
     torch.bool,
 ]
 
-
-def _probe_dtype(dtype):
-    """A dtype is supported when a tiny CSR tensor of that storage dtype can be
-    built on the active device and col_indices returns the expected int64 view."""
-    try:
-        inp = _build_csr((3, 4), 5, dtype, ["-1", "1"])
-        out = torch.ops.aten.col_indices(inp)
-    except Exception:
-        return False
-    return out.dtype == torch.int64 and out.shape == (5,)
-
-
-_COL_DTYPES = [dtype for dtype in _COL_DTYPE_CANDIDATES if _probe_dtype(dtype)]
-if not _COL_DTYPES:  # pragma: no cover - sparse CSR unsupported on this backend
-    _COL_DTYPES = [torch.float32]
 
 _NAN_INF_DTYPES = [dtype for dtype in utils.ALL_FLOAT_DTYPES if dtype in _COL_DTYPES]
 
@@ -350,7 +305,6 @@ def test_col_indices_empty_batched(dtype):
 
 
 @pytest.mark.col_indices
-@pytest.mark.skipif(not _BSR_SUPPORTED, reason="BSR col_indices unsupported")
 @pytest.mark.parametrize("dtype", _COL_DTYPES)
 def test_col_indices_empty_bsr(dtype):
     # nnz == 0 for BSR: col and values are empty, but col_indices must still
@@ -421,7 +375,6 @@ def test_col_indices_full_storage(dtype):
 
 
 @pytest.mark.col_indices
-@pytest.mark.skipif(not _BSR_SUPPORTED, reason="BSR col_indices unsupported")
 @pytest.mark.parametrize("dtype", _COL_DTYPES)
 def test_col_indices_bsr_ragged_blocks(dtype):
     # BSR whose blocks do not divide the matrix dims: the compressed extents

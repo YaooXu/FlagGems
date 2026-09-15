@@ -203,49 +203,8 @@ else:
     BIASES = [True, False]
 
 
-def _probe_supported(op_name, dtype):
-    """Probe whether the ATen slow_conv_transpose3d kernel supports ``dtype``.
+SUPPORTED_DTYPES = [torch.float32, torch.bfloat16, torch.float16, torch.float64]
 
-    The default ``tu.supported_dtypes`` probe feeds a 1-D tensor to the op, which
-    is not a valid slow_conv_transpose3d call, so use a minimal but well-formed
-    5-D batched call here. The CUDA kernel only implements floating dtypes
-    (int8/uint8/fp8/int32/int64 all raise), so those are filtered out.
-    """
-    try:
-        with torch.no_grad():
-            inp = torch.ones((1, 1, 3, 3, 3), dtype=dtype, device=flag_gems.device)
-            weight = torch.ones((1, 1, 1, 1, 1), dtype=dtype, device=flag_gems.device)
-            torch.ops.aten.slow_conv_transpose3d(inp, weight, (1, 1, 1))
-        return True
-    except Exception:
-        return False
-
-
-try:
-    SUPPORTED_DTYPES = tu.supported_dtypes(
-        "slow_conv_transpose3d",
-        candidates=[
-            torch.int8,
-            torch.uint8,
-            torch.float8_e4m3fn,
-            torch.float8_e5m2,
-            torch.float32,
-            torch.bfloat16,
-            torch.float16,
-            torch.int32,
-            torch.int64,
-            torch.float64,
-        ],
-        probe=_probe_supported,
-    )
-except Exception:
-    SUPPORTED_DTYPES = []
-
-if not SUPPORTED_DTYPES:
-    # conv dispatches to the CUDA/cuDNN convolution kernels, which only have
-    # floating-point implementations, so the float dtype set IS this operator's
-    # complete dtype set; keep it whole rather than narrowing it further.
-    SUPPORTED_DTYPES = list(utils.ALL_FLOAT_DTYPES)
 
 FLOAT_DTYPES = list(SUPPORTED_DTYPES)
 

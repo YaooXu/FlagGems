@@ -63,60 +63,10 @@ for _name in (
 #   wrong-dtype quantized .out buffer and a shape-mismatched .out buffer must
 #   raise on the aten reference and the candidate must reject them too.
 
-# Storage dtypes probed with tu.supported_dtypes + a custom probe (the default
-# probe calls ``packet.default(x)`` with a single argument, but this op also
-# needs (scale, zero_point), so the probe mirrors a real call). Probing the 9
-# required spec dtypes plus float64/int16/bool reports exactly these three:
-# every other dtype hits "Creation of quantized tensor requires quantized dtype
-# like torch.quint8".
-_DTYPE_CANDIDATE_NAMES = (
-    "int8",
-    "uint8",
-    "float8_e4m3fn",
-    "float8_e5m2",
-    "float32",
-    "bfloat16",
-    "float16",
-    "int32",
-    "int64",
-    "int16",
-    "float64",
-    "bool",
-)
-_DTYPE_CANDIDATES = [
-    d
-    for d in (getattr(torch, name, None) for name in _DTYPE_CANDIDATE_NAMES)
-    if isinstance(d, torch.dtype)
-]
+# Quantized storage maps int8/uint8/int32 to qint8/quint8/qint32.
 
 
-def _probe_supported_dtypes():
-    def _probe(op_name, dtype):
-        packet = getattr(torch.ops.aten, op_name, None)
-        if packet is None:
-            return False
-        try:
-            x = torch.tensor([1, 2, 3], dtype=dtype, device=flag_gems.device)
-            packet.default(x, 0.1, 0)
-        except Exception:
-            return False
-        return True
-
-    return tu.supported_dtypes(
-        "_make_per_tensor_quantized_tensor",
-        candidates=_DTYPE_CANDIDATES,
-        probe=_probe,
-    )
-
-
-# Fall back to the known-good set if the probe cannot run (e.g. an environment
-# where the aten packet is unavailable at import time): the reference rejects
-# every dtype outside {uint8, int8, int32}.
-_MAKE_PERTENSOR_INPUT_DTYPES = _probe_supported_dtypes() or [
-    torch.uint8,
-    torch.int8,
-    torch.int32,
-]
+_MAKE_PERTENSOR_INPUT_DTYPES = [torch.int8, torch.uint8, torch.int32]
 
 _QUANT_DTYPE = {
     torch.uint8: torch.quint8,

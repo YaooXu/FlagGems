@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
 
 import pytest
 import torch
@@ -31,9 +30,8 @@ from . import test_utils as tu
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtype coverage: the 9 required spec dtypes (int8, uint8, float8_e4m3fn,
 #     float8_e5m2, float32, bfloat16, float16, int32, int64) plus float64,
-#     int16 and bool. Every candidate is probed with a real CSR tensor before
-#     being parametrized (some backends cannot build fp8/sparse storage), and
-#     the operator reads only the crow metadata regardless of storage dtype;
+#     int16 and bool; the operator reads only the crow metadata regardless
+#     of storage dtype;
 #   * shape levels: crow_indices only accepts rank >= 2 CSR layouts, so the
 #     spec's 0-dim/1-dim levels are represented by their nearest CSR-valid
 #     analogues -- ((1, 1)) for the scalar/single-element boundary and ((1, 6))
@@ -100,9 +98,8 @@ def _csr_value_range_cases():
 
 
 # Every spec dtype (int8/uint8/fp8 are hard requirements) plus the float/int/bool
-# families from accuracy_utils. The actual parametrization is the probed subset:
-# the operator accepts any storage dtype the CSR runtime can hold.
-_CSR_DTYPE_CANDIDATES = list(
+# families from accuracy_utils: the operator only reads CSR index metadata.
+_CSR_DTYPES = list(
     dict.fromkeys(
         utils.ALL_FLOAT_DTYPES
         + utils.ALL_INT_DTYPES
@@ -115,30 +112,6 @@ _CSR_DTYPE_CANDIDATES = list(
         ]
     )
 )
-
-
-def _probe_csr_dtypes(candidates):
-    """Probe which storage dtypes can build a CSR tensor and run crow_indices."""
-    supported = []
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        for dtype in candidates:
-            try:
-                crow = torch.tensor([0, 1], dtype=torch.long, device=flag_gems.device)
-                cols = torch.tensor([0], dtype=torch.long, device=flag_gems.device)
-                values = torch.ones(1, dtype=dtype, device=flag_gems.device)
-                inp = torch.sparse_csr_tensor(crow, cols, values, (1, 1))
-                torch.ops.aten.crow_indices(inp)
-            except Exception:
-                continue
-            supported.append(dtype)
-    return supported
-
-
-# Fallback keeps the full candidate list rather than a float32-only one, so a
-# failed/absent probe never silently drops the spec-required int8/uint8/fp8
-# dtypes.
-_CSR_DTYPES = _probe_csr_dtypes(_CSR_DTYPE_CANDIDATES) or list(_CSR_DTYPE_CANDIDATES)
 
 
 def _make_input(shape, nnz, dtype, value_range, seed=0):
@@ -215,7 +188,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_crow_indices_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every probed storage dtype (bool/int snap the range to the
+    # for every declared storage dtype (bool/int snap the range to the
     # representable set). The returned (batch_dims + (nrows + 1,)) crow view
     # must match the reference exactly and alias the input's crow storage.
     shape, nnz = case

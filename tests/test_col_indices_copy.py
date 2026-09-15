@@ -39,9 +39,8 @@ from . import test_utils as tu
 #     the stored values, so every per-dtype range -- including the extreme
 #     [min, 0] / [0, max] magnitudes -- must be accepted and must not perturb
 #     the returned array.
-#   * dtypes: every storage dtype the sparse CSR/BSR runtime accepts, probed
-#     with tu.supported_dtypes (int8 / uint8 / both fp8 formats included when
-#     the device supports them), not guessed.
+#   * dtypes: the declared sparse CSR/BSR storage dtypes, including int8,
+#     uint8 and both FP8 formats;
 #   * edge cases: empty (nnz == 0, CSR and BSR), uncoalesced duplicate column
 #     entries, and nan / +-inf stored values (all ignored by the accessor).
 #   * negative: dense, CSC, COO tensors, non-tensor inputs and a wrong-dtype
@@ -136,34 +135,11 @@ def _dedup(dtypes):
     return result
 
 
-def _probe_sparse_storage_dtype(operator, dtype):
-    """Probe callable for tu.supported_dtypes.
-
-    A storage dtype is supported when a sparse CSR tensor of that dtype can be
-    built on the active device and the ATen metadata accessor materializes its
-    row-compressed column index array. Any exception means "unsupported".
-    """
-    try:
-        crow = torch.tensor([0, 2, 3, 5], dtype=torch.long, device=flag_gems.device)
-        col = torch.tensor([0, 1, 2, 0, 2], dtype=torch.long, device=flag_gems.device)
-        values = torch.ones(5, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_csr_tensor(
-            crow, col, values, (3, 4), device=flag_gems.device
-        )
-        packet = getattr(torch.ops.aten, operator, None)
-        if packet is None:
-            return False
-        out = packet.default(inp)
-        return out.dtype == torch.int64 and out.numel() == 5
-    except Exception:
-        return False
-
-
 # Candidate storage dtypes: the spec-required nine (int8 / uint8 / fp8 e4m3fn /
 # fp8 e5m2 / fp32 / bf16 / fp16 / int32 / int64) plus the remaining families
 # the sparse runtime commonly supports (int16 / fp64 / bool). fp8 names are
 # looked up defensively for older PyTorch builds.
-_CANDIDATE_DTYPES = _dedup(
+_COLS_DTYPES = _dedup(
     tu.REQUIRED_DTYPES
     + [
         torch.int16,
@@ -174,16 +150,6 @@ _CANDIDATE_DTYPES = _dedup(
     ]
 )
 
-# Only the dtypes the active device's sparse CSR/BSR runtime + accessor accept;
-# probed rather than guessed so unsupported vendor dtypes are skipped. If the
-# probe yields nothing, keep the full candidate list rather than a float32-only
-# fallback, so a failed/absent probe never silently drops the spec-required
-# int8/uint8/fp8 dtypes.
-_COLS_DTYPES = tu.supported_dtypes(
-    "col_indices_copy",
-    candidates=_CANDIDATE_DTYPES,
-    probe=_probe_sparse_storage_dtype,
-) or list(_CANDIDATE_DTYPES)
 
 # Value-range coverage uses non-bool storage dtypes (bool ignores the range and
 # adds nothing beyond the copy-semantics cases above).

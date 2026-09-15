@@ -39,9 +39,7 @@ setattr(
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtypes -- the full required set (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/
-#     bf16/fp16/int32/int64) plus fp64/int16/bool where the device supports
-#     them, probed at import time with tu.supported_dtypes over a tiny sparse
-#     COO tensor;
+#     bf16/fp16/int32/int64) plus fp64/int16/bool;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over both representative COO layouts and the spec shape levels;
 #   * shapes/layouts -- the tu.selected_shapes() levels (quick: (2,19,7); full:
@@ -58,7 +56,7 @@ setattr(
 # of the input's own storage (there is nothing to broadcast against) and its
 # result is an int64 metadata tensor (nothing to differentiate).
 
-_INDICES_DTYPE_CANDIDATES = list(
+_INDICES_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -70,31 +68,6 @@ _INDICES_DTYPE_CANDIDATES = list(
 )
 
 
-def _sparse_dtype_probe(op_name, dtype):
-    """Report whether ``op_name`` accepts a tiny sparse COO tensor of ``dtype``.
-
-    ``_indices`` takes a sparse tensor, so the default dense probe of
-    ``tu.supported_dtypes`` cannot decide dtype support; this probe builds a
-    real sparse COO input and calls the aten reference.
-    """
-    del op_name
-    try:
-        indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
-        values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        out = torch.ops.aten._indices(tu.to_reference(inp))
-        return out.dtype == torch.int64 and tuple(out.shape) == (2, 1)
-    except Exception:
-        return False
-
-
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_INDICES_DTYPES = tu.supported_dtypes(
-    "_indices", candidates=_INDICES_DTYPE_CANDIDATES, probe=_sparse_dtype_probe
-) or list(_INDICES_DTYPE_CANDIDATES)
 _INDICES_FLOAT_DTYPES = [dtype for dtype in _INDICES_DTYPES if dtype.is_floating_point]
 
 # (shape, sparse_dim, nnz) triples covering 1-D/2-D/3-D all-sparse, 2-D/3-D
@@ -208,7 +181,7 @@ def _assert_result(res_out, ref_out, inp, ref_inp):
 @pytest.mark.parametrize("dtype", _INDICES_DTYPES)
 def test__indices_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every probed storage dtype (bool/int snap the range to the
+    # for every declared storage dtype (bool/int snap the range to the
     # representable set). The returned (sparse_dim, nnz) index view must match
     # the reference exactly and alias the input's indices storage.
     shape, sparse_dim, nnz = case

@@ -254,49 +254,6 @@ REQUIRED_DTYPES = [
 MIN_CASES = 100
 
 
-def supported_dtypes(operator, candidates=None, probe=None):
-    """Return the subset of ``candidates`` that the op supports on the device.
-
-    ``operator`` is a ``torch.ops.aten`` operator name; ``probe`` is an optional
-    callable ``(op_name, dtype) -> bool`` (used by callers that want a custom check).
-    The default probe builds a small rank-1 input for each dtype and calls the
-    op. Unexpected errors are inconclusive and must not remove a dtype.
-    """
-    import torch
-
-    candidates = list(candidates if candidates is not None else REQUIRED_DTYPES)
-    if probe is not None:
-        return [d for d in candidates if probe(operator, d)]
-
-    packet = getattr(torch.ops.aten, operator, None)
-    if packet is None:
-        raise ValueError(f"Unknown operator: {operator}")
-    supported = []
-    for dtype in candidates:
-        # Input-construction errors never count as operator capability evidence.
-        x = torch.testing.make_tensor(
-            (4,), dtype=dtype, device=flag_gems.device, low=0, high=1
-        )
-        try:
-            packet.default(x)
-        except (RuntimeError, NotImplementedError) as exc:
-            message = str(exc).lower()
-            if any(
-                text in message
-                for text in (
-                    "not implemented for",
-                    "not supported for",
-                    "unsupported dtype",
-                )
-            ):
-                continue
-            raise RuntimeError(
-                f"Inconclusive dtype probe for {operator}/{dtype}; supply a valid probe"
-            ) from exc
-        supported.append(dtype)
-    return supported
-
-
 def special_value_cases(dtypes):
     """Representable special scenarios, kept separate in collected case IDs."""
     cases = []

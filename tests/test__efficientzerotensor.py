@@ -44,9 +44,8 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
 #   missing write is always detected.
 # - Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) plus a
 #   zero-sized-shape boundary set.
-# - Dtypes -- bool / int / float, including float8 / int8 / uint8 when the
-#   active backend accepts them (probed, never guessed); every value comparison
-#   is exact because the output is bit-exact zero.
+# - Dtypes -- bool / int / float, including float8 / int8 / uint8; every value
+#   comparison is exact because the output is bit-exact zero.
 # - Broadcast -- N/A, the only "input" is a size list; nothing to broadcast.
 # - Backward -- N/A, a factory has no differentiable input and its output is not
 #   a function of another tensor.
@@ -77,35 +76,12 @@ def _unique(dtypes):
     return ordered
 
 
-def _probe_dtype(op_name, dtype):
-    # The factory takes a size list rather than an input tensor, which the
-    # shared ``tu.supported_dtypes`` default probe cannot model, so a custom
-    # probe is supplied.
-    try:
-        getattr(torch.ops.aten, op_name)((2, 3), dtype=dtype, device=flag_gems.device)
-        return True
-    except Exception:
-        return False
-
-
-_DTYPE_CANDIDATES = _unique(
+_EFFICIENTZEROTENSOR_DTYPES = _unique(
     tu.REQUIRED_DTYPES
     + utils.BOOL_TYPES
     + utils.ALL_INT_DTYPES
     + utils.ALL_FLOAT_DTYPES
 )
-
-# On CUDA every required dtype (int8 / uint8 / float8_e4m3fn / float8_e5m2 /
-# float32 / bfloat16 / float16 / int32 / int64) is accepted; backends that
-# cannot represent some of them simply drop those parametrizations. If the probe
-# yields nothing, keep the full candidate list rather than a float32-only
-# fallback, so a failed/absent probe never silently drops the spec-required
-# int8/uint8/fp8 dtypes.
-_EFFICIENTZEROTENSOR_DTYPES = tu.supported_dtypes(
-    "_efficientzerotensor",
-    candidates=_DTYPE_CANDIDATES,
-    probe=_probe_dtype,
-) or list(_DTYPE_CANDIDATES)
 
 
 # One (dtype, value_range) pair per Workload: this crosses the five spec ranges

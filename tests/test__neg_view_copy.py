@@ -42,14 +42,13 @@ setattr(
 # aten::neg supports is exact (for integers the two's-complement wrap at INT_MIN
 # is part of the reference contract). aten's negation kernel is only implemented
 # for the regular numeric dtypes: float8 (``"neg_cuda" not implemented``) and
-# bool are rejected, so the supported-dtype set is probed at import time instead
-# of guessed, and those rejected dtypes become the negative cases.
+# bool are rejected and covered by the negative cases.
 #
 # The .out overload writes into (and returns) the caller's buffer; it is a real,
 # callable ATen overload on this backend, so it is exercised directly.
 #
 # Coverage follows the regular-operator spec adapted to a view_copy op:
-#   * dtypes: the spec-required dtypes probed on the active device (int8, uint8,
+#   * dtypes: the spec-required dtypes (int8, uint8,
 #     float32, bfloat16, float16, int32, int64) plus the operator's remaining
 #     numeric storage dtypes (int16, float64);
 #   * shape levels: tu.selected_shapes() (0~5 dims, selected by --quick) plus a
@@ -85,21 +84,12 @@ def _basic_range(dtype):
     return ["0", "max"] if dtype in _UNSIGNED_DTYPES else ["-1", "1"]
 
 
-def _op_works(dtype):
-    # Probe the real aten op on the active device; any exception means the copy
-    # (i.e. the underlying negation) is not available for this dtype.
-    try:
-        probe = tu.make_input(dtype, (2, 2), _basic_range(dtype))
-        torch.ops.aten._neg_view_copy(probe)
-        return True
-    except Exception:
-        return False
-
-
 _CANDIDATE_DTYPES = _candidate_dtypes()
-_NEG_VIEW_COPY_DTYPES = [dtype for dtype in _CANDIDATE_DTYPES if _op_works(dtype)]
-if not _NEG_VIEW_COPY_DTYPES:
-    _NEG_VIEW_COPY_DTYPES = [torch.float32]
+_NEG_VIEW_COPY_DTYPES = [
+    dtype
+    for dtype in _CANDIDATE_DTYPES
+    if dtype not in (torch.float8_e4m3fn, torch.float8_e5m2, torch.bool)
+]
 _UNSUPPORTED_DTYPES = [
     dtype for dtype in _CANDIDATE_DTYPES if dtype not in _NEG_VIEW_COPY_DTYPES
 ]
@@ -313,9 +303,7 @@ def test__neg_view_copy_backward(shape, dtype):
 
 
 @pytest.mark._neg_view_copy
-@pytest.mark.parametrize(
-    "dtype", _UNSUPPORTED_DTYPES if _UNSUPPORTED_DTYPES else [torch.bool]
-)
+@pytest.mark.parametrize("dtype", _UNSUPPORTED_DTYPES)
 def test__neg_view_copy_rejects_unsupported_dtypes(dtype):
     # The underlying negation is not implemented for these dtypes (float8 raise
     # "neg_cuda not implemented", bool likewise), so the candidate must reject

@@ -55,8 +55,7 @@ def _unique(items):
 
 
 # Sparse COO storage dtypes. int8/uint8/fp8 are part of the spec's required
-# set; all of them were probed to be representable by a sparse COO tensor on
-# the active backend.
+# set and are included in the declared case list.
 _RESIZE_DTYPES = _unique(
     [torch.float16, torch.float32]
     + ([torch.bfloat16] if utils.bf16_is_supported else [])
@@ -118,20 +117,15 @@ _SELECTED_RANGES = tu.selected_ranges()
 
 _NEGATIVE_DTYPES = [torch.float32, torch.int8]
 
-# Candidate invalid (size, sparse_dim, dense_dim) triples: the sparse/dense
-# split must sum to the requested number of dims and every entry must be
-# non-negative. Some triples (a dense-view target, a zero size) are accepted by
-# the reference, so the candidates are filtered below by an actual reference
-# call rather than hardcoded.
-_INVALID_CALL_CANDIDATES = [
+# Invalid triples have a mismatched dimension count, a negative dimension
+# count or a negative size. Dense targets and zero extents are valid.
+_INVALID_CALLS = [
     pytest.param([4, 5], 1, 0, id="split_too_small"),
     pytest.param([4, 5], 2, 1, id="split_too_large"),
     pytest.param([4, 5], 3, 0, id="split_too_large_sparse"),
-    pytest.param([4, 5], 0, 2, id="dense_view_target"),
     pytest.param([4, 5], -1, 2, id="negative_sparse_dim"),
     pytest.param([4, 5], 2, -1, id="negative_dense_dim"),
     pytest.param([4, -5], 2, 0, id="negative_size"),
-    pytest.param([4, 0], 2, 0, id="zero_size"),
 ]
 
 
@@ -180,26 +174,6 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
     )
 
 
-def _call_is_rejected(size, sparse_dim, dense_dim):
-    # A negative case is only kept if the reference really rejects it (a dense
-    # or zero size target is legal for some backends).
-    try:
-        inp = _make_sparse_input((4, 5), 2, 1, torch.float32)
-        torch.ops.aten.sparse_resize_and_clear_(
-            tu.to_reference(inp), list(size), sparse_dim, dense_dim
-        )
-        return False
-    except Exception:
-        return True
-
-
-_INVALID_CALLS = [
-    p
-    for p in _INVALID_CALL_CANDIDATES
-    if _call_is_rejected(p.values[0], p.values[1], p.values[2])
-]
-
-
 def _nan_inf_values(dtype, values_shape, device):
     # A deterministic nan/inf/-inf/0/-0/finite pattern covering the non-finite
     # payloads a resize+clear must discard (no arithmetic is performed).
@@ -227,23 +201,9 @@ def _resolve_gems_op():
     )
 
 
-def _applicable_value_ranges():
-    # The five shared ranges are snapped to the dtype's bounds by
-    # tu.make_input; combinations that cannot be represented (e.g. the
-    # negative-only range for uint8) are dropped rather than silently
-    # mis-tested.
-    pairs = []
-    for dtype in _RESIZE_DTYPES:
-        for value_range in _SELECTED_RANGES:
-            try:
-                tu.make_input(dtype, (1,), value_range)
-            except Exception:
-                continue
-            pairs.append((dtype, value_range))
-    return pairs
-
-
-_VALUE_RANGE_PAIRS = _applicable_value_ranges()
+_VALUE_RANGE_PAIRS = [
+    (dtype, value_range) for dtype in _RESIZE_DTYPES for value_range in _SELECTED_RANGES
+]
 _VALUE_RANGE_IDS = [
     f"{str(dtype).replace('torch.', '')}-{'_'.join(value_range)}"
     for dtype, value_range in _VALUE_RANGE_PAIRS

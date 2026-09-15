@@ -118,10 +118,7 @@ _BLOCK = (2, 2)
 #
 # The regular-operator spec requires int8, uint8, the two fp8 formats, fp32,
 # bf16, fp16, int32 and int64 where the operator supports them. The BSR factory
-# accepts every storage dtype the underlying tensor supports, so the list is
-# probed against the real ATen call (tu.supported_dtypes cannot be used here: it
-# probes ``packet.default(x)`` with a single tensor, while this op needs three
-# component tensors).
+# accepts every storage dtype in the list below.
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 _REQUIRED_VALUE_DTYPES = [
     torch.int8,
@@ -139,43 +136,13 @@ _REQUIRED_VALUE_DTYPES = [
 _EXTRA_VALUE_DTYPES = [torch.bool, torch.int16, torch.float64]
 
 
-def _probe_value_dtypes(candidates):
-    crow = torch.tensor([0, 1, 1], dtype=torch.long, device=flag_gems.device)
-    col = torch.tensor([0], dtype=torch.long, device=flag_gems.device)
-    supported = []
-    for dtype in candidates:
-        try:
-            values = torch.zeros((1, 2, 2), dtype=dtype, device=flag_gems.device)
-            torch.ops.aten.sparse_bsr_tensor(
-                crow, col, values, [2, 2], dtype=dtype, device=flag_gems.device
-            )
-        except Exception:
-            continue
-        supported.append(dtype)
-    return supported
-
-
-_VALUE_DTYPES = _probe_value_dtypes(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
-if not _VALUE_DTYPES:
-    # Fallback keeps the full candidate list rather than a float32-only one, so
-    # a failed/absent probe never silently drops the spec-required int8/uint8/
-    # fp8 dtypes.
-    _VALUE_DTYPES = list(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
+_VALUE_DTYPES = list(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
 
 _FLOAT_VALUE_DTYPES = [
     dtype
     for dtype in _VALUE_DTYPES
     if dtype.is_floating_point and dtype not in _FP8_DTYPES
 ]
-if not _FLOAT_VALUE_DTYPES:
-    # Derived subset (true-float dtypes only); empty only if the probe found no
-    # non-fp8 float support at all. Fall back to the float candidates rather
-    # than float32 alone, so the subset can never claim an unsupported dtype.
-    _FLOAT_VALUE_DTYPES = [
-        dtype
-        for dtype in _REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES
-        if dtype.is_floating_point and dtype not in _FP8_DTYPES
-    ]
 
 
 # ---------------------------------------------------------------------------

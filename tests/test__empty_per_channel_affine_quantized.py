@@ -50,7 +50,7 @@ def _resolve(name):
 #
 # Regular-operator-spec adaptation:
 #   * dtype dimension   -> the *quantized* element dtypes (the only dtypes this
-#     factory accepts); probed on the active device before inclusion.
+#     factory accepts), declared directly in the case list.
 #   * value ranges      -> applied to scales/zero_points, the only value-carrying
 #     inputs, through ``tu.make_input`` / ``tu.selected_ranges``.
 #   * shape levels      -> ``tu.selected_shapes`` canonical sizes mapped onto a

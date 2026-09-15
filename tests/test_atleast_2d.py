@@ -53,7 +53,7 @@ def _resolve_candidate():
 
 
 # ---------------------------------------------------------------------------
-# Dtype coverage (probed with tu.supported_dtypes)
+# Dtype coverage
 # ---------------------------------------------------------------------------
 
 _EXTRA_CANDIDATES = [
@@ -86,7 +86,7 @@ def _dedup(dtypes):
     return out
 
 
-_DTYPE_CANDIDATES = _dedup(
+_SUPPORTED_DTYPES = _dedup(
     utils.ALL_FLOAT_DTYPES
     + utils.ALL_INT_DTYPES
     + utils.BOOL_TYPES
@@ -95,11 +95,6 @@ _DTYPE_CANDIDATES = _dedup(
     + _REQUIRED_EXTRA
 )
 
-# Fallback keeps the full candidate list (not just float32): if the probe
-# cannot establish support it must not silently drop the required dtypes.
-_SUPPORTED_DTYPES = (
-    tu.supported_dtypes("atleast_2d", candidates=_DTYPE_CANDIDATES) or _DTYPE_CANDIDATES
-)
 
 _VALUE_DTYPES = [d for d in _SUPPORTED_DTYPES if not d.is_complex]
 _COMPLEX_DTYPES = [d for d in _SUPPORTED_DTYPES if d.is_complex]

@@ -67,8 +67,7 @@ setattr(
 # coalesced flag on this runtime); the tests assert that the *candidate* also
 # leaves its input uncoalesced, i.e. it must not coalesce in place.
 
-# Probe the storage dtypes the sparse COO ``_coalesce`` kernel actually accepts
-# on the active device (spec: never guess). fp8 raises
+# The sparse COO reduction has no FP8 implementation: it raises
 # ``"coalesce_sparse_cuda" not implemented for 'Float8_e4m3fn'`` on CUDA and is
 # therefore excluded; every other required dtype is accepted. complex64 is
 # accepted by the CUDA kernel as well but is outside the spec's required dtype
@@ -89,21 +88,10 @@ _REQUIRED_CANDIDATE_DTYPES = [
 ]
 
 
-def _sparse_dtype_supported(dtype):
-    # Three duplicate coordinates guarantee an uncoalesced input, so the probe
-    # fails exactly when the dtype has no registered coalesce kernel.
-    indices = torch.zeros((2, 3), dtype=torch.long, device=flag_gems.device)
-    try:
-        values = torch.zeros(3, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_coo_tensor(indices, values, (2, 2), device=flag_gems.device)
-        torch.ops.aten._coalesce(inp)
-    except Exception:
-        return False
-    return True
-
-
 _COALESCE_DTYPES = [
-    dtype for dtype in _REQUIRED_CANDIDATE_DTYPES if _sparse_dtype_supported(dtype)
+    dtype
+    for dtype in _REQUIRED_CANDIDATE_DTYPES
+    if dtype not in (torch.float8_e4m3fn, torch.float8_e5m2)
 ]
 
 # (shape, nnz) sparse layouts. nnz is always > numel(shape), which forces at

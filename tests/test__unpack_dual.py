@@ -51,7 +51,7 @@ setattr(
 #     supported dtype is exercised with negative, positive, extreme and
 #     degenerate ranges (the aliasing view round-trips all of them bit-for-bit
 #     and the tangent is preserved unchanged);
-#   * dtype coverage: the probe-verified required dtypes (int8, uint8,
+#   * dtype coverage: the required dtypes (int8, uint8,
 #     float8_e4m3fn, float8_e5m2, fp32, bf16, fp16, int32, int64) plus
 #     float64/int16/bool/complex64 where the backend supports them. The dual
 #     path only accepts floating-point/complex primals, so the int/bool dtypes
@@ -67,35 +67,11 @@ setattr(
 # backward.
 
 
-def _plain_dtype_supported(dtype):
-    """Probe the tangent-None path for ``dtype`` on the active device."""
-    try:
-        inp = torch.zeros((2,), dtype=dtype, device=flag_gems.device)
-        primal, tangent = torch.ops.aten._unpack_dual(inp, 0)
-        return primal.dtype == dtype and tangent is None
-    except Exception:
-        return False
-
-
-def _dual_dtype_supported(dtype):
-    """Probe the forward-AD path for ``dtype`` on the active device."""
-    try:
-        primal = torch.zeros((2,), dtype=dtype, device=flag_gems.device)
-        tangent = torch.zeros((2,), dtype=dtype, device=flag_gems.device)
-        with dual_level() as level:
-            dual = torch.ops.aten._make_dual(primal, tangent, level)
-            _, tangent_out = torch.ops.aten._unpack_dual(dual, level)
-        return tangent_out is not None and tangent_out.dtype == dtype
-    except Exception:
-        return False
-
-
 def _unique(items):
     return list(dict.fromkeys(items))
 
 
-# Dtypes required by the operator-test spec. Probed before use: fp8 is a hard
-# requirement only when the backend/kernel actually accepts it.
+# Dtypes required by the operator-test spec, including both FP8 formats.
 _REQUIRED_DTYPES = [
     torch.int8,
     torch.uint8,
@@ -114,22 +90,18 @@ _REQUIRED_DTYPES = [
 DUAL_DTYPES = [
     d
     for d in _unique(_REQUIRED_DTYPES + utils.ALL_FLOAT_DTYPES + [torch.complex64])
-    if _dual_dtype_supported(d)
+    if d.is_floating_point or d.is_complex
 ]
 
 # Plain tensors have no such restriction, so every storage dtype is valid for
 # the tangent-None path.
-PLAIN_DTYPES = [
-    d
-    for d in _unique(
-        _REQUIRED_DTYPES
-        + utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-        + [torch.complex64]
-    )
-    if _plain_dtype_supported(d)
-]
+PLAIN_DTYPES = _unique(
+    _REQUIRED_DTYPES
+    + utils.ALL_FLOAT_DTYPES
+    + utils.ALL_INT_DTYPES
+    + utils.BOOL_TYPES
+    + [torch.complex64]
+)
 
 # Levels accepted by aten on plain tensors (no forward tangent) are 0, 1 and any
 # higher value; 0 is always the level dual tensors get inside the outermost

@@ -39,7 +39,7 @@ from . import test_utils as tu
 #     through the view - the earlier randn-only generation is migrated onto this
 #     framework). Ranges that an unsigned dtype cannot represent are dropped;
 #   * dtypes: the spec's required list first (int8 / uint8 / fp8 are hard
-#     requirements and are probed on the active backend before being used),
+#     requirements),
 #     then the shared float/int/bool sets, plus a dedicated complex case;
 #   * no broadcast dimension exists (the op is unary), so broadcast is skipped;
 #   * edge cases: nan/inf/+-0.0 passthrough, complex tensors, an empty
@@ -67,9 +67,8 @@ _FP8_DTYPES = frozenset(
     if dtype is not None
 )
 
-# The spec's required dtype list first (int8 / uint8 / fp8 are hard
-# requirements when the backend supports them), then the shared float/int/bool
-# sets. The probe below removes anything the active backend cannot store.
+# The required dtype list first (including int8/uint8/FP8), then the shared
+# float/int/bool sets.
 _DTYPE_CANDIDATES = []
 for _dtype in (
     [torch.int8, torch.uint8]
@@ -82,33 +81,7 @@ for _dtype in (
         _DTYPE_CANDIDATES.append(_dtype)
 
 
-def _probe_dtypes():
-    """Keep only the dtypes the active backend can actually pass through.
-
-    ``tu.supported_dtypes`` builds a single tiny input per dtype and treats any
-    exception as "unsupported"; atleast_3d is a view, so a storage dtype that
-    cannot even be allocated is removed here. Falls back to the shared
-    float/int/bool sets so the file never collects zero cases.
-    """
-    supported = []
-    for dtype in _DTYPE_CANDIDATES:
-        try:
-            x = tu.make_input(dtype, (4,), ["0", "1"])
-            out = torch.ops.aten.atleast_3d(x)
-        except Exception:
-            continue
-        if out.dtype == dtype:
-            supported.append(dtype)
-    if not supported:
-        supported = (
-            list(utils.ALL_FLOAT_DTYPES)
-            + list(utils.ALL_INT_DTYPES)
-            + list(utils.BOOL_TYPES)
-        )
-    return supported
-
-
-ATLEAST_3D_DTYPES = _probe_dtypes()
+ATLEAST_3D_DTYPES = list(_DTYPE_CANDIDATES)
 
 # Shape levels: the shared spec set (seven ranks, quick keeps a single 3-D
 # shape). These are used for the base dtype test.

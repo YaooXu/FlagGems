@@ -40,8 +40,7 @@ setattr(
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
 #   * dtypes -- the full required set (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/
-#     bf16/fp16/int32/int64) plus fp64/int16/bool where the device supports
-#     them, probed at import time with tu.supported_dtypes;
+#     bf16/fp16/int32/int64) plus fp64/int16/bool;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over the spec shape set and representative COO layouts;
 #   * shapes/layouts -- the tu.selected_shapes() levels (quick: (2,19,7); full:
@@ -55,7 +54,7 @@ setattr(
 # No broadcast/backward dimensions apply: the operator is unary and returns a
 # plain Python int (there is nothing to broadcast against or differentiate).
 
-_NNZ_DTYPE_CANDIDATES = list(
+_NNZ_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -67,25 +66,6 @@ _NNZ_DTYPE_CANDIDATES = list(
 )
 
 
-def _sparse_dtype_probe(op_name, dtype):
-    """Report whether ``op_name`` accepts a tiny sparse COO tensor of ``dtype``."""
-    del op_name
-    try:
-        indices = torch.zeros(2, 1, dtype=torch.long, device=flag_gems.device)
-        values = torch.zeros(1, dtype=dtype, device=flag_gems.device)
-        inp = torch.sparse_coo_tensor(indices, values, (1, 1), device=flag_gems.device)
-        return isinstance(torch.ops.aten._nnz(tu.to_reference(inp)), int)
-    except Exception:
-        return False
-
-
-# Probe the device before parametrizing: an op/dtype pair that cannot run must
-# not be turned into a red test. If the probe yields nothing, keep the full
-# candidate list rather than a float32-only fallback, so a failed/absent probe
-# never silently drops the spec-required int8/uint8/fp8 dtypes.
-_NNZ_DTYPES = tu.supported_dtypes(
-    "_nnz", candidates=_NNZ_DTYPE_CANDIDATES, probe=_sparse_dtype_probe
-) or list(_NNZ_DTYPE_CANDIDATES)
 _NNZ_FLOAT_DTYPES = [dtype for dtype in _NNZ_DTYPES if dtype.is_floating_point]
 # float8 has no sparse coalesce kernel, so the coalesce-count assertion below
 # is only checked for the non-fp8 storage dtypes.
@@ -212,7 +192,7 @@ def _assert_result(res_out, ref_out, nnz):
 @pytest.mark.parametrize("dtype", _NNZ_DTYPES)
 def test__nnz_coo_layouts(case, dtype):
     # Layout coverage with values from [-1, 1]: negative and positive values
-    # for every probed storage dtype. The reported count must be the number of
+    # for every declared storage dtype. The reported count must be the number of
     # stored entries, independent of rank, sparsity pattern and value payload.
     shape, sparse_dim, nnz = case
     inp = _make_coo_input(shape, sparse_dim, nnz, dtype, ["-1", "1"])

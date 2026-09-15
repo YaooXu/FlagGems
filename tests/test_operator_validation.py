@@ -1,5 +1,7 @@
 """Regression checks for assertion and stateful measurement boundaries."""
 
+import runpy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,20 +41,6 @@ def test_reference_is_independent_even_when_no_upcast_or_cpu_copy(monkeypatch):
     reference = tu.to_reference(source)
     source.add_(100)
     testing.assert_equal(reference, torch.arange(6.0))
-
-
-def test_dtype_probe_rejects_invalid_signature():
-    with pytest.raises(RuntimeError, match="Inconclusive dtype probe"):
-        tu.supported_dtypes("add", [torch.float32])
-
-
-def test_dtype_probe_input_failure_is_not_unsupported(monkeypatch):
-    def broken(*args, **kwargs):
-        raise RuntimeError("input construction failed")
-
-    monkeypatch.setattr(torch.testing, "make_tensor", broken)
-    with pytest.raises(RuntimeError, match="input construction failed"):
-        tu.supported_dtypes("atleast_1d", [torch.float32])
 
 
 @pytest.mark.parametrize(
@@ -251,3 +239,86 @@ def test_reference_retains_view_metadata_and_independent_gradients():
     torch.testing.assert_close(reference, torch.arange(40.0).reshape(5, 8)[1:, ::2])
     reference.sum().backward()
     assert source.grad is None
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "benchmark/test_col_indices.py",
+        "tests/test__choose_qparams_per_tensor.py",
+        "tests/test__coalesce.py",
+        "tests/test__dimI.py",
+        "tests/test__dimV.py",
+        "tests/test__dim_arange.py",
+        "tests/test__efficientzerotensor.py",
+        "tests/test__fw_primal.py",
+        "tests/test__has_same_storage_numel.py",
+        "tests/test__indices.py",
+        "tests/test__make_dual.py",
+        "tests/test__make_per_tensor_quantized_tensor.py",
+        "tests/test__neg_view.py",
+        "tests/test__neg_view_copy.py",
+        "tests/test__nested_tensor_size.py",
+        "tests/test__nested_tensor_storage_offsets.py",
+        "tests/test__nested_tensor_strides.py",
+        "tests/test__nnz.py",
+        "tests/test__shape_as_tensor.py",
+        "tests/test__unpack_dual.py",
+        "tests/test__values.py",
+        "tests/test__version.py",
+        "tests/test_atleast_1d.py",
+        "tests/test_atleast_2d.py",
+        "tests/test_atleast_3d.py",
+        "tests/test_cartesian_prod.py",
+        "tests/test_ccol_indices.py",
+        "tests/test_ccol_indices_copy.py",
+        "tests/test_chain_matmul.py",
+        "tests/test_coalesce.py",
+        "tests/test_col_indices.py",
+        "tests/test_col_indices_copy.py",
+        "tests/test_combinations.py",
+        "tests/test_copy_sparse_to_sparse_.py",
+        "tests/test_crow_indices.py",
+        "tests/test_crow_indices_copy.py",
+        "tests/test_data.py",
+        "tests/test_dense_dim.py",
+        "tests/test_diagflat.py",
+        "tests/test_dim.py",
+        "tests/test_dstack.py",
+        "tests/test_flatten_dense_tensors.py",
+        "tests/test_slow_conv_transpose3d.py",
+        "tests/test_sparse_bsc_tensor.py",
+        "tests/test_sparse_bsr_tensor.py",
+        "tests/test_sparse_coo_tensor.py",
+        "tests/test_sparse_dim.py",
+        "tests/test_sparse_mask.py",
+        "tests/test_sparse_resize_.py",
+        "tests/test_sparse_resize_and_clear_.py",
+        "tests/test_adjoint.py",
+    ],
+)
+def test_operator_collection_does_not_probe_runtime(module_path, monkeypatch):
+    calls = []
+
+    def reject_probe(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError("Runtime probe during test collection")
+
+    path = Path(__file__).resolve().parents[1] / module_path
+    operator = path.stem.removeprefix("test_")
+    # Parameter generation may use CPU randperm for index lists; operator
+    # execution and construction of probe inputs must wait until the test runs.
+    for module, name in [
+        (torch.ops.aten, operator),
+        (tu, "make_input"),
+        (torch.testing, "make_tensor"),
+        (torch, "tensor"),
+        (torch, "zeros"),
+        (torch, "ones"),
+        (torch, "empty"),
+        (torch, "full"),
+    ]:
+        monkeypatch.setattr(module, name, reject_probe)
+    runpy.run_path(str(path), run_name=f"{path.parent.name}._collection_check")
+    # A probe that catches the injected error must still fail this check.
+    assert not calls

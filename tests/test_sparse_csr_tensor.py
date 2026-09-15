@@ -47,11 +47,8 @@ from . import test_utils as tu
 # the (compressed, plain) index arrays with col entries in [0, n_cols), and
 # values are stored verbatim (the factory performs no arithmetic on them).
 #
-# dtype coverage: tu.supported_dtypes() is not usable here because its probe
-# calls the operator with a single 1-D tensor, which is meaningless for a
-# factory taking three component tensors. The storage dtypes were probed
-# against the live aten factory instead and all nine required dtypes are
-# accepted on CUDA (int8, uint8, float8_e4m3fn, float8_e5m2, float32,
+# Dtype coverage: the CSR factory accepts all nine required storage dtypes
+# (int8, uint8, float8_e4m3fn, float8_e5m2, float32,
 # bfloat16, float16, int32, int64), plus int16/uint8-from-INT_DTYPES/float64/
 # bool. They are all swept below. float8 tensors cannot be fed to
 # torch.testing.assert_close as part of a sparse container, so their payload is

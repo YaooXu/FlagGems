@@ -31,8 +31,7 @@ from . import test_utils as tu
 #
 # Coverage (regular-operator spec, metadata adaptation):
 #   * dtypes -- the full required set (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/
-#     bf16/fp16/int32/int64) plus fp64/int16/bool where supported, probed at
-#     import time with tu.supported_dtypes over a tiny dense input;
+#     bf16/fp16/int32/int64) plus fp64/int16/bool;
 #   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over the spec shape levels and representative COO/CSR layouts;
 #   * shapes/layouts -- strided tensors (ranks 0-8 plus empty), sparse COO
@@ -44,7 +43,7 @@ from . import test_utils as tu
 #
 # No broadcast/backward dimensions apply: the operator is unary, returns a
 # plain Python int (there is nothing to broadcast against or differentiate).
-_DTYPE_CANDIDATES = list(
+_DTYPES = list(
     dict.fromkeys(
         [
             *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
@@ -55,16 +54,6 @@ _DTYPE_CANDIDATES = list(
     )
 )
 
-# Probe the active device before parametrizing: an op/dtype pair that cannot
-# run must not be turned into a red test. dense_dim is a pure metadata query,
-# so the default dense probe resolves dtype support for every layout it
-# dispatches to (the reported count is dtype-independent). If the probe yields
-# nothing, keep the full candidate list rather than a float32-only fallback, so
-# a failed/absent probe never silently drops the spec-required int8/uint8/fp8
-# dtypes.
-_DTYPES = tu.supported_dtypes("dense_dim", candidates=_DTYPE_CANDIDATES) or list(
-    _DTYPE_CANDIDATES
-)
 
 # Dense (strided) tensors: dense_dim == len(shape). Ranks 0 through 5 cover the
 # default/CompositeExplicitAutograd path, including the degenerate scalar case.

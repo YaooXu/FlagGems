@@ -47,7 +47,7 @@ setattr(
 # against the analytic value.
 #
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
-#   * dtypes: the required spec dtypes probed on the active device, plus the
+#   * dtypes: the required spec dtypes, plus the
 #     operator's remaining float64/int16/complex64 storage dtypes; the
 #     unmaterializable fp8/bool dtypes get a dedicated view-semantics sweep;
 #   * shape levels: tu.selected_shapes() (ranks 0-5, selected by --quick) plus
@@ -93,36 +93,13 @@ def _basic_range(dtype):
     return ["0", "max"] if dtype in _UNSIGNED_DTYPES else ["-1", "1"]
 
 
-def _view_works(dtype):
-    # Probe the real aten op on the active device; any exception means the
-    # negative view is not available for this storage dtype on this backend.
-    try:
-        probe = tu.make_input(dtype, (2, 2), _basic_range(dtype))
-        return bool(torch.ops.aten._neg_view(probe).is_neg())
-    except Exception:
-        return False
-
-
-def _materializes(dtype):
-    # The values of the view are only observable if aten can negate this dtype.
-    try:
-        probe = tu.make_input(dtype, (2, 2), _basic_range(dtype))
-        view = torch.ops.aten._neg_view(probe)
-        _ = view + 0
-        return True
-    except Exception:
-        return False
-
-
-_CANDIDATE_DTYPES = [dtype for dtype in _candidate_dtypes() if _view_works(dtype)]
-_VALUE_DTYPES = [dtype for dtype in _CANDIDATE_DTYPES if _materializes(dtype)]
+_CANDIDATE_DTYPES = _candidate_dtypes()
+_VALUE_DTYPES = [
+    dtype for dtype in _CANDIDATE_DTYPES if dtype not in _UNMATERIALIZABLE_DTYPES
+]
 _VIEW_DTYPES = [
     dtype for dtype in _CANDIDATE_DTYPES if dtype in _UNMATERIALIZABLE_DTYPES
 ]
-if not _VALUE_DTYPES:
-    _VALUE_DTYPES = [torch.float32]
-if not _VIEW_DTYPES:
-    _VIEW_DTYPES = [torch.bool]
 _ALL_TEST_DTYPES = list(dict.fromkeys(_VALUE_DTYPES + _VIEW_DTYPES))
 
 # Shape levels (0-D up to 5-D) plus two small representative shapes.
