@@ -20,150 +20,72 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::sparse_dim(Tensor self) -> int returns the number of *sparse*
-# dimensions of a tensor for every layout the runtime supports: strided
-# (dense) tensors always report 0, sparse COO tensors report the number of
-# leading sparse dims (``len(sparse_shape)``) and sparse CSR tensors report 2
-# for both 2-D and batched layouts (and for CSR tensors carrying dense dims).
-# It is a pure metadata query whose result never depends on the stored values
-# or on the storage dtype, so every workload below covers a distinct
-# (shape, layout) pair. The result is a plain Python int, so each workload
-# asserts exact equality.
-#
-# Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * dtypes -- the required dtypes
-#     (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64) plus
-#     fp64/int16/bool where the device supports them;
-#   * value ranges -- tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
-#     [min,0]) crossed with the tu.selected_shapes() levels, both for dense
-#     tensors (sparse_dim == 0) and for all-sparse COO / hybrid COO / CSR
-#     layouts;
-#   * layouts -- strided tensors (ranks 0-8 plus empty), sparse COO
-#     (all-sparse and hybrid) and sparse CSR (2-D, batched 3-D and CSR with
-#     dense dims), selected by the quick/default level;
-#   * edge cases -- empty dense/COO/CSR tensors, uncoalesced COO, CSR with
-#     dense dims, and nan/inf/-inf/±0.0 stored values;
-#   * negative cases -- non-tensor inputs are rejected.
-#
-# No broadcast/backward dimensions apply: the operator is unary and returns a
-# plain Python int (there is nothing to broadcast against or differentiate).
-
-# ---------------------------------------------------------------------------
-# Storage dtype coverage
-# ---------------------------------------------------------------------------
-_DTYPES = list(
-    dict.fromkeys(
-        [
-            *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
-            *utils.ALL_FLOAT_DTYPES,  # + float64 where supported
-            *utils.ALL_INT_DTYPES,  # + int16 where supported
-            *utils.BOOL_TYPES,
-        ]
-    )
+# sparse_dim counts sparse dimensions: zero for strided tensors, the
+# leading sparse rank for COO, and two for the CSR layouts below.
+_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool]
 )
 
+# Dense shapes, including scalars and higher ranks.
+_DENSE_SHAPES = tu.selected_cases(
+    [
+        (),
+        (5,),
+        (3, 4),
+        (8, 8, 8),
+        (3, 4, 2, 5),
+        (3, 4, 5, 4, 5),
+        (3, 6, 4, 4, 6, 5, 4),
+        (7, 3, 12, 4, 2, 15, 2, 2),
+    ],
+    quick=[(2, 19, 7)],
+)
 
-# ---------------------------------------------------------------------------
-# Layout cases
-# ---------------------------------------------------------------------------
-# Dense (strided) tensors: there are no sparse dims, so sparse_dim == 0 for
-# every rank, including the degenerate scalar case (rank 0).
-_DENSE_CASES_CORE = [(), (5,), (3, 4), (8, 8, 8), (3, 4, 2, 5), (3, 4, 5, 4, 5)]
+# COO: (sparse_shape, dense_shape, nnz).
+_COO_CASES = tu.selected_cases(
+    [
+        ((4, 4), (), 8),
+        ((8, 8, 8), (), 64),
+        ((4, 4), (3,), 8),
+        ((2, 3, 4), (5,), 12),
+        ((16, 16), (7, 13), 40),
+        ((2, 3, 4), (5, 6), 12),
+        ((3,), (4, 5, 6), 2),
+        ((12, 9, 3, 6), (4,), 9),
+        ((3, 4, 2, 5, 3), (4, 2), 11),
+    ],
+    quick=[((2, 19, 7), (), 8)],
+)
 
-# Higher-rank strided tensors for default mode (no --quick).
-_DENSE_CASES_ALL = [(3, 6, 4, 4, 6, 5, 4), (7, 3, 12, 4, 2, 15, 2, 2)]
+# COO value ranges: all-sparse and hybrid layouts.
+_COO_RANGE_CASES = tu.selected_cases(
+    [
+        ((3, 4), (), 7),
+        ((3, 4), (3,), 8),
+        ((12, 9, 3, 6), (4,), 9),
+    ],
+    quick=[((2, 19, 7), (), 8)],
+)
 
-# Empty dense tensors: numel == 0, but the number of sparse dims is still 0.
-_EMPTY_DENSE_CASES = [(0,), (0, 5), (2, 0, 3)]
+# CSR: (shape, nnz), including batched tensors.
+_CSR_CASES = tu.selected_cases(
+    [
+        ((4, 4), 3),
+        ((2, 4, 4), 5),
+        ((3, 5, 7), 3),
+        ((3, 4, 4), 4),
+    ],
+    quick=[((2, 19, 7), 3)],
+)
 
-# Sparse COO tensors: (sparse_shape, dense_shape, nnz) with logical size
-# ``sparse_shape + dense_shape`` and expected result ``len(sparse_shape)``.
-# Covers all-sparse layouts as well as mixed sparse+dense ranks from 1 up to 5.
-_COO_CASES_CORE = [
-    ((4, 4), (), 8),
-    ((8, 8, 8), (), 64),
-    ((4, 4), (3,), 8),
-    ((2, 3, 4), (5,), 12),
-    ((16, 16), (7, 13), 40),
-    ((2, 3, 4), (5, 6), 12),
-    ((3,), (4, 5, 6), 2),
-]
-
-# Higher-rank hybrid layouts for default mode (no --quick).
-_COO_CASES_ALL = [
-    ((12, 9, 3, 6), (4,), 9),
-    ((3, 4, 2, 5, 3), (4, 2), 11),
-]
-
-# Sparse CSR tensors: (shape, nnz). The compressed sparse layout is always 2-D
-# sparse, so sparse_dim == 2 for both plain and batched layouts.
-_CSR_CASES_CORE = [
-    ((4, 4), 3),
-    ((2, 4, 4), 5),
-    ((3, 5, 7), 3),
-]
-
-# Additional batched CSR layout for default mode (no --quick).
-_CSR_CASES_ALL = [
-    ((3, 4, 4), 4),
-]
-
-# Empty CSR tensors: nnz == 0, plain 2-D and batched 3-D layouts.
-_EMPTY_CSR_CASES = [
-    (4, 4),
-    (3, 4, 4),
-]
-
-# Fixed stored-entry count for the spec-shape COO sweeps: small so that every
-# rank stays cheap, and > 1 so duplicate (uncoalesced) coordinates are
-# exercised for small index spaces.
-_SPEC_NNZ = 6
+_SPEC_NNZ = 6  # Keep duplicates possible even in small index spaces.
 
 
-def _dense_cases():
-    """Dense shapes selected by --quick or default mode."""
-    if tu.QUICK_MODE:
-        return [(2, 19, 7)]
-    return _DENSE_CASES_CORE + _DENSE_CASES_ALL
-
-
-def _coo_cases():
-    """(sparse_shape, dense_shape, nnz) COO layouts selected by quick/default."""
-    if tu.QUICK_MODE:
-        return [((2, 19, 7), (), 8)]
-    return _COO_CASES_CORE + _COO_CASES_ALL
-
-
-def _coo_value_range_cases():
-    """Representative all-sparse + hybrid COO layouts for the range sweep."""
-    if tu.QUICK_MODE:
-        return [((2, 19, 7), (), 8)]
-    return [((3, 4), (), 7), ((3, 4), (3,), 8), ((12, 9, 3, 6), (4,), 9)]
-
-
-def _csr_cases():
-    """(shape, nnz) CSR layouts selected by quick/default level."""
-    if tu.QUICK_MODE:
-        return [((2, 19, 7), 3)]
-    return _CSR_CASES_CORE + _CSR_CASES_ALL
-
-
-def _spec_shapes(min_rank=0, max_rank=None):
-    """``tu.selected_shapes()`` filtered to the ranks a layout supports."""
-    shapes = [shape for shape in tu.selected_shapes() if len(shape) >= min_rank]
-    if max_rank is not None:
-        shapes = [shape for shape in shapes if len(shape) <= max_rank]
-    return shapes
-
-
-# ---------------------------------------------------------------------------
-# Input builders
-# ---------------------------------------------------------------------------
 def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
-    # Deterministic CPU-side index generation; the values tensor comes from the
-    # shared value-range helper and the sparse tensor is created on the test
-    # device. Duplicate indices are allowed (the layout is simply uncoalesced),
-    # which is covered explicitly below.
+    # Seeded CPU indices allow duplicates; values are created on the test device.
     gen = torch.Generator("cpu").manual_seed(seed)
     indices = torch.stack(
         [
@@ -174,11 +96,6 @@ def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
     values = tu.make_input(dtype, (nnz,) + tuple(dense_shape), value_range)
     size = tuple(sparse_shape) + tuple(dense_shape)
     return torch.sparse_coo_tensor(indices, values, size, device=flag_gems.device)
-
-
-def _make_coo_all_sparse(shape, nnz, dtype, value_range, seed=0):
-    """Map a dense spec shape onto an all-sparse COO layout of the same rank."""
-    return _make_coo(tuple(shape), (), nnz, dtype, value_range, seed=seed)
 
 
 def _make_csr(shape, nnz, dtype, value_range, seed=0):
@@ -224,8 +141,7 @@ def _make_csr_with_dense_dims(dtype, value_range):
 
 
 def _make_empty_csr(shape, dtype):
-    """Build a CSR tensor with nnz == 0: the layout is still 2-D sparse, so
-    sparse_dim is reported exactly as for a populated tensor."""
+    """Build an empty plain or batched CSR tensor."""
     if len(shape) == 2:
         rows, _ = shape
         crow_indices = torch.zeros(rows + 1, dtype=torch.long, device=flag_gems.device)
@@ -252,17 +168,12 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out):
-    # sparse_dim returns a plain Python int holding the number of sparse dims,
-    # so exact equality is required and no tolerance is involved.
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Dense (strided) layouts: sparse_dim == 0
-# ---------------------------------------------------------------------------
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _dense_cases())
+@pytest.mark.parametrize("shape", _DENSE_SHAPES)
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_dense_layouts(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -275,7 +186,7 @@ def test_sparse_dim_dense_layouts(shape, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _EMPTY_DENSE_CASES)
+@pytest.mark.parametrize("shape", [(0,), (0, 5), (2, 0, 3)])
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_empty_dense(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -289,14 +200,10 @@ def test_sparse_dim_empty_dense(shape, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _spec_shapes())
+@pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
-    # Shape level from the shared spec set (0-dim .. 5-dim) crossed with the
-    # five spec value ranges on dense tensors. The stored values never change
-    # the result (always 0 sparse dims), but they exercise the value-range
-    # machinery end to end.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -306,11 +213,8 @@ def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
     _assert_result(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Sparse COO layouts: sparse_dim == len(sparse_shape)
-# ---------------------------------------------------------------------------
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("case", _coo_cases())
+@pytest.mark.parametrize("case", _COO_CASES)
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_coo_layouts(case, dtype):
     sparse_shape, dense_shape, nnz = case
@@ -328,13 +232,13 @@ def test_sparse_dim_coo_layouts(case, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _spec_shapes(min_rank=1))
+@pytest.mark.parametrize(
+    "shape", [shape for shape in tu.selected_shapes() if len(shape) >= 1]
+)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_coo_spec_shapes_value_ranges(shape, value_range, dtype):
-    # Shared spec shape set mapped onto all-sparse COO (sparse_dim == rank)
-    # crossed with the five spec value ranges.
-    inp = _make_coo_all_sparse(shape, _SPEC_NNZ, dtype, value_range)
+    inp = _make_coo(tuple(shape), (), _SPEC_NNZ, dtype, value_range, seed=0)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
@@ -344,7 +248,7 @@ def test_sparse_dim_coo_spec_shapes_value_ranges(shape, value_range, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("case", _coo_value_range_cases())
+@pytest.mark.parametrize("case", _COO_RANGE_CASES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_coo_value_ranges(case, value_range, dtype):
@@ -361,8 +265,6 @@ def test_sparse_dim_coo_value_ranges(case, value_range, dtype):
 @pytest.mark.sparse_dim
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_empty_coo(dtype):
-    # nnz == 0: indices and values are empty, but the number of sparse dims of
-    # the layout is still reported exactly as for a populated tensor.
     sparse_shape, dense_shape = (3, 4), (5, 6)
     indices = torch.empty(
         len(sparse_shape), 0, dtype=torch.long, device=flag_gems.device
@@ -384,9 +286,6 @@ def test_sparse_dim_empty_coo(dtype):
 @pytest.mark.sparse_dim
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_uncoalesced_coo(dtype):
-    # The (0, 0) coordinate is repeated, so the tensor is uncoalesced;
-    # sparse_dim must still report the same value as the coalesced form because
-    # it never inspects the index or data values.
     sparse_shape, dense_shape = (2, 2), (3,)
     indices = torch.tensor([[0, 0, 1, 1, 0], [0, 1, 0, 1, 0]], dtype=torch.long)
     values = tu.make_input(dtype, (5,) + tuple(dense_shape), ["-1", "1"])
@@ -402,11 +301,8 @@ def test_sparse_dim_uncoalesced_coo(dtype):
     _assert_result(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Sparse CSR layouts: sparse_dim == 2
-# ---------------------------------------------------------------------------
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("case", _csr_cases())
+@pytest.mark.parametrize("case", _CSR_CASES)
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_csr_layouts(case, dtype):
     shape, nnz = case
@@ -426,8 +322,6 @@ def test_sparse_dim_csr_layouts(case, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_csr_value_ranges(value_range, dtype):
-    # The CSR path is value-independent too: sweep the spec ranges through a
-    # 2-D CSR tensor with a fixed 5-entry crow/col pattern.
     shape, nnz = (4, 4), 5
     inp = _make_csr(shape, nnz, dtype, value_range)
     ref_inp = tu.to_reference(inp)
@@ -442,8 +336,6 @@ def test_sparse_dim_csr_value_ranges(value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_csr_dense_dims(value_range, dtype):
-    # CSR layout with a dense dimension: the compressed layout is still 2-D
-    # sparse, independent of the trailing dense block.
     inp = _make_csr_with_dense_dims(dtype, value_range)
     assert inp.sparse_dim() == 2
     assert inp.dense_dim() == 1
@@ -456,12 +348,9 @@ def test_sparse_dim_csr_dense_dims(value_range, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _EMPTY_CSR_CASES)
+@pytest.mark.parametrize("shape", [(4, 4), (3, 4, 4)])
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_empty_csr(shape, dtype):
-    # nnz == 0: indices and values are empty, but the compressed layout is
-    # still 2-D sparse, so sparse_dim is reported exactly as for a populated
-    # tensor.
     inp = _make_empty_csr(shape, dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -472,11 +361,11 @@ def test_sparse_dim_empty_csr(shape, dtype):
 
 
 @pytest.mark.sparse_dim
-@pytest.mark.parametrize("shape", _spec_shapes(min_rank=2, max_rank=3))
+@pytest.mark.parametrize(
+    "shape", [shape for shape in tu.selected_shapes() if 2 <= len(shape) <= 3]
+)
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_sparse_dim_csr_spec_shapes(shape, dtype):
-    # Shared spec shape set restricted to the ranks CSR can represent (2-D and
-    # batched 3-D).
     nnz = 5 if len(shape) == 2 else 3
     inp = _make_csr(shape, nnz, dtype, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
@@ -487,9 +376,6 @@ def test_sparse_dim_csr_spec_shapes(shape, dtype):
     _assert_result(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# nan/inf payload
-# ---------------------------------------------------------------------------
 @pytest.mark.sparse_dim
 @pytest.mark.parametrize(
     "dtype,scenario", tu.selected_cases(tu.special_value_cases(_DTYPES))
@@ -539,14 +425,8 @@ def test_sparse_dim_nan_inf_csr(dtype, scenario):
     _assert_result(res_out, ref_out)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
 @pytest.mark.sparse_dim
 def test_sparse_dim_rejects_non_tensor():
-    # The aten schema requires a Tensor; a Python scalar hits the invalid
-    # combination of arguments path and raises. The candidate must fail too
-    # rather than silently report a bogus sparse-dim count.
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_dim(3.14)
     with pytest.raises(
