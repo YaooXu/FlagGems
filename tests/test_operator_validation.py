@@ -612,6 +612,63 @@ def test_quantization_params_reject_boolean_zero_point():
 
 
 @pytest.mark.parametrize(
+    "operator",
+    ["_empty_per_channel_affine_quantized", "_make_per_channel_quantized_tensor"],
+)
+@pytest.mark.parametrize("changed_input", ["scales", "zero_points"])
+def test_quantized_factories_preserve_metadata_input_dtypes(operator, changed_input):
+    cases = importlib.import_module(f".test_{operator}", package=__package__)
+
+    def rewritten(*args, **kwargs):
+        if operator == "_empty_per_channel_affine_quantized":
+            scales, zero_points = kwargs["scales"], kwargs["zero_points"]
+            result = getattr(torch.ops.aten, operator)(
+                *args,
+                **dict(kwargs, scales=scales.clone(), zero_points=zero_points.clone()),
+            )
+        else:
+            inp, scales, zero_points, axis = args
+            result = getattr(torch.ops.aten, operator)(
+                inp, scales.clone(), zero_points.clone(), axis, **kwargs
+            )
+        value = scales if changed_input == "scales" else zero_points
+        dtype = torch.float64 if changed_input == "scales" else torch.int64
+        value.data = value.to(dtype)
+        return result
+
+    with testing.override_gems_op(operator, rewritten):
+        with pytest.raises(AssertionError):
+            if operator == "_empty_per_channel_affine_quantized":
+                cases.test__empty_per_channel_affine_quantized(
+                    (2, 3), 1, torch.qint8, torch.float32, torch.int32
+                )
+            else:
+                cases.test__make_per_channel_quantized_tensor(
+                    (2, 3), 1, torch.int8, torch.float32
+                )
+
+
+@pytest.mark.parametrize(
+    "test_name,value",
+    [
+        ("test__empty_affine_quantized_non_finite_scale", float("nan")),
+        ("test__empty_affine_quantized_wide_zero_point", 1 << 40),
+    ],
+)
+def test_quantized_factory_special_cases_check_output_device(test_name, value):
+    from . import test__empty_affine_quantized as cases
+
+    def wrong_device(*args, **kwargs):
+        return torch.ops.aten._empty_affine_quantized(
+            *args, **dict(kwargs, device="cpu")
+        )
+
+    with testing.override_gems_op("_empty_affine_quantized", wrong_device):
+        with pytest.raises(AssertionError):
+            getattr(cases, test_name)((2, 3), torch.qint8, value)
+
+
+@pytest.mark.parametrize(
     "operator,args",
     [
         ("combinations", (8, 2, False, torch.float32)),

@@ -134,53 +134,19 @@ def _make_ranged_metadata(shape, axis, value_range):
     return scales, zero_points
 
 
-def _assert_per_channel_metadata(
-    res_out, ref_out, axis, scales, zero_points, equal_nan=False
-):
-    # The factory output is uninitialized memory, so only quantizer metadata and
-    # layout are compared.
+def _assert_per_channel_metadata(res_out, ref_out):
+    # Uninitialized storage is not compared; only layout and quantizer metadata.
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.stride() == ref_out.stride()
-    # flag_gems.device may carry no index (e.g. 'cuda') while a created tensor
-    # reports 'cuda:0', so compare the device type only.
     assert res_out.device.type == torch.device(flag_gems.device).type
-    assert res_out.qscheme() == ref_out.qscheme() == torch.per_channel_affine
-    assert res_out.q_per_channel_axis() == ref_out.q_per_channel_axis() == axis
-
-    # The getters always report float64 scales and int64 zero_points.
-    assert (
-        res_out.q_per_channel_scales().dtype
-        == ref_out.q_per_channel_scales().dtype
-        == torch.float64
+    assert res_out.qscheme() == ref_out.qscheme()
+    assert res_out.q_per_channel_axis() == ref_out.q_per_channel_axis()
+    tu.assert_result_equal(
+        res_out.q_per_channel_scales(), ref_out.q_per_channel_scales()
     )
-    assert (
-        res_out.q_per_channel_zero_points().dtype
-        == ref_out.q_per_channel_zero_points().dtype
-        == torch.int64
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        ref_out.q_per_channel_scales(),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        ref_out.q_per_channel_zero_points(),
-        equal_nan=equal_nan,
-    )
-
-    # The stored metadata must reproduce the caller-supplied values exactly
-    # (scales widened to float64, zero_points to int64).
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        tu.to_reference(scales).to(torch.float64),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        tu.to_reference(zero_points).to(torch.int64),
-        equal_nan=equal_nan,
+    tu.assert_result_equal(
+        res_out.q_per_channel_zero_points(), ref_out.q_per_channel_zero_points()
     )
 
 
@@ -193,12 +159,14 @@ def test__empty_per_channel_affine_quantized(
     shape, axis, quantized_dtype, scale_dtype, zero_point_dtype
 ):
     scales, zero_points = _make_metadata(shape, axis, scale_dtype, zero_point_dtype)
+    ref_scales = tu.to_reference(scales)
+    ref_zero_points = tu.to_reference(zero_points)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=tu.to_reference(scales),
-        zero_points=tu.to_reference(zero_points),
+        scales=ref_scales,
+        zero_points=ref_zero_points,
         axis=axis,
         dtype=quantized_dtype,
         device=ref_device,
@@ -214,7 +182,9 @@ def test__empty_per_channel_affine_quantized(
         device=flag_gems.device,
     )
 
-    _assert_per_channel_metadata(res_out, ref_out, axis, scales, zero_points)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._empty_per_channel_affine_quantized
@@ -228,12 +198,14 @@ def test__empty_per_channel_affine_quantized_metadata_value_ranges(
     # shared ranges and all selected shapes. The metadata is stored verbatim, so
     # all of them must round-trip exactly.
     scales, zero_points = _make_ranged_metadata(shape, axis, value_range)
+    ref_scales = tu.to_reference(scales)
+    ref_zero_points = tu.to_reference(zero_points)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=tu.to_reference(scales),
-        zero_points=tu.to_reference(zero_points),
+        scales=ref_scales,
+        zero_points=ref_zero_points,
         axis=axis,
         dtype=quantized_dtype,
         device=ref_device,
@@ -248,7 +220,9 @@ def test__empty_per_channel_affine_quantized_metadata_value_ranges(
         device=flag_gems.device,
     )
 
-    _assert_per_channel_metadata(res_out, ref_out, axis, scales, zero_points)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._empty_per_channel_affine_quantized_out
@@ -260,6 +234,8 @@ def test__empty_per_channel_affine_quantized_out(
     shape, axis, quantized_dtype, scale_dtype, zero_point_dtype
 ):
     scales, zero_points = _make_metadata(shape, axis, scale_dtype, zero_point_dtype)
+    ref_scales = tu.to_reference(scales)
+    ref_zero_points = tu.to_reference(zero_points)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
     # The .out variant writes the quantizer metadata into the provided out
@@ -281,8 +257,8 @@ def test__empty_per_channel_affine_quantized_out(
     )
     torch.ops.aten._empty_per_channel_affine_quantized.out(
         shape,
-        scales=tu.to_reference(scales),
-        zero_points=tu.to_reference(zero_points),
+        scales=ref_scales,
+        zero_points=ref_zero_points,
         axis=axis,
         out=ref_out_buf,
     )
@@ -301,7 +277,9 @@ def test__empty_per_channel_affine_quantized_out(
     )
     assert res_ret is act_out_buf
 
-    _assert_per_channel_metadata(act_out_buf, ref_out_buf, axis, scales, zero_points)
+    _assert_per_channel_metadata(act_out_buf, ref_out_buf)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._empty_per_channel_affine_quantized
@@ -311,12 +289,14 @@ def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
     # The factory preserves special values in the float64 scale metadata.
     scales = tu.make_special_input(torch.float64, scenario)[: shape[0]]
     zero_points = torch.tensor([0, 1, 2], dtype=torch.int64, device=flag_gems.device)
+    ref_scales = tu.to_reference(scales)
+    ref_zero_points = tu.to_reference(zero_points)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=tu.to_reference(scales),
-        zero_points=tu.to_reference(zero_points),
+        scales=ref_scales,
+        zero_points=ref_zero_points,
         axis=0,
         dtype=torch.quint8,
         device=ref_device,
@@ -331,9 +311,9 @@ def test__empty_per_channel_affine_quantized_nan_inf_scales(shape, scenario):
         device=flag_gems.device,
     )
 
-    _assert_per_channel_metadata(
-        res_out, ref_out, 0, scales, zero_points, equal_nan=True
-    )
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._empty_per_channel_affine_quantized
@@ -346,12 +326,14 @@ def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
         [0.1 + 1e-17, 0.2, 1 / 3], dtype=torch.float64, device=flag_gems.device
     )
     zero_points = torch.tensor([1, 2, 3], dtype=torch.int64, device=flag_gems.device)
+    ref_scales = tu.to_reference(scales)
+    ref_zero_points = tu.to_reference(zero_points)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
 
     ref_out = torch.ops.aten._empty_per_channel_affine_quantized(
         shape,
-        scales=tu.to_reference(scales),
-        zero_points=tu.to_reference(zero_points),
+        scales=ref_scales,
+        zero_points=ref_zero_points,
         axis=0,
         dtype=torch.quint8,
         device=ref_device,
@@ -366,7 +348,9 @@ def test__empty_per_channel_affine_quantized_fp64_scales_preserved():
         device=flag_gems.device,
     )
 
-    _assert_per_channel_metadata(res_out, ref_out, 0, scales, zero_points)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 # --- Negative cases ---------------------------------------------------------

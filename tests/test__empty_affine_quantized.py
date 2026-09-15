@@ -96,12 +96,16 @@ def _assert_quant_metadata(res_out, ref_out):
     # dtype, shape, strides, qscheme, qparams and device type. The storage bytes
     # are deliberately not compared (they may be garbage on either side).
     assert res_out.is_quantized
-    assert res_out.qscheme() == torch.per_tensor_affine
+    assert res_out.qscheme() == ref_out.qscheme()
     assert res_out.dtype == ref_out.dtype
     assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()
     # The factory stores the scale (double) and zero_point (int64) verbatim.
-    assert res_out.q_scale() == ref_out.q_scale()
+    res_scale, ref_scale = res_out.q_scale(), ref_out.q_scale()
+    if math.isnan(ref_scale):
+        assert math.isnan(res_scale)
+    else:
+        assert res_scale == ref_scale
     assert res_out.q_zero_point() == ref_out.q_zero_point()
     # flag_gems.device may carry no index (e.g. 'cuda') while a created tensor
     # reports 'cuda:0', so compare the device type only.
@@ -160,8 +164,6 @@ def test__empty_affine_quantized_value_ranges(shape, value_range, dtype):
     )
 
     _assert_quant_metadata(res_out, ref_out)
-    assert res_out.q_scale() == ref_out.q_scale() == scale
-    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
 
 
 @pytest.mark._empty_affine_quantized
@@ -176,14 +178,7 @@ def test__empty_affine_quantized_non_finite_scale(shape, dtype, scale):
         shape, dtype=dtype, device=flag_gems.device, scale=scale, zero_point=0
     )
 
-    # q_scale() round-trips the stored double; nan must compare via isnan.
-    assert res_out.dtype == ref_out.dtype == dtype
-    assert res_out.shape == ref_out.shape == torch.Size(shape)
-    assert res_out.q_zero_point() == ref_out.q_zero_point() == 0
-    if math.isnan(scale):
-        assert math.isnan(res_out.q_scale()) and math.isnan(ref_out.q_scale())
-    else:
-        assert res_out.q_scale() == ref_out.q_scale() == scale
+    _assert_quant_metadata(res_out, ref_out)
 
 
 @pytest.mark._empty_affine_quantized
@@ -198,10 +193,7 @@ def test__empty_affine_quantized_wide_zero_point(shape, dtype, zero_point):
         shape, dtype=dtype, device=flag_gems.device, scale=1.0, zero_point=zero_point
     )
 
-    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
-    assert res_out.q_scale() == ref_out.q_scale() == 1.0
-    assert res_out.dtype == ref_out.dtype == dtype
-    assert res_out.shape == ref_out.shape == torch.Size(shape)
+    _assert_quant_metadata(res_out, ref_out)
 
 
 @pytest.mark._empty_affine_quantized
@@ -283,8 +275,6 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
     assert res_out is act_out_buf
 
     _assert_quant_metadata(res_out, ref_out)
-    assert res_out.q_scale() == ref_out.q_scale() == scale
-    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
 
 
 @pytest.mark._empty_affine_quantized_out
@@ -313,8 +303,6 @@ def test__empty_affine_quantized_out_value_ranges(value_range, shape):
     assert res_out is act_buf
 
     _assert_quant_metadata(res_out, ref_out)
-    assert res_out.q_scale() == ref_out.q_scale() == scale
-    assert res_out.q_zero_point() == ref_out.q_zero_point() == zero_point
 
 
 @pytest.mark._empty_affine_quantized_out
@@ -341,10 +329,8 @@ def test__empty_affine_quantized_out_non_contiguous_view():
 
     _assert_quant_metadata(res_out, ref_out)
     # The view's qparams are reset while the base keeps its original qparams.
-    assert act_sliced.q_scale() == ref_sliced.q_scale() == 0.5
-    assert act_sliced.q_zero_point() == ref_sliced.q_zero_point() == 3
-    assert act_base.q_scale() == ref_base.q_scale() == 1.0
-    assert act_base.q_zero_point() == ref_base.q_zero_point() == 0
+    assert act_base.q_scale() == ref_base.q_scale()
+    assert act_base.q_zero_point() == ref_base.q_zero_point()
 
 
 # ---------------------------------------------------------------------------

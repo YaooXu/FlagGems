@@ -19,7 +19,6 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import accuracy_utils as utils
 from . import conftest as cfg
 from . import test_utils as tu
 
@@ -50,7 +49,7 @@ for _name in (
 #   * floating zero_points -> torch.per_channel_affine_float_qparams (float32
 #     scales and zero_points).
 # Both the data path (bit-exact copy) and the metadata (stored verbatim) are
-# exact, so every assertion is an equality check (utils.gems_assert_equal).
+# exact, so every assertion is an equality check (tu.assert_result_equal).
 #
 # Regular-operator spec dimensions:
 # - Value ranges: the storage tensor, the scales and the zero_points are the
@@ -205,109 +204,23 @@ def _make_out_buffer(shape, axis, storage_dtype, device, reference=False):
     )
 
 
-def _assert_per_channel_affine(
-    res_out, ref_out, inp, scales, zero_points, axis, equal_nan=False
-):
+def _assert_per_channel_metadata(res_out, ref_out):
+    # Compare the actual quantizer encoding and integer storage with ATen.
+    # Both integer and floating zero-point schemes use these same getters.
     assert res_out.is_quantized
     assert res_out.dtype == ref_out.dtype
-    assert res_out.dtype == _QUANT_DTYPE[inp.dtype]
     assert res_out.shape == ref_out.shape
-    # flag_gems.device may carry no index (e.g. 'cuda') while a created tensor
-    # reports 'cuda:0', so compare the device type only.
+    assert res_out.stride() == ref_out.stride()
     assert res_out.device.type == torch.device(flag_gems.device).type
-    assert res_out.qscheme() == ref_out.qscheme() == torch.per_channel_affine
-    assert res_out.q_per_channel_axis() == ref_out.q_per_channel_axis() == axis
-
-    # The getters always report float64 scales and int64 zero_points.
-    assert (
-        res_out.q_per_channel_scales().dtype
-        == ref_out.q_per_channel_scales().dtype
-        == torch.float64
+    assert res_out.qscheme() == ref_out.qscheme()
+    assert res_out.q_per_channel_axis() == ref_out.q_per_channel_axis()
+    tu.assert_result_equal(
+        res_out.q_per_channel_scales(), ref_out.q_per_channel_scales()
     )
-    assert (
-        res_out.q_per_channel_zero_points().dtype
-        == ref_out.q_per_channel_zero_points().dtype
-        == torch.int64
+    tu.assert_result_equal(
+        res_out.q_per_channel_zero_points(), ref_out.q_per_channel_zero_points()
     )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        ref_out.q_per_channel_scales(),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        ref_out.q_per_channel_zero_points(),
-        equal_nan=equal_nan,
-    )
-
-    # The stored metadata must reproduce the caller-supplied values exactly
-    # (scales widened to float64, zero_points to int64).
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        tu.to_reference(scales).to(torch.float64),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        tu.to_reference(zero_points).to(torch.int64),
-        equal_nan=equal_nan,
-    )
-
-    # The integer storage is copied unchanged from the input tensor, so the
-    # underlying representation must match the input and the reference
-    # bit-exactly.
-    utils.gems_assert_equal(res_out.int_repr(), tu.to_reference(inp))
-    utils.gems_assert_equal(res_out.int_repr(), ref_out.int_repr())
-
-
-def _assert_per_channel_float_qparams(
-    res_out, ref_out, inp, scales, zero_points, axis, equal_nan=False
-):
-    # A *floating-point* zero_point tensor switches the output qscheme to
-    # torch.per_channel_affine_float_qparams, whose getters report float32
-    # scales and zero_points (unlike the int64-zero_point path above).
-    assert res_out.is_quantized
-    assert res_out.dtype == ref_out.dtype
-    assert res_out.dtype == _QUANT_DTYPE[inp.dtype]
-    assert res_out.shape == ref_out.shape
-    assert res_out.device.type == torch.device(flag_gems.device).type
-    assert (
-        res_out.qscheme() == ref_out.qscheme() == torch.per_channel_affine_float_qparams
-    )
-    assert res_out.q_per_channel_axis() == ref_out.q_per_channel_axis() == axis
-
-    assert (
-        res_out.q_per_channel_scales().dtype
-        == ref_out.q_per_channel_scales().dtype
-        == torch.float32
-    )
-    assert (
-        res_out.q_per_channel_zero_points().dtype
-        == ref_out.q_per_channel_zero_points().dtype
-        == torch.float32
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        ref_out.q_per_channel_scales(),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        ref_out.q_per_channel_zero_points(),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_scales(),
-        tu.to_reference(scales).to(torch.float32),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(
-        res_out.q_per_channel_zero_points(),
-        tu.to_reference(zero_points).to(torch.float32),
-        equal_nan=equal_nan,
-    )
-    utils.gems_assert_equal(res_out.int_repr(), tu.to_reference(inp))
-    utils.gems_assert_equal(res_out.int_repr(), ref_out.int_repr())
+    tu.assert_result_equal(res_out.int_repr(), ref_out.int_repr())
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -340,7 +253,10 @@ def test__make_per_channel_quantized_tensor_value_ranges(
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(res_out, ref_out, inp, scales, zero_points, axis)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -365,9 +281,10 @@ def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dt
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(res_out, ref_out, inp, scales, zero_points, axis)
-    # The input is only read; it must be untouched.
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -394,7 +311,10 @@ def test__make_per_channel_quantized_tensor_axis(
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(res_out, ref_out, inp, scales, zero_points, axis)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -428,7 +348,10 @@ def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(res_out, ref_out, inp, scales, zero_points, axis)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -455,7 +378,10 @@ def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(res_out, ref_out, inp, scales, zero_points, axis)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -482,7 +408,10 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_float_qparams(res_out, ref_out, inp, scales, zero_points, axis)
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -490,8 +419,6 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
 @pytest.mark.parametrize("bad", _NON_FINITE)
 def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad):
     # nan/inf/-inf scales are accepted by both references and stored verbatim.
-    # equal_nan is required because the exact-equality helpers compare
-    # nan != nan by default.
     shape, axis = (2, 3, 4), 1
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
@@ -513,9 +440,10 @@ def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_affine(
-        res_out, ref_out, inp, scales, zero_points, axis, equal_nan=True
-    )
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -525,7 +453,7 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
     storage_dtype, bad
 ):
     # Non-finite float zero_points follow the float_qparams path and are stored
-    # verbatim (equal_nan handles the nan entry).
+    # verbatim, including NaNs.
     shape, axis = (2, 3, 4), 1
     num_channels = _num_channels(shape, axis)
     inp = tu.make_input(storage_dtype, shape, ["0", "max"])
@@ -547,9 +475,10 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
         inp, scales, zero_points, axis
     )
 
-    _assert_per_channel_float_qparams(
-        res_out, ref_out, inp, scales, zero_points, axis, equal_nan=True
-    )
+    _assert_per_channel_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 # aten::_make_per_channel_quantized_tensor.out(Tensor self, Tensor scale, Tensor
@@ -580,8 +509,10 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     )
     assert res_ret is act_out_buf
 
-    _assert_per_channel_affine(act_out_buf, ref_out_buf, inp, scales, zero_points, axis)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_per_channel_metadata(act_out_buf, ref_out_buf)
+    tu.assert_result_equal(inp, ref_inp)
+    tu.assert_result_equal(scales, ref_scales)
+    tu.assert_result_equal(zero_points, ref_zero_points)
 
 
 # ---------------------------------------------------------------------------

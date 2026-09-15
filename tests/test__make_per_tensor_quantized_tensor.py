@@ -20,7 +20,6 @@ from _pytest.mark.structures import Mark, MarkDecorator
 
 import flag_gems
 
-from . import accuracy_utils as utils
 from . import conftest as cfg
 from . import test_utils as tu
 
@@ -151,31 +150,26 @@ def _resolve_gems_op():
     )
 
 
-def _assert_scale(res_scale, ref_scale):
-    # q_scale() round-trips the stored double; nan must compare via isnan.
-    if math.isnan(ref_scale):
-        assert math.isnan(res_scale)
-    else:
-        assert res_scale == ref_scale
-
-
-def _assert_quant_metadata(res_out, ref_out, ref_inp, dtype):
+def _assert_quant_metadata(res_out, ref_out):
     # _make_per_tensor_quantized_tensor wraps integer data in a fresh quantized
     # tensor: the observable contract is the derived output dtype, the stored
     # qparams, the shape, and the int representation (an exact copy of the input
     # values). The input is never mutated and the output never aliases it.
     assert res_out.is_quantized
     assert res_out.dtype == ref_out.dtype
-    assert res_out.dtype == _QUANT_DTYPE[dtype]
     assert res_out.shape == ref_out.shape
-    _assert_scale(res_out.q_scale(), ref_out.q_scale())
+    assert res_out.qscheme() == ref_out.qscheme()
+    res_scale, ref_scale = res_out.q_scale(), ref_out.q_scale()
+    if math.isnan(ref_scale):
+        assert math.isnan(res_scale)
+    else:
+        assert res_scale == ref_scale
     assert res_out.q_zero_point() == ref_out.q_zero_point()
     # flag_gems.device may carry no index (e.g. 'cuda') while a created tensor
     # reports 'cuda:0', so compare the device type only.
     assert res_out.device.type == torch.device(flag_gems.device).type
-    assert res_out.is_contiguous()
-    utils.gems_assert_equal(res_out.int_repr(), ref_out.int_repr())
-    utils.gems_assert_equal(res_out.int_repr(), ref_inp)
+    assert res_out.stride() == ref_out.stride()
+    tu.assert_result_equal(res_out.int_repr(), ref_out.int_repr())
 
 
 @pytest.mark._make_per_tensor_quantized_tensor
@@ -192,9 +186,9 @@ def test__make_per_tensor_quantized_tensor_value_ranges(shape, dtype, value_rang
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
     res_out = _resolve_gems_op()(inp, 0.5, -3)
 
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
+    _assert_quant_metadata(res_out, ref_out)
     # The input is only read; it must be untouched.
-    utils.gems_assert_equal(inp, ref_inp)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor
@@ -213,10 +207,8 @@ def test__make_per_tensor_quantized_tensor_qparams(shape, dtype, scale, zero_poi
     )
     res_out = _resolve_gems_op()(inp, scale, zero_point)
 
-    assert res_out.q_scale() == scale
-    assert res_out.q_zero_point() == zero_point
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor
@@ -231,8 +223,8 @@ def test__make_per_tensor_quantized_tensor_boundary_values(dtype, pattern):
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
     res_out = _resolve_gems_op()(inp, 0.5, -3)
 
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor
@@ -247,10 +239,8 @@ def test__make_per_tensor_quantized_tensor_non_finite_scale(dtype, scale):
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, scale, 0)
     res_out = _resolve_gems_op()(inp, scale, 0)
 
-    _assert_scale(res_out.q_scale(), scale)
-    _assert_scale(ref_out.q_scale(), scale)
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor
@@ -267,8 +257,8 @@ def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
     res_out = _resolve_gems_op()(inp, 0.5, -3)
 
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 # aten::_make_per_tensor_quantized_tensor.out(Tensor self, float scale, int
@@ -303,8 +293,8 @@ def test__make_per_tensor_quantized_tensor_out_value_ranges(shape, dtype, value_
     res_out = _resolve_gems_op()(inp, 0.5, -3, out=act_out_buf)
     assert res_out is act_out_buf
 
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor_out
@@ -334,10 +324,8 @@ def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point)
     res_out = _resolve_gems_op()(inp, scale, zero_point, out=act_out_buf)
     assert res_out is act_out_buf
 
-    assert res_out.q_scale() == scale
-    assert res_out.q_zero_point() == zero_point
-    _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
-    utils.gems_assert_equal(inp, ref_inp)
+    _assert_quant_metadata(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 # ---------------------------------------------------------------------------
