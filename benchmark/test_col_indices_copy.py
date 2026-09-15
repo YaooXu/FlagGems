@@ -113,23 +113,6 @@ def _make_input(layout, size, nnz, blocks, dtype, device):
     raise ValueError(f"unknown layout {layout}")
 
 
-def _torch_col_indices_copy(inp):
-    # torch_op is the perf comparison reference and shares call semantics with
-    # the candidate: the real ATen operator, probed invocable on sparse CSR/BSR
-    # tensors, so no composed simulation is used.
-    return torch.ops.aten.col_indices_copy(inp)
-
-
-def _gems_col_indices_copy(inp):
-    # Resolved through the direct-callable route (override-aware) rather than
-    # going through the dispatcher. getattr keeps this importable while
-    # flag_gems has no public col_indices_copy attribute yet.
-    op = flag_gems.testing.resolve_gems_op(
-        "col_indices_copy", getattr(flag_gems, "col_indices_copy", None)
-    )
-    return op(inp)
-
-
 def _case_fn(shape, dtype):
     del dtype
     layout, size, nnz, blocks = shape
@@ -161,8 +144,8 @@ def test_col_indices_copy():
         op_name="col_indices_copy",
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
-        torch_op=_torch_col_indices_copy,
-        gems_op=_gems_col_indices_copy,
+        torch_op=torch.ops.aten.col_indices_copy,
+        gems_op=getattr(flag_gems, "col_indices_copy", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

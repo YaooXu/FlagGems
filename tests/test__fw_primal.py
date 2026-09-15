@@ -113,14 +113,6 @@ def _resolve_gems_op():
     )
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
-def _assert_values(res_out, ref_out):
-    tu.assert_result_equal(res_out, ref_out)
-
-
 def _assert_view_semantics(res_out, ref_out, inp):
     # _fw_primal returns an aliasing view (Tensor(a)): the observable layout
     # must match aten exactly and the result must share the input storage.
@@ -140,13 +132,13 @@ def test__fw_primal(shape, value_range, dtype):
     # The full shape x value-range x dtype grid at the documented level 0. A
     # view never inspects or transforms the stored values, so every range must
     # round-trip exactly.
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
 
-    _assert_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -157,13 +149,13 @@ def test__fw_primal(shape, value_range, dtype):
 def test__fw_primal_level(shape, level, dtype):
     # The ``level`` argument is orthogonal to the shape/value grid, so sweep it
     # over representative ranks (0-dim, 1-dim, 3-dim) for every dtype.
-    inp = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, level)
     res_out = _resolve_gems_op()(inp, level)
 
-    _assert_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -175,7 +167,7 @@ def test__fw_primal_non_contiguous(shape, level, dtype):
     # The aliasing view must preserve the exact strides and storage offset of a
     # non-contiguous input. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
-    base = _make_input(dtype, shape, ["-1", "1"])
+    base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
@@ -184,7 +176,7 @@ def test__fw_primal_non_contiguous(shape, level, dtype):
     ref_out = torch.ops.aten._fw_primal(ref_inp, level)
     res_out = _resolve_gems_op()(inp, level)
 
-    _assert_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -198,7 +190,7 @@ def test__fw_primal_mutation(shape, dtype):
     # must be observable on the candidate-side input tensor, and the reference
     # must behave identically. The reference runs on an independent clone so the
     # two aliases are validated separately.
-    inp = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
@@ -252,7 +244,7 @@ def test__fw_primal_empty(shape, dtype):
     ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
 
-    _assert_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -264,7 +256,7 @@ if not tu.QUICK_MODE:
     def test__fw_primal_backward(shape, dtype):
         # A view is transparent to autograd: the gradient of a loss built on the
         # result must match the reference gradient (the view contributes identity).
-        inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_(True)
         ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_(True)
 
         ref_out = torch.ops.aten._fw_primal(ref_inp, 0)
@@ -294,7 +286,7 @@ def test__fw_primal_rejects_non_tensor():
 def test__fw_primal_rejects_non_int_level():
     # ``level`` is an int in the schema; a float is a cast error at the
     # dispatcher boundary and must be rejected by the candidate as well.
-    inp = _make_input(torch.float32, (8,), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
@@ -309,7 +301,7 @@ def test__fw_primal_rejects_non_int_level():
 def test__fw_primal_rejects_missing_level():
     # ``level`` has no default in the schema; omitting it must fail on both the
     # reference and the candidate instead of silently using level 0.
-    inp = _make_input(torch.float32, (8,), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):

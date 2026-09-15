@@ -153,10 +153,6 @@ def _resolve_gems_op():
     )
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _assert_close(res_out, ref_out, dtype):
     if dtype in _FP8_DTYPES:
         # torch.testing.assert_close cannot compare fp8 tensors directly on
@@ -167,10 +163,6 @@ def _assert_close(res_out, ref_out, dtype):
         utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     else:
         utils.gems_assert_equal(res_out, ref_out)
-
-
-def _assert_values(res_out, ref_out):
-    tu.assert_result_equal(res_out, ref_out)
 
 
 def _assert_primal_view(res_primal, ref_primal, dual):
@@ -192,8 +184,8 @@ def test__unpack_dual_dual_tensor(shape, dtype):
     # with values drawn from the default [-1, 1] range (negative and positive
     # for each dtype). Unpack at the level that created the dual and recover
     # both the primal view and the registered tangent.
-    primal = _make_input(dtype, shape, ["-1", "1"])
-    tangent = _make_input(dtype, shape, ["-1", "1"])
+    primal = tu.make_input(dtype, shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_primal = tu.to_reference(primal)
     ref_tangent = tu.to_reference(tangent)
 
@@ -220,8 +212,8 @@ def test__unpack_dual_dual_tensor_value_ranges(shape, value_range, dtype):
     # The op never inspects or transforms the stored values, so the full spec
     # range sweep (negative, positive, extreme and degenerate ranges) must
     # round-trip bit-for-bit through both the primal view and the tangent.
-    primal = _make_input(dtype, shape, value_range)
-    tangent = _make_input(dtype, shape, value_range)
+    primal = tu.make_input(dtype, shape, value_range)
+    tangent = tu.make_input(dtype, shape, value_range)
     ref_primal = tu.to_reference(primal)
     ref_tangent = tu.to_reference(tangent)
 
@@ -233,8 +225,8 @@ def test__unpack_dual_dual_tensor_value_ranges(shape, value_range, dtype):
         res_primal_out, res_tangent_out = _resolve_gems_op()(dual, level)
 
         assert isinstance(res_tangent_out, torch.Tensor)
-        _assert_values(res_primal_out, ref_primal_out)
-        _assert_values(res_tangent_out, ref_tangent_out)
+        tu.assert_result_equal(res_primal_out, ref_primal_out)
+        tu.assert_result_equal(res_tangent_out, ref_tangent_out)
         _assert_primal_view(res_primal_out, ref_primal_out, dual)
 
 
@@ -246,7 +238,7 @@ def test__unpack_dual_plain_tensor(shape, level, dtype):
     # A plain tensor has no forward tangent at any level: aten still returns the
     # input as an aliasing view, and the tangent component must be None. This
     # exercises the tangent-None contract across every storage dtype.
-    inp = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, level)
@@ -266,7 +258,7 @@ def test__unpack_dual_plain_tensor_value_ranges(shape, value_range, dtype):
     # The tangent-None path is also pure metadata: every spec value range
     # (including the exact int/bool comparisons) must round-trip through the
     # returned primal view.
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_primal_out, ref_tangent_out = torch.ops.aten._unpack_dual(ref_inp, 0)
@@ -274,7 +266,7 @@ def test__unpack_dual_plain_tensor_value_ranges(shape, value_range, dtype):
 
     assert ref_tangent_out is None
     assert res_tangent_out is None
-    _assert_values(res_primal_out, ref_primal_out)
+    tu.assert_result_equal(res_primal_out, ref_primal_out)
     _assert_primal_view(res_primal_out, ref_primal_out, inp)
 
 
@@ -287,11 +279,11 @@ def test__unpack_dual_non_contiguous(shape, dtype):
     # reference device so the two inputs share the same memory layout. The
     # tangent may be materialized with a different layout by the forward-AD
     # machinery, so only its values are compared.
-    base = _make_input(dtype, shape, ["-1", "1"])
+    base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     primal = base[..., ::2]
     ref_primal = ref_base[..., ::2]
-    tangent = _make_input(dtype, primal.shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, primal.shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
     assert not primal.is_contiguous()
 
@@ -318,9 +310,9 @@ def test__unpack_dual_mutation(shape, dtype):
     # reference must behave identically. The reference input is an independent
     # clone so the two aliases are validated separately. The op itself never
     # mutates anything.
-    primal = _make_input(dtype, shape, ["-1", "1"])
+    primal = tu.make_input(dtype, shape, ["-1", "1"])
     ref_primal = tu.to_reference(primal.clone())
-    tangent = _make_input(dtype, shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
@@ -419,7 +411,7 @@ def test__unpack_dual_rejects_non_tensor():
 def test__unpack_dual_rejects_non_int_level():
     # ``level`` is an int in the schema; a float is a cast error at the
     # dispatcher boundary and must be rejected by the candidate as well.
-    inp = _make_input(torch.float32, (8,), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     with pytest.raises(RuntimeError):
@@ -438,8 +430,8 @@ def test__unpack_dual_rejects_inactive_level(dtype, bad_level):
     # ``bad_level`` stays inactive by construction: -1 is never a valid level
     # and ``bad_level == 1`` differs from the context level, unless the context
     # happened to assign 1, in which case the next level is used instead.
-    primal = _make_input(dtype, (4, 5), ["-1", "1"])
-    tangent = _make_input(dtype, (4, 5), ["-1", "1"])
+    primal = tu.make_input(dtype, (4, 5), ["-1", "1"])
+    tangent = tu.make_input(dtype, (4, 5), ["-1", "1"])
     ref_primal = tu.to_reference(primal)
     ref_tangent = tu.to_reference(tangent)
 

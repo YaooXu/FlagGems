@@ -250,23 +250,15 @@ def _assert_csr_structure(out, size, nnz, dtype, batch=None, crow_len=None):
     assert (out.col_indices() < size[-1]).all()
 
 
-def _assert_values(res_values, ref_values, dtype, equal_nan=False):
-    # Values follow the usual tolerance policy: floats use assert_close,
-    # integers and bools must match exactly, and float8 (which the sparse
-    # container cannot feed to torch.testing.assert_close) is compared through
-    # its raw uint8 bit pattern.
-    tu.assert_result_equal(res_values, ref_values)
-
-
-def _assert_csr_equal(res_out, ref_out, dtype, equal_nan=False):
+def _assert_csr_equal(res_out, ref_out):
     # The constructed tensor must preserve the layout, shape, dtype and the
-    # exact index structure; the values are compared through _assert_values.
+    # exact index structure; the values use tu.assert_result_equal.
     assert res_out.layout == ref_out.layout
     assert tuple(res_out.shape) == tuple(ref_out.shape)
     assert res_out.dtype == ref_out.dtype
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-    _assert_values(res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan)
+    tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 def _resolve_gems_op():
@@ -299,7 +291,7 @@ def test_sparse_csr_tensor_crow_col_value_size(case, dtype, value_range):
     _assert_csr_structure(res_out, size, nnz, dtype)
     # Values are stored verbatim, so the float comparison is exact within
     # tolerance; the index arrays must match bit-for-bit.
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
     # The constructor reads its inputs; it must not mutate them.
     utils.gems_assert_equal(crow_t, ref_crow)
     utils.gems_assert_equal(col_t, ref_col)
@@ -331,7 +323,7 @@ def test_sparse_csr_tensor_crow_col_value_size_batched(case, dtype, value_range)
     )
 
     _assert_csr_structure(res_out, size, nnz, dtype, batch=batch)
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -364,7 +356,7 @@ def test_sparse_csr_tensor_crow_col_value_size_empty(case, dtype):
     )
 
     _assert_csr_structure(res_out, size, 0, dtype, batch=batch)
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -393,7 +385,7 @@ def test_sparse_csr_tensor_crow_col_value_size_index_dtypes(case, index_dtype, d
     _assert_csr_structure(res_out, size, nnz, dtype)
     assert res_out.crow_indices().dtype == index_dtype
     assert res_out.col_indices().dtype == index_dtype
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -421,7 +413,7 @@ def test_sparse_csr_tensor_crow_col_value_size_trailing_empty_rows(dtype):
     )
 
     _assert_csr_structure(res_out, size, nnz, dtype, crow_len=len(crow))
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -449,7 +441,7 @@ def test_sparse_csr_tensor_crow_col_value(case, dtype, value_range):
     )
 
     _assert_csr_structure(res_out, size, nnz, dtype)
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -491,7 +483,7 @@ def test_sparse_csr_tensor_shape_levels(case, dtype, value_range):
     )
 
     _assert_csr_structure(res_out, size, nnz, dtype, batch=batch)
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -532,7 +524,7 @@ if not tu.QUICK_MODE:
         )
 
         _assert_csr_structure(res_out, size, nnz, dtype)
-        _assert_csr_equal(res_out, ref_out, dtype, equal_nan=True)
+        _assert_csr_equal(res_out, ref_out)
 
 
 @pytest.mark.sparse_csr_tensor
@@ -565,7 +557,7 @@ def test_sparse_csr_tensor_boundary_values(dtype):
     )
 
     _assert_csr_structure(res_out, size, nnz, dtype)
-    _assert_csr_equal(res_out, ref_out, dtype)
+    _assert_csr_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------

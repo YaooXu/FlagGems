@@ -77,12 +77,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None)
-    )
-
-
 def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
     n, _, h_in, w_in = inp_shape
     out_c, _, k_h, k_w = weight_shape
@@ -373,7 +367,7 @@ def test_thnn_conv2d_out(
     )
     assert ref_ret is ref_out
 
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op()(
         inp, weight, kernel_size, bias_t, stride, padding, out=res_out
     )
 

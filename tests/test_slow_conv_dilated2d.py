@@ -158,12 +158,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_dilated2d", getattr(flag_gems, "slow_conv_dilated2d", None)
-    )
-
-
 def _make_conv_inputs(
     inp_shape, weight_shape, with_bias, dtype, value_range=("-1", "1")
 ):
@@ -266,7 +260,7 @@ def test_slow_conv_dilated2d_out(
     assert ref_ret is ref_out
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op()(
         inp, weight, kernel_size, bias_t, stride, padding, dilation, out=out
     )
     assert res_ret is out

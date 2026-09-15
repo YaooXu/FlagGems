@@ -175,10 +175,6 @@ def _make_input(shape, dtype, device=None):
     )
 
 
-def _make_value_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _boundary_input(dtype, pattern):
     info = torch.iinfo(dtype)
     if pattern == "min_max_0_1":
@@ -194,24 +190,11 @@ def _boundary_input(dtype, pattern):
     return tensor.repeat(4, 1)
 
 
-def _quant_buffer(shape, quant_dtype, scale, zero_point, device):
-    return torch.ops.aten._empty_affine_quantized(
-        shape, dtype=quant_dtype, device=device, scale=scale, zero_point=zero_point
-    )
-
-
 def _ref_device():
     return "cpu" if cfg.TO_CPU else flag_gems.device
 
 
 def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_make_per_tensor_quantized_tensor",
-        getattr(flag_gems, "_make_per_tensor_quantized_tensor", None),
-    )
-
-
-def _resolve_gems_op_out():
     return flag_gems.testing.resolve_gems_op(
         "_make_per_tensor_quantized_tensor",
         getattr(flag_gems, "_make_per_tensor_quantized_tensor", None),
@@ -253,7 +236,7 @@ def test__make_per_tensor_quantized_tensor_value_ranges(shape, dtype, value_rang
     # Main value-range x shape x storage-dtype grid (one workload per combo).
     # The data path is a bit copy, so the expected result is derived from the
     # aten reference for the same input.
-    inp = _make_value_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor(ref_inp, 0.5, -3)
@@ -347,20 +330,28 @@ def test__make_per_tensor_quantized_tensor_non_contiguous(dtype):
 @pytest.mark.parametrize("dtype", _MAKE_PERTENSOR_INPUT_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test__make_per_tensor_quantized_tensor_out_value_ranges(shape, dtype, value_range):
-    inp = _make_value_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     # The out buffers start with different qparams so the overwrite performed by
     # the op is observable. The out dtype must already be the derived quantized
     # dtype (the out overload cannot change the out tensor's dtype).
-    ref_out_buf = _quant_buffer(shape, _QUANT_DTYPE[dtype], 1.0, 0, _ref_device())
+    ref_out_buf = torch.ops.aten._empty_affine_quantized(
+        shape, dtype=_QUANT_DTYPE[dtype], device=_ref_device(), scale=1.0, zero_point=0
+    )
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor.out(
         ref_inp, 0.5, -3, out=ref_out_buf
     )
     assert ref_out is ref_out_buf
 
-    act_out_buf = _quant_buffer(shape, _QUANT_DTYPE[dtype], 1.0, 0, flag_gems.device)
-    res_out = _resolve_gems_op_out()(inp, 0.5, -3, out=act_out_buf)
+    act_out_buf = torch.ops.aten._empty_affine_quantized(
+        shape,
+        dtype=_QUANT_DTYPE[dtype],
+        device=flag_gems.device,
+        scale=1.0,
+        zero_point=0,
+    )
+    res_out = _resolve_gems_op()(inp, 0.5, -3, out=act_out_buf)
     assert res_out is act_out_buf
 
     _assert_quant_metadata(res_out, ref_out, ref_inp, dtype)
@@ -377,14 +368,22 @@ def test__make_per_tensor_quantized_tensor_out_qparams(dtype, scale, zero_point)
     inp = _make_input((4, 8), dtype)
     ref_inp = tu.to_reference(inp)
 
-    ref_out_buf = _quant_buffer((4, 8), _QUANT_DTYPE[dtype], 1.0, 0, _ref_device())
+    ref_out_buf = torch.ops.aten._empty_affine_quantized(
+        (4, 8), dtype=_QUANT_DTYPE[dtype], device=_ref_device(), scale=1.0, zero_point=0
+    )
     ref_out = torch.ops.aten._make_per_tensor_quantized_tensor.out(
         ref_inp, scale, zero_point, out=ref_out_buf
     )
     assert ref_out is ref_out_buf
 
-    act_out_buf = _quant_buffer((4, 8), _QUANT_DTYPE[dtype], 1.0, 0, flag_gems.device)
-    res_out = _resolve_gems_op_out()(inp, scale, zero_point, out=act_out_buf)
+    act_out_buf = torch.ops.aten._empty_affine_quantized(
+        (4, 8),
+        dtype=_QUANT_DTYPE[dtype],
+        device=flag_gems.device,
+        scale=1.0,
+        zero_point=0,
+    )
+    res_out = _resolve_gems_op()(inp, scale, zero_point, out=act_out_buf)
     assert res_out is act_out_buf
 
     assert res_out.q_scale() == scale
@@ -430,7 +429,7 @@ def test__make_per_tensor_quantized_tensor_out_rejects_non_quantized_buffer(dtyp
 
     act_buf = torch.empty((2, 3), dtype=torch.float32, device=flag_gems.device)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op_out()(inp, 0.1, 0, out=act_buf)
+        _resolve_gems_op()(inp, 0.1, 0, out=act_buf)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor_out
@@ -441,15 +440,27 @@ def test__make_per_tensor_quantized_tensor_out_rejects_wrong_quantized_dtype(dty
     inp = _make_input((2, 3), dtype)
     ref_inp = tu.to_reference(inp)
 
-    ref_buf = _quant_buffer((2, 3), _WRONG_QUANT_DTYPE[dtype], 1.0, 0, _ref_device())
+    ref_buf = torch.ops.aten._empty_affine_quantized(
+        (2, 3),
+        dtype=_WRONG_QUANT_DTYPE[dtype],
+        device=_ref_device(),
+        scale=1.0,
+        zero_point=0,
+    )
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         torch.ops.aten._make_per_tensor_quantized_tensor.out(
             ref_inp, 0.1, 0, out=ref_buf
         )
 
-    act_buf = _quant_buffer((2, 3), _WRONG_QUANT_DTYPE[dtype], 1.0, 0, flag_gems.device)
+    act_buf = torch.ops.aten._empty_affine_quantized(
+        (2, 3),
+        dtype=_WRONG_QUANT_DTYPE[dtype],
+        device=flag_gems.device,
+        scale=1.0,
+        zero_point=0,
+    )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op_out()(inp, 0.1, 0, out=act_buf)
+        _resolve_gems_op()(inp, 0.1, 0, out=act_buf)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor_out
@@ -461,8 +472,10 @@ def test__make_per_tensor_quantized_tensor_out_rejects_wrong_quantized_dtype(dty
 )
 def test__make_per_tensor_quantized_tensor_out_rejects_shape_mismatch():
     inp = torch.randint(0, 100, (4, 4), dtype=torch.uint8, device=flag_gems.device)
-    buf = _quant_buffer((2, 2), torch.quint8, 1.0, 0, flag_gems.device)
+    buf = torch.ops.aten._empty_affine_quantized(
+        (2, 2), dtype=torch.quint8, device=flag_gems.device, scale=1.0, zero_point=0
+    )
     with pytest.raises((NotImplementedError, RuntimeError)):
         torch.ops.aten._make_per_tensor_quantized_tensor.out(inp, 0.5, 0, out=buf)
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op_out()(inp, 0.5, 0, out=buf)
+        _resolve_gems_op()(inp, 0.5, 0, out=buf)

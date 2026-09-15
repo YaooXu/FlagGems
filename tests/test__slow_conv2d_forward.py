@@ -91,12 +91,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
-    )
-
-
 def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
     n, _, h_in, w_in = inp_shape
     out_c, _, k_h, k_w = weight_shape
@@ -360,7 +354,7 @@ def test__slow_conv2d_forward_out(
     ref_ret = torch.ops.aten._slow_conv2d_forward.output(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, output=ref_out
     )
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op()(
         inp, weight, kernel_size, bias_t, stride, padding, output=res_out
     )
 

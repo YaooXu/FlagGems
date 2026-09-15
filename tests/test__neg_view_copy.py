@@ -134,12 +134,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_neg_view_copy", getattr(flag_gems, "_neg_view_copy", None)
-    )
-
-
 def _make_out(shape, dtype, device):
     # Garbage-prefilled buffer: the copy must overwrite every element.
     return torch.full(shape, 7, dtype=dtype, device=device)
@@ -209,7 +203,7 @@ def test__neg_view_copy_out(shape, dtype):
     out = _make_out(shape, dtype, flag_gems.device)
 
     ref_ret = torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out variant must write into and return the caller's buffer itself.
     assert ref_ret is ref_out
@@ -231,7 +225,7 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
     out = _make_out(shape, dtype, flag_gems.device)
 
     ref_ret = torch.ops.aten._neg_view_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
     assert ref_ret is ref_out
     assert res_ret is out

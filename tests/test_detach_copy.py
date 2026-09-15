@@ -81,27 +81,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "detach_copy", getattr(flag_gems, "detach_copy", None)
-    )
-
-
-def _range_input(dtype, shape, value_range):
-    # Build a value-range input through the shared helper. Unsigned integer
-    # dtypes cannot represent the negative end of the spec ranges, so their -1
-    # bound is clamped to 0 before generation (a degenerate range becomes a
-    # constant fill inside make_input).
-    return tu.make_input(dtype, shape, value_range)
-
-
-def _assert_same_values(res, ref):
-    # A copy is bit-exact. torch.testing.assert_close cannot compare float8
-    # tensors on CPU (it raises an internal RuntimeError), so fp8 uses the raw
-    # byte pattern and every other dtype goes through the shared helper.
-    tu.assert_result_equal(res, ref)
-
-
 def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
     # detach_copy returns a NEW contiguous tensor with the same logical values:
     # same shape/dtype/strides as the reference copy, never aliasing the input.
@@ -114,9 +93,9 @@ def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
     # no-alias check is only meaningful for non-empty inputs.
     if inp.numel() > 0:
         assert res_out.data_ptr() != inp.data_ptr()
-    _assert_same_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     # The input must be untouched by the copy.
-    _assert_same_values(inp, ref_inp)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark.detach_copy
@@ -142,7 +121,7 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     # Value-range coverage from the regular-operator spec: negative/positive
     # halves, dtype extremes and degenerate constant ranges. A pure copy must be
     # exact over all of them.
-    inp = _range_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
@@ -179,7 +158,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.detach_copy(ref_inp)
         res_out = _resolve_gems_op()(inp)
 
-        _assert_same_values(res_out, ref_out)
+        tu.assert_result_equal(res_out, ref_out)
         # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
         # -0.0 == 0.0, so pin the sign explicitly).
         assert torch.equal(torch.signbit(res_out), torch.signbit(ref_out))
@@ -197,7 +176,7 @@ def test_detach_copy_out(shape, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     ref_ret = torch.ops.aten.detach_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=res_out)
+    res_ret = _resolve_gems_op()(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert ref_ret is ref_out
@@ -212,14 +191,14 @@ def test_detach_copy_out(shape, dtype):
 def test_detach_copy_out_value_ranges(shape, value_range, dtype):
     # The .out path must reproduce the same values over every spec range while
     # writing into the caller's buffer (overwriting its previous value).
-    inp = _range_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.full(shape, 7, dtype=ref_inp.dtype, device=ref_inp.device)
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     ref_ret = torch.ops.aten.detach_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=res_out)
+    res_ret = _resolve_gems_op()(inp, out=res_out)
 
     assert ref_ret is ref_out
     assert res_ret is res_out
@@ -272,11 +251,11 @@ def test_detach_copy_independent_storage(shape, dtype):
     ref_out = torch.ops.aten.detach_copy(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_same_values(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
     res_out.fill_(3.25)
     if inp.numel() > 0:
         assert res_out.data_ptr() != inp.data_ptr()
-    _assert_same_values(inp, ref_inp)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark.detach_copy
@@ -296,8 +275,8 @@ def test_detach_copy_no_backward(shape, dtype):
         torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
     res_out = _resolve_gems_op()(inp)
-    _assert_same_values(res_out, ref_out)
-    _assert_same_values(inp, ref_inp)
+    tu.assert_result_equal(res_out, ref_out)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark.detach_copy
@@ -322,7 +301,7 @@ def test_detach_copy_out_rejects_wrong_dtype():
     with pytest.raises(RuntimeError):
         torch.ops.aten.detach_copy.out(ref_inp, out=ref_out_bad)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op_out()(inp, out=res_out_bad)
+        _resolve_gems_op()(inp, out=res_out_bad)
 
 
 if not tu.QUICK_MODE:

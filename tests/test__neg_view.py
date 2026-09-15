@@ -136,14 +136,10 @@ _NEG_VIEW_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _NEG_VIEW_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
-def _ranges_for(dtype):
-    return tu.selected_ranges()
-
-
 _RANGE_CASES = [
     (dtype, value_range)
     for dtype in _VALUE_DTYPES
-    for value_range in _ranges_for(dtype)
+    for value_range in tu.selected_ranges()
 ]
 
 

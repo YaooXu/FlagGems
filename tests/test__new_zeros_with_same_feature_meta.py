@@ -149,10 +149,6 @@ _MAX_OUTPUT_ELEMENTS = 1_000_000
 _MAIN_RANGE = ["-1", "1"]
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _nan_inf_tensor(shape, dtype, device):
     """Build ``shape`` filled with nan/inf/-inf payloads (values the op
     ignores; the layout is plain and contiguous)."""
@@ -224,8 +220,8 @@ def test__new_zeros_with_same_feature_meta(
     self_shape, other_shape, self_num_batch_dims, dtype
 ):
     # The [-1, 1] range covers negative and positive values in every dtype.
-    self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
-    other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
+    self_t = tu.make_input(dtype, self_shape, _MAIN_RANGE)
+    other_t = tu.make_input(dtype, other_shape, _MAIN_RANGE)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
@@ -248,8 +244,8 @@ def test__new_zeros_with_same_feature_meta(
 def test__new_zeros_with_same_feature_meta_out(
     self_shape, other_shape, self_num_batch_dims, dtype
 ):
-    self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
-    other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
+    self_t = tu.make_input(dtype, self_shape, _MAIN_RANGE)
+    other_t = tu.make_input(dtype, other_shape, _MAIN_RANGE)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
@@ -280,8 +276,8 @@ def test__new_zeros_with_same_feature_meta_out(
 def test__new_zeros_with_same_feature_meta_shapes(
     self_shape, other_shape, self_num_batch_dims, dtype
 ):
-    self_t = _make_input(dtype, self_shape, _MAIN_RANGE)
-    other_t = _make_input(dtype, other_shape, _MAIN_RANGE)
+    self_t = tu.make_input(dtype, self_shape, _MAIN_RANGE)
+    other_t = tu.make_input(dtype, other_shape, _MAIN_RANGE)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
@@ -307,8 +303,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
     # The values sweep the full spec range set (positive, negative, extreme and
     # degenerate); the zero output never changes because the op reads only
     # shapes and options.
-    self_t = _make_input(dtype, self_shape, value_range)
-    other_t = _make_input(dtype, other_shape, value_range)
+    self_t = tu.make_input(dtype, self_shape, value_range)
+    other_t = tu.make_input(dtype, other_shape, value_range)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
@@ -327,8 +323,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
     "self_dtype, other_dtype", _NEW_ZEROS_WITH_SAME_FEATURE_META_MIXED_DTYPES
 )
 def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dtype):
-    self_t = _make_input(self_dtype, (2, 3, 4), _MAIN_RANGE)
-    other_t = _make_input(other_dtype, (7, 8), _MAIN_RANGE)
+    self_t = tu.make_input(self_dtype, (2, 3, 4), _MAIN_RANGE)
+    other_t = tu.make_input(other_dtype, (7, 8), _MAIN_RANGE)
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
 
@@ -346,7 +342,7 @@ def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dt
 def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     # self is other: the general shape formula still holds and the result is a
     # fresh zero allocation, not an alias of the shared input.
-    self_t = _make_input(dtype, (2, 3, 4), _MAIN_RANGE)
+    self_t = tu.make_input(dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = self_t
     ref_self = tu.to_reference(self_t)
     ref_other = tu.to_reference(other_t)
@@ -387,8 +383,8 @@ def test__new_zeros_with_same_feature_meta_negative_batch_dims_raises(dtype):
     # self_num_batch_dims is the count of batch dims taken from self; a
     # negative count is invalid and the reference raises. A candidate must fail
     # loudly instead of silently slicing with a negative index.
-    self_t = _make_input(dtype, (2, 3), _MAIN_RANGE)
-    other_t = _make_input(dtype, (4, 5), _MAIN_RANGE)
+    self_t = tu.make_input(dtype, (2, 3), _MAIN_RANGE)
+    other_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE)
 
     with pytest.raises(RuntimeError):
         torch.ops.aten._new_zeros_with_same_feature_meta(
@@ -403,8 +399,8 @@ def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
     # The .out tensor must match the output options (which follow other); a
     # wrong-dtype out tensor is rejected by the reference and a candidate must
     # reject it too.
-    self_t = _make_input(torch.float32, (2, 3), _MAIN_RANGE)
-    other_t = _make_input(torch.float32, (4, 5), _MAIN_RANGE)
+    self_t = tu.make_input(torch.float32, (2, 3), _MAIN_RANGE)
+    other_t = tu.make_input(torch.float32, (4, 5), _MAIN_RANGE)
     out_t = torch.full((2, 4, 5), 1, dtype=torch.int64, device=flag_gems.device)
 
     with pytest.raises(RuntimeError):

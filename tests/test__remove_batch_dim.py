@@ -161,16 +161,10 @@ def _as_comparable(t):
     return t
 
 
-def _assert_values_close(res, ref):
-    # int/bool must match bit-exactly; floating point uses the shared tolerance
-    # with equal_nan=True (the broadcast view repeats the stored values exactly).
-    tu.assert_result_equal(res, ref)
-
-
 def _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype):
     assert res_out.shape == ref_out.shape == _expected_shape(shape, out_dim, batch_size)
     assert res_out.dtype == ref_out.dtype == dtype
-    _assert_values_close(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 def _dtype_range_pairs():
@@ -281,7 +275,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, 4, 0)
         res_out = _resolve_gems_op()(inp, 0, 4, 0)
 
-        _assert_values_close(res_out, ref_out)
+        tu.assert_result_equal(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -310,7 +304,7 @@ if not tu.QUICK_MODE:
         ref_grad = torch.autograd.grad(ref_out, ref_inp, ref_grad_out)[0]
 
         assert res_grad.shape == ref_grad.shape == inp.shape
-        _assert_values_close(res_grad, ref_grad)
+        tu.assert_result_equal(res_grad, ref_grad)
 
 
 @pytest.mark._remove_batch_dim

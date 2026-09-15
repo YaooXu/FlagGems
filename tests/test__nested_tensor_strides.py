@@ -142,10 +142,6 @@ def _supports_inf(dtype):
     return bool(torch.isinf(probe.to(torch.float64)))
 
 
-def _make_component(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_nested(
     num_tensors,
     num_dims,
@@ -172,7 +168,7 @@ def _make_nested(
     gen = torch.Generator("cpu").manual_seed(seed)
     lengths = torch.randint(1, 9, (num_tensors,), generator=gen).tolist()
     components = [
-        _make_component(dtype, (length,) + (trailing,) * (num_dims - 1), value_range)
+        tu.make_input(dtype, (length,) + (trailing,) * (num_dims - 1), value_range)
         for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=device)
@@ -288,7 +284,7 @@ def test__nested_tensor_strides_shape_levels(case, dtype):
     gen = torch.Generator("cpu").manual_seed(0)
     lengths = torch.randint(1, 5, (num_tensors,), generator=gen).tolist()
     components = [
-        _make_component(dtype, (length,) + trailing, _VALUE_RANGE) for length in lengths
+        tu.make_input(dtype, (length,) + trailing, _VALUE_RANGE) for length in lengths
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
@@ -329,7 +325,7 @@ def test__nested_tensor_strides_uniform(dtype):
     # contiguous (4, 4, 4) copy, so every strides row is exactly (16, 4, 1).
     num_tensors, num_dims = 6, 3
     components = [
-        _make_component(dtype, (4, 4, 4), _VALUE_RANGE) for _ in range(num_tensors)
+        tu.make_input(dtype, (4, 4, 4), _VALUE_RANGE) for _ in range(num_tensors)
     ]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     assert inp.is_nested
@@ -352,9 +348,7 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     lengths = [
         int(torch.randint(0, 4, (1,), generator=gen).item()) for _ in range(num_tensors)
     ]
-    components = [
-        _make_component(dtype, (length, 4), _VALUE_RANGE) for length in lengths
-    ]
+    components = [tu.make_input(dtype, (length, 4), _VALUE_RANGE) for length in lengths]
     inp = torch.nested.nested_tensor(components, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
 
@@ -414,7 +408,7 @@ if not tu.QUICK_MODE:
         has_inf = _supports_inf(dtype)
         components = []
         for length in lengths:
-            values = _make_component(dtype, (length, 4), _VALUE_RANGE)
+            values = tu.make_input(dtype, (length, 4), _VALUE_RANGE)
             values[0, 0] = float("nan")
             values[0, 1] = float("inf") if has_inf else float("nan")
             values[-1, -1] = float("-inf") if has_inf else float("nan")

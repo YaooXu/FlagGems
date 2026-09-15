@@ -297,12 +297,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
-    )
-
-
 def _conv_transpose_output_shape(
     inp_shape, weight_shape, stride, padding, output_padding, dilation
 ):
@@ -510,7 +504,7 @@ def test_slow_conv_transpose3d_out(
     assert ref_ret is ref_out
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op_out()(
+    res_ret = _resolve_gems_op()(
         inp,
         weight,
         kernel_size,

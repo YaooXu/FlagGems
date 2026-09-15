@@ -69,10 +69,6 @@ _DIMV_DTYPE_CANDIDATES = (
 )
 
 
-def _make_values(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _make_coo_input(shape, dense_dim, dtype, value_range, nnz=8, seed=0):
     """Build a sparse COO tensor whose reported ``dense_dim`` is ``dense_dim``.
 
@@ -94,7 +90,7 @@ def _make_coo_input(shape, dense_dim, dtype, value_range, nnz=8, seed=0):
             for dim in sparse_shape
         ]
     )
-    values = _make_values(dtype, (nnz,) + tuple(dense_shape), value_range)
+    values = tu.make_input(dtype, (nnz,) + tuple(dense_shape), value_range)
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
@@ -124,7 +120,7 @@ def _supported_sparse_dtypes():
         if dtype in supported:
             continue
         try:
-            values = _make_values(dtype, (3, 2), ["0", "1"])
+            values = tu.make_input(dtype, (3, 2), ["0", "1"])
             indices = torch.tensor([[0, 1, 2]], dtype=torch.long)
             inp = torch.sparse_coo_tensor(
                 indices, values, (4, 2), device=flag_gems.device
@@ -367,7 +363,7 @@ def test__dimV_uncoalesced(dtype):
     # data values). The (0, 0) coordinate is repeated three times.
     shape, dense_dim = (3, 4), 1
     indices = torch.tensor([[0, 0, 1, 2, 0]], dtype=torch.long)
-    values = _make_values(dtype, (5, 4), ["-1", "1"])
+    values = tu.make_input(dtype, (5, 4), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
     assert not inp.is_coalesced()
     ref_inp = tu.to_reference(inp)
@@ -424,7 +420,7 @@ def test__dimV_dense_raises():
     # _dimV dispatches only on the sparse COO backends; dense tensors have no
     # implementation and raise. The candidate must fail too rather than silently
     # report a bogus count.
-    inp = _make_values(torch.float32, (4, 4), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
         torch.ops.aten._dimV(tu.to_reference(inp))
     with pytest.raises(_NEGATIVE_EXC):
@@ -438,7 +434,7 @@ def test__dimV_csr_raises():
     # dims, and the candidate must fail too.
     crow_indices = torch.tensor([0, 1, 2])
     col_indices = torch.tensor([0, 1])
-    values = _make_values(torch.float32, (2,), ["-1", "1"])
+    values = tu.make_input(torch.float32, (2,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(
         crow_indices, col_indices, values, (2, 3), device=flag_gems.device
     )

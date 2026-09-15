@@ -237,28 +237,13 @@ def _resolve_gems_op():
     return _resolve_named_gems_op("dstack")
 
 
-def _apply_dstack(inp):
-    return _resolve_gems_op()(inp)
-
-
-def _apply_dstack_out(inp, out):
-    # Same single candidate, called with the ``.out`` form. torch.ops.aten does
-    # not select an overload for you, so the call form must match the reference
-    # (torch.ops.aten.dstack.out(ref_inp, out=ref_out)) exactly.
-    return _resolve_gems_op()(inp, out=out)
-
-
-def _assert_values(res_out, ref_out, dtype):
-    tu.assert_result_equal(res_out, ref_out)
-
-
-def _assert_dstack_output(res_out, ref_out, dtype):
+def _assert_dstack_output(res_out, ref_out):
     # dstack materializes a new contiguous tensor (never an aliasing view).
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
     assert res_out.is_contiguous()
     assert not res_out._is_view()
-    _assert_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.dstack
@@ -272,9 +257,9 @@ def test_dstack(shape_set, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
-    res_out = _apply_dstack(inp)
+    res_out = _resolve_gems_op()(inp)
 
-    _assert_dstack_output(res_out, ref_out, dtype)
+    _assert_dstack_output(res_out, ref_out)
 
 
 @pytest.mark.dstack
@@ -288,11 +273,11 @@ def test_dstack_value_ranges(shape_set, dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
-    res_out = _apply_dstack(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
-    _assert_values(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.dstack_out
@@ -309,15 +294,15 @@ def test_dstack_out(shape_set, dtype):
     ref_ret = torch.ops.aten.dstack.out(ref_inp, out=ref_out)
 
     out = torch.empty(ref_shape, dtype=dtype, device=inp[0].device)
-    res_ret = _apply_dstack_out(inp, out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out variant must return the out tensor itself (alias semantics).
     assert res_ret.data_ptr() == out.data_ptr()
     assert ref_ret.data_ptr() == ref_out.data_ptr()
     assert res_ret.shape == ref_ret.shape
     assert res_ret.dtype == ref_ret.dtype
-    _assert_values(res_ret, ref_ret, dtype)
-    _assert_values(out, ref_out, dtype)
+    tu.assert_result_equal(res_ret, ref_ret)
+    tu.assert_result_equal(out, ref_out)
 
 
 @pytest.mark.dstack
@@ -330,9 +315,9 @@ def test_dstack_empty_inputs(shape_set, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
-    res_out = _apply_dstack(inp)
+    res_out = _resolve_gems_op()(inp)
 
-    _assert_dstack_output(res_out, ref_out, dtype)
+    _assert_dstack_output(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -363,7 +348,7 @@ if not tu.QUICK_MODE:
         ref_inp = [tu.to_reference(t) for t in inp]
 
         ref_out = torch.ops.aten.dstack(ref_inp)
-        res_out = _apply_dstack(inp)
+        res_out = _resolve_gems_op()(inp)
 
         assert res_out.shape == ref_out.shape
         assert res_out.dtype == ref_out.dtype
@@ -383,9 +368,9 @@ def test_dstack_complex(dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.dstack(ref_inp)
-    res_out = _apply_dstack(inp)
+    res_out = _resolve_gems_op()(inp)
 
-    _assert_dstack_output(res_out, ref_out, dtype)
+    _assert_dstack_output(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -416,7 +401,7 @@ if not tu.QUICK_MODE:
             tu.assert_result_close(g, expected)
             offset += depth
 
-        res_out = _apply_dstack(inp)
+        res_out = _resolve_gems_op()(inp)
         tu.assert_result_close(res_out, ref_out)
 
         assert res_out.requires_grad

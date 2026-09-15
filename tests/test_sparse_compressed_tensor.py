@@ -244,13 +244,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_values(res_values, ref_values, dtype, equal_nan=False):
-    # Values follow the usual tolerance policy: floats are compared with
-    # assert_close, integers and bools exactly. The factory copies the payload
-    # verbatim, so float8 bit patterns are compared exactly too.
-    tu.assert_result_equal(res_values, ref_values)
-
-
 def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
     # The constructed tensor must preserve the requested layout, dtype, shape,
     # and the exact index structure, and live on the test device.
@@ -281,7 +274,7 @@ def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
     # Indices are exact integer data.
     utils.gems_assert_equal(res_c, ref_c)
     utils.gems_assert_equal(res_p, ref_p)
-    _assert_values(res_out.values(), ref_out.values(), dtype)
+    tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 @pytest.mark.sparse_compressed_tensor
@@ -521,7 +514,7 @@ if not tu.QUICK_MODE:
         assert torch.ops.aten._nnz(res_out) == torch.ops.aten._nnz(ref_out) == 7
         utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
         utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
-        _assert_values(res_out.values(), ref_out.values(), dtype, equal_nan=True)
+        tu.assert_result_equal(res_out.values(), ref_out.values())
 
 
 if not tu.QUICK_MODE:

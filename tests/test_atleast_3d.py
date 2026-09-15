@@ -155,15 +155,6 @@ def _resolve_gems_op():
     return _resolve_named_gems_op("atleast_3d")
 
 
-def _apply_atleast_3d(inp):
-    return _resolve_gems_op()(inp)
-
-
-def _apply_atleast_3d_sequence(inp):
-    # Same single candidate, called with the Sequence (list) form.
-    return _resolve_gems_op()(inp)
-
-
 def _assert_result(res_out, ref_out, dtype):
     """Compare shape/dtype/values; fp8 uses the device-resident exact helper
     (torch.testing has no CPU fp8 comparison support), everything else goes
@@ -186,7 +177,7 @@ def test_atleast_3d(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
-    res_out = _apply_atleast_3d(inp)
+    res_out = _resolve_gems_op()(inp)
 
     _assert_result(res_out, ref_out, dtype)
     # A view/identity op must alias its input (Tensor(a)).
@@ -204,7 +195,7 @@ def test_atleast_3d_value_ranges(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
-    res_out = _apply_atleast_3d(inp)
+    res_out = _resolve_gems_op()(inp)
 
     _assert_result(res_out, ref_out, dtype)
     assert res_out.data_ptr() == inp.data_ptr()
@@ -225,7 +216,7 @@ def test_atleast_3d_sequence(shape, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_3d.Sequence(ref_inp)
-    res_out = _apply_atleast_3d_sequence(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert len(res_out) == len(ref_out) == 4
     for res, ref, src in zip(res_out, ref_out, inp):
@@ -247,7 +238,7 @@ def test_atleast_3d_sequence_value_ranges(dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_3d.Sequence(ref_inp)
-    res_out = _apply_atleast_3d_sequence(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert len(res_out) == len(ref_out) == 3
     for res, ref, src in zip(res_out, ref_out, inp):
@@ -260,7 +251,7 @@ def test_atleast_3d_sequence_empty():
     # An empty Tensor[] is legitimate: the reference returns an empty list and
     # the candidate must do the same (atleast_3d.Sequence([]) does not raise).
     ref_out = torch.ops.aten.atleast_3d.Sequence([])
-    res_out = _apply_atleast_3d_sequence([])
+    res_out = _resolve_gems_op()([])
     assert len(ref_out) == 0
     assert len(res_out) == 0
 
@@ -291,7 +282,7 @@ if not tu.QUICK_MODE:
         ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.atleast_3d(ref_inp)
-        res_out = _apply_atleast_3d(inp)
+        res_out = _resolve_gems_op()(inp)
 
         _assert_result(res_out, ref_out, dtype)
         assert res_out.data_ptr() == inp.data_ptr()
@@ -307,7 +298,7 @@ def test_atleast_3d_complex(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
-    res_out = _apply_atleast_3d(inp)
+    res_out = _resolve_gems_op()(inp)
 
     _assert_result(res_out, ref_out, dtype)
     assert res_out.data_ptr() == inp.data_ptr()
@@ -329,7 +320,7 @@ if not tu.QUICK_MODE:
         tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
 
         # The candidate forward must match the reference...
-        res_out = _apply_atleast_3d(inp)
+        res_out = _resolve_gems_op()(inp)
         _assert_result(res_out, ref_out, dtype)
 
         # ...and, when the candidate view is autograd-aware (a compiled kernel that

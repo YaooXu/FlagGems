@@ -122,10 +122,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_materialized_equal(res, ref):
-    tu.assert_result_equal(res, ref)
-
-
 def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype):
     # The candidate must actually return a legacy BatchedTensorImpl, not a plain
     # logical view: on a non-batched tensor _remove_batch_dim falls back to
@@ -146,8 +142,8 @@ def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype
     batch_size = inp.size(batch_dim)
     ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
     res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    _assert_materialized_equal(ref_mat, ref_inp)
-    _assert_materialized_equal(res_mat, ref_mat)
+    tu.assert_result_equal(ref_mat, ref_inp)
+    tu.assert_result_equal(res_mat, ref_mat)
 
     # Route an elementwise op through both batched views: the candidate's view
     # must expose the exact same logical elements as aten's. float8 is skipped
@@ -245,8 +241,8 @@ if not tu.QUICK_MODE:
         res_mat = torch.ops.aten._remove_batch_dim(
             res_out, level, batch_size, batch_dim
         )
-        _assert_materialized_equal(ref_mat, ref_inp)
-        _assert_materialized_equal(res_mat, ref_mat)
+        tu.assert_result_equal(ref_mat, ref_inp)
+        tu.assert_result_equal(res_mat, ref_mat)
 
 
 @pytest.mark._add_batch_dim

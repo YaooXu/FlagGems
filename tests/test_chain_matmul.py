@@ -141,12 +141,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "chain_matmul", getattr(flag_gems, "chain_matmul", None)
-    )
-
-
 def _make_chain(shapes, dtype, value_range):
     return [tu.make_input(dtype, shape, value_range) for shape in shapes]
 
@@ -226,7 +220,7 @@ def test_chain_matmul_out(shapes, value_range, dtype):
     )
 
     ref_ret = torch.ops.aten.chain_matmul.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out overload must write into and return the caller's buffer.
     assert ref_ret is ref_out
@@ -388,4 +382,4 @@ def test_chain_matmul_out_rejects_wrong_dtype():
     with pytest.raises(RuntimeError):
         torch.ops.aten.chain_matmul.out(ref_inp, out=ref_bad)
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op_out()(inp, out=res_bad)
+        _resolve_gems_op()(inp, out=res_bad)

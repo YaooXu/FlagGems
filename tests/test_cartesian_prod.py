@@ -147,10 +147,6 @@ def _resolve_gems_op():
     )
 
 
-def _apply_cartesian_prod(inp):
-    return _resolve_gems_op()(inp)
-
-
 def _assert_close(res_out, ref_out, dtype):
     """Floats use ``gems_assert_close``; int/bool/fp8 must be bit-exact.
 
@@ -191,7 +187,7 @@ def test_cartesian_prod(sizes, dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _apply_cartesian_prod(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == dtype
@@ -220,7 +216,7 @@ def test_cartesian_prod_row_order(dtype):
     ]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _apply_cartesian_prod([a, b])
+    res_out = _resolve_gems_op()([a, b])
 
     assert res_out.shape == ref_out.shape == (6, 2)
     assert res_out.dtype == ref_out.dtype
@@ -241,7 +237,7 @@ def test_cartesian_prod_non_contiguous(dtype):
     assert not inp[0].is_contiguous()
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _apply_cartesian_prod(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
@@ -277,7 +273,7 @@ if not tu.QUICK_MODE:
         ]
 
         ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-        res_out = _apply_cartesian_prod([values, other])
+        res_out = _resolve_gems_op()([values, other])
 
         assert res_out.shape == ref_out.shape
         assert res_out.dtype == ref_out.dtype
@@ -307,7 +303,7 @@ if not tu.QUICK_MODE:
             tu.assert_result_close(got, exp)
 
         # ...the candidate forward output must match the reference...
-        res_out = _apply_cartesian_prod(inp)
+        res_out = _resolve_gems_op()(inp)
         _assert_close(res_out, ref_out, dtype)
 
         # ...and, if the candidate output is differentiable, its gradient must match

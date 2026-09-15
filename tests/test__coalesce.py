@@ -254,12 +254,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "_coalesce", getattr(flag_gems, "_coalesce", None)
-    )
-
-
 def _assert_coalesced(res_out, ref_out, dtype):
     # Both sides must be coalesced sparse COO tensors with the same structure.
     assert res_out.layout == torch.sparse_coo
@@ -366,7 +360,7 @@ def test__coalesce_out(case, dtype):
     ref_out = _make_empty_out(shape, dtype, ref_inp.device)
 
     ref_ret = torch.ops.aten._coalesce.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=out)
+    res_ret = _resolve_gems_op()(inp, out=out)
 
     # The .out variant must write into and return the out tensor itself.
     assert res_ret is out

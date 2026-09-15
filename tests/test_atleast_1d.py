@@ -45,7 +45,7 @@ _SUPPORTED_DTYPES = (
 )
 
 # nan/inf pass through a view untouched; float8 is included but compared through
-# the upcast path of _assert_result_equal below.
+# the FP8 comparison path in tu.assert_result_equal.
 _NAN_INF_DTYPES = [
     dtype for dtype in _SUPPORTED_DTYPES if dtype in _FLOAT_DTYPES + _FP8_DTYPES
 ]
@@ -68,36 +68,20 @@ def _resolve_gems_op():
     )
 
 
-def _apply_atleast_1d(inp):
-    # Called inside each test function (never at import time) so that the
-    # override installed by KernelGen for this run is the one that is used. A
-    # Python list dispatches to the .Sequence overload on the candidate packet.
-    gems_op = _resolve_gems_op()
-    return gems_op(inp)
-
-
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
-def _assert_result_equal(res_out, ref_out):
-    tu.assert_result_equal(res_out, ref_out)
-
-
 @pytest.mark.atleast_1d
 @pytest.mark.parametrize("shape", _ATLEAST_1D_SHAPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_atleast_1d_value_ranges(shape, value_range, dtype):
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_1d(ref_inp)
-    res_out = _apply_atleast_1d(inp)
+    res_out = _resolve_gems_op()(inp)
 
     # atleast_1d is a view op: the result must alias the input storage.
     assert res_out.data_ptr() == inp.data_ptr()
-    _assert_result_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -124,11 +108,11 @@ if not tu.QUICK_MODE:
         ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.atleast_1d(ref_inp)
-        res_out = _apply_atleast_1d(inp)
+        res_out = _resolve_gems_op()(inp)
 
         assert res_out.data_ptr() == inp.data_ptr()
         # equal_nan=True is active on both comparison paths.
-        _assert_result_equal(res_out, ref_out)
+        tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.atleast_1d_sequence
@@ -139,20 +123,20 @@ def test_atleast_1d_sequence(shape, value_range, dtype):
     # Mix a 0-dim scalar with the current shape so the sequence overload
     # exercises both the scalar -> (1,) view path and the identity path.
     inp = [
-        _make_input(dtype, (), value_range),
-        _make_input(dtype, shape, value_range),
-        _make_input(dtype, shape, value_range),
+        tu.make_input(dtype, (), value_range),
+        tu.make_input(dtype, shape, value_range),
+        tu.make_input(dtype, shape, value_range),
     ]
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_1d.Sequence(ref_inp)
-    res_out = _apply_atleast_1d(inp)
+    res_out = _resolve_gems_op()(inp)
 
     assert len(res_out) == len(ref_out)
     for res, ref, src in zip(res_out, ref_out, inp):
         # atleast_1d is a view op: each result must alias its input.
         assert res.data_ptr() == src.data_ptr()
-        _assert_result_equal(res, ref)
+        tu.assert_result_equal(res, ref)
 
 
 @pytest.mark.atleast_1d_sequence
@@ -160,7 +144,7 @@ def test_atleast_1d_sequence_empty():
     # A Tensor[] input may legitimately be empty: the reference returns an
     # empty list and the candidate must return an empty list too.
     ref_out = torch.ops.aten.atleast_1d.Sequence([])
-    res_out = _apply_atleast_1d([])
+    res_out = _resolve_gems_op()([])
     assert len(ref_out) == 0
     assert len(res_out) == 0
 
@@ -181,8 +165,8 @@ if not tu.QUICK_MODE:
         tu.assert_result_close(ref_in_grad, torch.ones_like(ref_inp))
 
         # The candidate forward must match the reference...
-        res_out = _apply_atleast_1d(inp)
-        _assert_result_equal(res_out, ref_out)
+        res_out = _resolve_gems_op()(inp)
+        tu.assert_result_equal(res_out, ref_out)
 
         # ...and, if the candidate view is autograd-aware (a compiled kernel that
         # returns a plain tensor is not), its gradient must match too.

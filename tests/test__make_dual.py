@@ -147,10 +147,6 @@ def _resolve_gems_op():
     )
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _assert_close(res_out, ref_out, dtype):
     if dtype in _FP8_DTYPES:
         utils.gems_assert_equal(res_out.to(torch.float32), ref_out.to(torch.float32))
@@ -158,16 +154,6 @@ def _assert_close(res_out, ref_out, dtype):
         utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
     else:
         utils.gems_assert_equal(res_out, ref_out)
-
-
-def _assert_values(res_out, ref_out):
-    # Value-range comparisons use the value-range-friendly tolerance helper,
-    # except for fp8 which is upcast to float32 first (see above).
-    tu.assert_result_equal(res_out, ref_out)
-
-
-def _assert_exact_equal(res_out, ref_out, dtype):
-    tu.assert_result_equal(res_out, ref_out)
 
 
 def _assert_view_semantics(res_out, ref_out, inp):
@@ -201,8 +187,8 @@ def _assert_dual_semantics(res_out, ref_out, ref_tangent, dtype):
 def test__make_dual(shape, dtype):
     # Shape levels x every supported dtype, with values drawn from the default
     # [-1, 1] range (negative and positive for each dtype).
-    inp = _make_input(dtype, shape, ["-1", "1"])
-    tangent = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
     ref_tangent = tu.to_reference(tangent)
 
@@ -223,8 +209,8 @@ def test__make_dual_value_ranges(shape, value_range, dtype):
     # The op never inspects or transforms the stored values, so the full spec
     # range sweep (negative, positive, extreme and degenerate ranges) must
     # round-trip bit-for-bit and the tangent must survive unchanged.
-    inp = _make_input(dtype, shape, value_range)
-    tangent = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
+    tangent = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
     ref_tangent = tu.to_reference(tangent)
 
@@ -235,9 +221,9 @@ def test__make_dual_value_ranges(shape, value_range, dtype):
         _assert_view_semantics(res_out, ref_out, inp)
         res_primal, res_tangent = torch.autograd.forward_ad.unpack_dual(res_out)
         ref_primal, ref_tangent_out = torch.autograd.forward_ad.unpack_dual(ref_out)
-        _assert_values(res_primal, ref_primal)
-        _assert_values(res_tangent, ref_tangent_out)
-        _assert_values(res_tangent, ref_tangent)
+        tu.assert_result_equal(res_primal, ref_primal)
+        tu.assert_result_equal(res_tangent, ref_tangent_out)
+        tu.assert_result_equal(res_tangent, ref_tangent)
 
 
 @pytest.mark._make_dual
@@ -247,11 +233,11 @@ def test__make_dual_non_contiguous(shape, dtype):
     # The aliasing view must preserve the exact strides and storage offset of a
     # non-contiguous primal. Slice on both the test device and the reference
     # device so the two inputs share the same memory layout.
-    base = _make_input(dtype, shape, ["-1", "1"])
+    base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[..., ::2]
     ref_inp = ref_base[..., ::2]
-    tangent = _make_input(dtype, inp.shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, inp.shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
     assert not inp.is_contiguous()
 
@@ -294,9 +280,9 @@ def test__make_dual_mutation(shape, dtype):
     # reference must behave identically. The reference runs on an independent
     # clone so the two aliases are validated separately. The op itself never
     # mutates the primal or the tangent.
-    inp = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp.clone())
-    tangent = _make_input(dtype, shape, ["-1", "1"])
+    tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
 
     with dual_level() as level:
@@ -332,7 +318,7 @@ if not tu.QUICK_MODE:
             ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
             res_out = _resolve_gems_op()(values, tangent, level)
 
-            _assert_exact_equal(res_out, ref_out, dtype)
+            tu.assert_result_equal(res_out, ref_out)
             # signbit has no fp8 kernel, so the sign check goes through float32.
             res_f = res_out.to(torch.float32)
             values_f = values.to(torch.float32)
@@ -347,8 +333,8 @@ def test__make_dual_rejects_non_float_primal(dtype):
     # aten raises on int/bool primals (the internal assert requires both primal
     # and tangent to be floating point or complex) and the candidate must too.
     with dual_level() as level:
-        inp = _make_input(dtype, (4, 5), ["-1", "1"])
-        tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
+        inp = tu.make_input(dtype, (4, 5), ["-1", "1"])
+        tangent = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
                 tu.to_reference(inp),
@@ -369,7 +355,7 @@ def test__make_dual_rejects_non_tensor_primal():
     # argument path and raises. The candidate must fail too rather than
     # silently accept scalars.
     with dual_level() as level:
-        tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
+        tangent = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(3.14, tu.to_reference(tangent), level)
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -383,8 +369,8 @@ def test__make_dual_rejects_tangent_size_mismatch(primal_shape, tangent_shape):
     # shape (broadcasting is not defined for forward tangents) and the
     # candidate must reproduce the validation.
     with dual_level() as level:
-        inp = _make_input(torch.float32, primal_shape, ["-1", "1"])
-        tangent = _make_input(torch.float32, tangent_shape, ["-1", "1"])
+        inp = tu.make_input(torch.float32, primal_shape, ["-1", "1"])
+        tangent = tu.make_input(torch.float32, tangent_shape, ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
                 tu.to_reference(inp),
@@ -401,8 +387,8 @@ def test__make_dual_rejects_inactive_level(level):
     # The named level must be live: outside dual_level() aten rejects any level
     # index with RuntimeError and the candidate must reproduce the validation
     # instead of silently ignoring the level.
-    inp = _make_input(torch.float32, (4, 5), ["-1", "1"])
-    tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
+    inp = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
+    tangent = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._make_dual(
             tu.to_reference(inp),
@@ -420,8 +406,8 @@ def test__make_dual_rejects_non_int_level():
     # dual_level() context is entered so an active level exists and the schema
     # cast is the only thing under test.
     with dual_level():
-        inp = _make_input(torch.float32, (4, 5), ["-1", "1"])
-        tangent = _make_input(torch.float32, (4, 5), ["-1", "1"])
+        inp = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
+        tangent = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(
                 tu.to_reference(inp),

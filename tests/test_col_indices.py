@@ -79,15 +79,11 @@ def _random_compressed(batch, n_rows, n_cols, nnz, gen):
     return crow, cols
 
 
-def _make_values(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _build_csr(shape, nnz, dtype, value_range, seed=0):
     batch, n_rows, n_cols = shape[:-2], shape[-2], shape[-1]
     gen = torch.Generator("cpu").manual_seed(seed)
     crow, cols = _random_compressed(batch, n_rows, n_cols, nnz, gen)
-    values = _make_values(dtype, tuple(batch) + (nnz,), value_range)
+    values = tu.make_input(dtype, tuple(batch) + (nnz,), value_range)
     return torch.sparse_csr_tensor(
         crow.to(flag_gems.device),
         cols.to(flag_gems.device),
@@ -106,7 +102,7 @@ def _build_bsr(shape, nnz, blocks, dtype, value_range, seed=0):
     n_col_blocks = (n_cols + block_cols - 1) // block_cols
     gen = torch.Generator("cpu").manual_seed(seed)
     crow, cols = _random_compressed(batch, n_row_blocks, n_col_blocks, nnz, gen)
-    values = _make_values(
+    values = tu.make_input(
         dtype, tuple(batch) + (nnz, block_rows, block_cols), value_range
     )
     return torch.sparse_bsr_tensor(
@@ -395,7 +391,7 @@ def test_col_indices_uncoalesced(dtype):
     crow = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
     assert cols[0].item() == cols[1].item()
-    values = _make_values(dtype, (5,), ["-1", "1"])
+    values = tu.make_input(dtype, (5,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     ref_inp = tu.to_reference(inp.clone())
 
@@ -414,7 +410,7 @@ def test_col_indices_full_storage(dtype):
     shape = (2, 3)
     crow = torch.tensor([0, 3, 6], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 1, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device)
-    values = _make_values(dtype, (6,), ["-1", "1"])
+    values = tu.make_input(dtype, (6,), ["-1", "1"])
     inp = torch.sparse_csr_tensor(crow, cols, values.to(flag_gems.device), shape)
     assert inp._nnz() == 6
     ref_inp = tu.to_reference(inp.clone())

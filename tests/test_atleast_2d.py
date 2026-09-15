@@ -52,12 +52,6 @@ def _resolve_candidate():
     )
 
 
-def _run(inp):
-    """Apply the resolved candidate to a Tensor or a list of Tensors."""
-    candidate = _resolve_candidate()
-    return candidate(inp)
-
-
 # ---------------------------------------------------------------------------
 # Dtype coverage (probed with tu.supported_dtypes)
 # ---------------------------------------------------------------------------
@@ -161,7 +155,7 @@ def test_atleast_2d_value_ranges(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _run(inp)
+    res_out = _resolve_candidate()(inp)
 
     assert isinstance(res_out, torch.Tensor)
     assert res_out.shape == ref_out.shape
@@ -193,7 +187,7 @@ def test_atleast_2d_shape_metadata(shape, expected):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _run(inp)
+    res_out = _resolve_candidate()(inp)
 
     assert tuple(ref_out.shape) == expected
     assert tuple(res_out.shape) == expected
@@ -228,7 +222,7 @@ def test_atleast_2d_sequence(shape, dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.atleast_2d.Sequence(ref_inp)
-    res_out = _run(inp)
+    res_out = _resolve_candidate()(inp)
 
     assert isinstance(res_out, (list, tuple))
     assert len(res_out) == len(ref_out)
@@ -244,7 +238,7 @@ def test_atleast_2d_sequence_empty():
     # A Tensor[] input may legitimately be empty: the reference returns an
     # empty list, and the candidate must return an empty list too.
     ref_out = torch.ops.aten.atleast_2d.Sequence([])
-    res_out = _run([])
+    res_out = _resolve_candidate()([])
     assert len(ref_out) == 0
     assert len(res_out) == 0
 
@@ -279,7 +273,7 @@ if not tu.QUICK_MODE:
         ref_inp = tu.to_reference(inp)
 
         ref_out = torch.ops.aten.atleast_2d(ref_inp)
-        res_out = _run(inp)
+        res_out = _resolve_candidate()(inp)
 
         assert res_out.data_ptr() == inp.data_ptr()
         tu.assert_result_equal(res_out, ref_out)
@@ -299,7 +293,7 @@ def test_atleast_2d_complex(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.atleast_2d(ref_inp)
-    res_out = _run(inp)
+    res_out = _resolve_candidate()(inp)
 
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
@@ -329,7 +323,7 @@ if not tu.QUICK_MODE:
         ref_grad = torch.autograd.grad(ref_out.sum(), ref_inp)[0]
         tu.assert_result_close(ref_grad, torch.ones_like(ref_inp))
 
-        res_out = _run(inp)
+        res_out = _resolve_candidate()(inp)
         tu.assert_result_close(res_out, ref_out)
 
         # A candidate that returns a plain (non-autograd-aware) tensor cannot be

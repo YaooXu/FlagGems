@@ -137,10 +137,6 @@ def _combinations_op():
         return torch.ops.aten.combinations
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _assert_match(res_out, ref_out, dtype):
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == dtype
@@ -176,7 +172,7 @@ def test_combinations_spec_shapes_value_ranges(shape, value_range, dtype):
     # values, so the full range sweep (including 0/max/min and degenerate
     # constant ranges) must round-trip exactly through the gather
     # materialization. bool ignores the range and is covered here as well.
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
@@ -194,7 +190,7 @@ def test_combinations_shapes_r_replacement(shape, r, with_replacement, dtype):
     # Level-driven 1-D sizes x r x replacement mode. Values come from the
     # default [-1, 1] range; the row count C(n, r) / C(n + r - 1, r) and the
     # exact value gather are both compared against the aten reference.
-    inp = _make_input(dtype, shape, ["-1", "1"])
+    inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
@@ -211,7 +207,7 @@ def test_combinations_empty_input(r, with_replacement, dtype):
     # An empty 1-D input has no elements to combine: aten returns an empty
     # (0, r) tensor of the input dtype for every r / with_replacement setting
     # (and a 1-D (0,) tensor when r == 0).
-    inp = _make_input(dtype, (0,), ["-1", "1"])
+    inp = tu.make_input(dtype, (0,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
@@ -228,7 +224,7 @@ def test_combinations_r_boundaries(r, with_replacement, dtype):
     # n=4 boundary cases: r=0 returns a degenerate 1-D empty (0,) tensor;
     # r=5/10 > n without replacement returns an empty (0, r) tensor; with
     # replacement the output still has C(n + r - 1, r) rows.
-    inp = _make_input(dtype, (4,), ["-1", "1"])
+    inp = tu.make_input(dtype, (4,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
@@ -243,7 +239,7 @@ def test_combinations_non_contiguous(dtype):
     # combinations gathers input elements by index, so the candidate must read
     # through the input's actual strides. Slice on both the test device and the
     # reference device so the two inputs share the same memory layout.
-    base = _make_input(dtype, (32,), ["-1", "1"])
+    base = tu.make_input(dtype, (32,), ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[::2]
     ref_inp = ref_base[::2]
@@ -291,7 +287,7 @@ if not tu.QUICK_MODE:
 @pytest.mark.parametrize("dtype", _MUTATION_DTYPES)
 def test_combinations_does_not_mutate_input(dtype):
     # The op only materializes a gather; the source tensor must be untouched.
-    inp = _make_input(dtype, (16,), ["-1", "1"])
+    inp = tu.make_input(dtype, (16,), ["-1", "1"])
     before = inp.clone()
 
     _combinations_op()(inp, 2, False)
@@ -314,8 +310,8 @@ if not tu.QUICK_MODE:
         # is differentiable - its gradient against the reference gradient.
         n = 8
         rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
-        inp = _make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
-        grad = _make_input(dtype, (rows, r), ["-1", "1"])
+        inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
+        grad = tu.make_input(dtype, (rows, r), ["-1", "1"])
         ref_inp = tu.to_reference(inp.detach().clone()).requires_grad_()
         ref_grad = tu.to_reference(grad)
 

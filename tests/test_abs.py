@@ -35,10 +35,6 @@ _ABS_NONCONTIG_SHAPES = [(17, 33), (5, 7, 9)]
 _ABS_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
-def _make_input(dtype, shape, value_range):
-    return tu.make_input(dtype, shape, value_range)
-
-
 def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("abs", flag_gems.abs)
 
@@ -56,7 +52,7 @@ def _resolve_gems_op_out():
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
 def test_abs_float_value_ranges(shape, value_range, dtype):
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -70,7 +66,7 @@ def test_abs_float_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_INT_DTYPES + utils.BOOL_TYPES)
 def test_abs_int_value_ranges(shape, value_range, dtype):
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -146,7 +142,7 @@ def test_abs_empty(shape, dtype):
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_noncontiguous(shape, dtype):
     # transposed views have non-unit strides; the kernel must honor them.
-    inp = _make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
+    inp = tu.make_input(dtype, shape, ["-1", "1"]).transpose(-1, -2)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
@@ -161,8 +157,8 @@ if not tu.QUICK_MODE:
     @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_abs_backward(shape, dtype):
-        inp = _make_input(dtype, shape, ["-1", "1"]).requires_grad_()
-        grad = _make_input(dtype, shape, ["-1", "1"])
+        inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
+        grad = tu.make_input(dtype, shape, ["-1", "1"])
         ref_inp = tu.to_reference(inp)
         ref_grad = tu.to_reference(grad)
 
@@ -189,7 +185,7 @@ if not tu.QUICK_MODE:
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs__value_ranges(shape, value_range, dtype):
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp.clone())
 
     ref_out = torch.ops.aten.abs_(ref_inp)
@@ -206,7 +202,7 @@ def test_abs__value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _ABS_DTYPES)
 def test_abs_out(shape, value_range, dtype):
-    inp = _make_input(dtype, shape, value_range)
+    inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
     # Garbage-prefilled out buffers: the .out overload must overwrite them.

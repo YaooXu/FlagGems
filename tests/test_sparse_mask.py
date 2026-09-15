@@ -164,12 +164,6 @@ def _resolve_gems_op():
     )
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_mask", getattr(flag_gems, "sparse_mask", None)
-    )
-
-
 def _assert_masked(res_out, ref_out, ref_mask, dtype, equal_nan=False):
     # Structure: the result is a sparse COO tensor with the mask's indices.
     assert res_out.layout == torch.sparse_coo
@@ -274,7 +268,7 @@ def test_sparse_mask_out(shape, dtype):
     ref_out = torch.empty_like(ref_mask, dtype=dtype)
 
     ref_ret = torch.ops.aten.sparse_mask.out(ref_inp, ref_mask, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, mask, out=out)
+    res_ret = _resolve_gems_op()(inp, mask, out=out)
 
     assert res_ret is out
     assert ref_ret is ref_out
