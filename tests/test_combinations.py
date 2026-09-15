@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import pytest
 import torch
 
@@ -64,14 +62,13 @@ _DTYPES = list(
 )
 
 
-# assert_close does not support float8 tensors, and combinations is a pure
-# bit-exact gather, so fp8 is compared with the exact helper. All other floats
-# go through the tolerance-based helper.
 _FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_FLOAT_CLOSE_DTYPES = [
+_FLOAT_DTYPES = [dtype for dtype in _DTYPES if dtype.is_floating_point]
+# FP8 nonempty backward needs masked_scatter/add kernels absent on CPU/CUDA.
+# The regular gradient grid uses dtypes supported by both reference modes.
+_BACKWARD_DTYPES = [
     dtype for dtype in _DTYPES if dtype.is_floating_point and dtype not in _FP8_DTYPES
 ]
-_FP8_SUPPORTED = [dtype for dtype in _FP8_DTYPES if dtype in _DTYPES]
 
 # Representative dtype sets for the grids that do not need every storage type
 # (the full dtype contract is already swept by the value-range grid).
@@ -85,14 +82,11 @@ _EMPTY_DTYPES = [
     for dtype in (torch.float32, torch.int32, torch.bool, torch.int8)
     if dtype in _DTYPES
 ] or _DTYPES[:1]
-_BACKWARD_DTYPES = _FLOAT_CLOSE_DTYPES
 _MUTATION_DTYPES = [
     dtype
     for dtype in (torch.float32, torch.float16, torch.int32, torch.bool)
     if dtype in _DTYPES
 ] or _DTYPES[:1]
-
-_FLOAT_DTYPES = [dtype for dtype in _DTYPES if dtype.is_floating_point]
 
 # combinations is a 1-D op, so the shared spec shape set is reduced to its 1-D
 # entries. The quick level has no 1-D entry in tu.selected_shapes(), so a small
@@ -234,19 +228,17 @@ def test_combinations_does_not_mutate_input(dtype):
 
 
 @pytest.mark.combinations
+@pytest.mark.parametrize("n", [0, 1, 8])
 @pytest.mark.parametrize("r", _R_VALUES)
 @pytest.mark.parametrize("with_replacement", _REPLACEMENT_MODES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
-def test_combinations_backward(r, with_replacement, dtype):
+def test_combinations_backward(n, r, with_replacement, dtype):
     # Forward is an exact gather; backward sums contributions for each input.
-    n = 8
-    rows = math.comb(n + r - 1, r) if with_replacement else math.comb(n, r)
     inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
-    grad = tu.make_input(dtype, (rows, r), ["-1", "1"])
-    ref_inp = tu.to_reference(inp.detach()).requires_grad_()
-    ref_grad = tu.to_reference(grad)
-
+    ref_inp = tu.to_reference(inp)
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
+    grad = tu.make_input(dtype, ref_out.shape, ["-1", "1"])
+    ref_grad = tu.to_reference(grad)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
     res_out = _resolve_gems_op()(inp, r, with_replacement)
@@ -254,7 +246,26 @@ def test_combinations_backward(r, with_replacement, dtype):
 
     assert res_out.requires_grad
     res_in_grad = torch.autograd.grad(res_out, inp, grad_outputs=grad)[0]
-    tu.assert_result_close(res_in_grad, ref_in_grad)
+    # Singleton gathers copy gradients; empty results contribute exact zeros.
+    if r == 1 or n == 0 or (r > n and not with_replacement):
+        tu.assert_result_equal(res_in_grad, ref_in_grad)
+    else:
+        tu.assert_result_close(res_in_grad, ref_in_grad)
+
+
+@pytest.mark.combinations
+@pytest.mark.parametrize("n", [0, 1, 8])
+@pytest.mark.parametrize("with_replacement", _REPLACEMENT_MODES)
+@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_DTYPES))
+def test_combinations_zero_r_no_autograd(n, with_replacement, dtype):
+    # r=0 returns a fresh empty result with no gradient connection to the input.
+    inp = tu.make_input(dtype, (n,), ["-1", "1"]).requires_grad_()
+    ref_inp = tu.to_reference(inp)
+    ref_out = torch.ops.aten.combinations(ref_inp, 0, with_replacement)
+    res_out = _resolve_gems_op()(inp, 0, with_replacement)
+    tu.assert_result_equal(res_out, ref_out)
+    assert not res_out.requires_grad
+    assert res_out.grad_fn is None
 
 
 @pytest.mark.combinations

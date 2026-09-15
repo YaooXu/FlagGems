@@ -488,7 +488,7 @@ def test_quantization_params_reject_boolean_zero_point():
 @pytest.mark.parametrize(
     "operator,args",
     [
-        ("combinations", (2, False, torch.float32)),
+        ("combinations", (8, 2, False, torch.float32)),
         ("diagflat", ((3, 4), 1, torch.float32)),
         ("dstack", ([(2, 3), (2, 3)], torch.float32)),
         ("flatten_dense_tensors", ([(2, 3), (2, 3)], torch.float32)),
@@ -615,3 +615,38 @@ def test_compressed_indices_reject_widened_index_dtype(operator):
             getattr(cases, f"test_{operator}_index_layouts")(
                 cases._INDEX_LAYOUT_CASES[0], (), (), torch.float32, torch.int32
             )
+
+
+@pytest.mark.parametrize(
+    "n,r,with_replacement", [(8, 1, False), (8, 1, True), (1, 2, False)]
+)
+def test_combinations_nonreducing_backward_rejects_small_errors(n, r, with_replacement):
+    from . import test_combinations as cases
+
+    class CorruptedGradient(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, inp, r, replacement):
+            ctx.shape = inp.shape
+            return torch.ops.aten.combinations(inp, r, replacement)
+
+        @staticmethod
+        def backward(ctx, grad):
+            if grad.numel() == 0:
+                return (
+                    torch.full(ctx.shape, 1e-6, dtype=grad.dtype, device=grad.device),
+                    None,
+                    None,
+                )
+            return grad.reshape(ctx.shape) + 1e-6, None, None
+
+    with testing.override_gems_op("combinations", CorruptedGradient.apply):
+        with pytest.raises(AssertionError):
+            cases.test_combinations_backward(n, r, with_replacement, torch.float32)
+
+
+def test_combinations_zero_r_rejects_a_gradient_connection():
+    from . import test_combinations as cases
+
+    with testing.override_gems_op("combinations", lambda inp, r, replacement: inp[:0]):
+        with pytest.raises(AssertionError):
+            cases.test_combinations_zero_r_no_autograd(8, False, torch.float32)
