@@ -3,6 +3,7 @@
 import runpy
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -322,3 +323,35 @@ def test_operator_collection_does_not_probe_runtime(module_path, monkeypatch):
     runpy.run_path(str(path), run_name=f"{path.parent.name}._collection_check")
     # A probe that catches the injected error must still fail this check.
     assert not calls
+
+
+def test_combinations_missing_candidate_cannot_pass_against_reference(monkeypatch):
+    from . import test_combinations as cases
+
+    missing = Mock(side_effect=LookupError("candidate missing"))
+    monkeypatch.setattr(cases, "_resolve_gems_op", missing)
+    with pytest.raises(LookupError, match="candidate missing"):
+        cases.test_combinations_spec_shapes_value_ranges(
+            (4,), ["0", "1"], torch.float32
+        )
+    missing.assert_called_once()
+
+
+def test_version_input_error_does_not_retry_with_another_range(monkeypatch):
+    from . import test__version as cases
+
+    failed = Mock(side_effect=RuntimeError("input construction failed"))
+    monkeypatch.setattr(torch.testing, "make_tensor", failed)
+    with pytest.raises(RuntimeError, match="input construction failed"):
+        cases._make_value_tensor(torch.int32, (4,), ["0", "1"], "cpu")
+    failed.assert_called_once()
+
+
+def test_sparse_copy_input_error_does_not_use_another_generator(monkeypatch):
+    from . import test_copy_sparse_to_sparse_ as cases
+
+    failed = Mock(side_effect=RuntimeError("input construction failed"))
+    monkeypatch.setattr(tu, "make_input", failed)
+    with pytest.raises(RuntimeError, match="input construction failed"):
+        cases._make_values((4,), torch.uint8, value_range=["0", "1"])
+    failed.assert_called_once()

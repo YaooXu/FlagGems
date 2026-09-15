@@ -152,17 +152,9 @@ def _make_value_tensor(dtype, shape, value_range, device):
     if low == high:
         return torch.full(shape, low, device=device, dtype=dtype)
 
-    try:
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=device, low=low, high=high
-        )
-    except RuntimeError:
-        dtype_min, dtype_max = tu.dtype_bounds(dtype)
-        if not (dtype.is_floating_point or dtype.is_complex):
-            dtype_min, dtype_max = int(dtype_min), int(dtype_max)
-        return torch.testing.make_tensor(
-            shape, dtype=dtype, device=device, low=dtype_min, high=dtype_max
-        )
+    return torch.testing.make_tensor(
+        shape, dtype=dtype, device=device, low=low, high=high
+    )
 
 
 def _nan_inf_tensor(shape, dtype, device):

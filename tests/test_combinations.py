@@ -121,16 +121,6 @@ def _resolve_gems_op():
     )
 
 
-def _combinations_op():
-    # Resolution order: (1) the KernelGen process-local override, (2) the direct
-    # flag_gems.combinations callable once it is registered, (3) the aten
-    # reference so the file stays runnable before an implementation exists.
-    try:
-        return _resolve_gems_op()
-    except LookupError:
-        return torch.ops.aten.combinations
-
-
 def _assert_match(res_out, ref_out, dtype):
     assert res_out.dtype == ref_out.dtype == dtype
     tu.assert_result_equal(res_out, ref_out)
@@ -165,7 +155,7 @@ def test_combinations_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
-    res_out = _combinations_op()(inp, 2, False)
+    res_out = _resolve_gems_op()(inp, 2, False)
 
     _assert_match(res_out, ref_out, dtype)
 
@@ -183,7 +173,7 @@ def test_combinations_shapes_r_replacement(shape, r, with_replacement, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
-    res_out = _combinations_op()(inp, r, with_replacement)
+    res_out = _resolve_gems_op()(inp, r, with_replacement)
 
     _assert_match(res_out, ref_out, dtype)
 
@@ -200,7 +190,7 @@ def test_combinations_empty_input(r, with_replacement, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
-    res_out = _combinations_op()(inp, r, with_replacement)
+    res_out = _resolve_gems_op()(inp, r, with_replacement)
 
     _assert_match(res_out, ref_out, dtype)
 
@@ -217,7 +207,7 @@ def test_combinations_r_boundaries(r, with_replacement, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.combinations(ref_inp, r, with_replacement)
-    res_out = _combinations_op()(inp, r, with_replacement)
+    res_out = _resolve_gems_op()(inp, r, with_replacement)
 
     _assert_match(res_out, ref_out, dtype)
 
@@ -234,7 +224,7 @@ def test_combinations_non_contiguous(dtype):
     ref_inp = ref_base[::2]
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
-    res_out = _combinations_op()(inp, 2, False)
+    res_out = _resolve_gems_op()(inp, 2, False)
 
     _assert_match(res_out, ref_out, dtype)
 
@@ -263,7 +253,7 @@ def test_combinations_nan_inf(dtype):
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)
-    res_out = _combinations_op()(values, 2, False)
+    res_out = _resolve_gems_op()(values, 2, False)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -275,7 +265,7 @@ def test_combinations_does_not_mutate_input(dtype):
     inp = tu.make_input(dtype, (16,), ["-1", "1"])
     before = inp.clone()
 
-    _combinations_op()(inp, 2, False)
+    _resolve_gems_op()(inp, 2, False)
 
     _assert_match(inp, before, dtype)
 
@@ -305,7 +295,7 @@ def test_combinations_backward(r, with_replacement, dtype):
         expected = _expected_combination_grad(n, r, with_replacement, ref_grad)
         tu.assert_result_close(ref_in_grad, expected)
 
-    res_out = _combinations_op()(inp, r, with_replacement)
+    res_out = _resolve_gems_op()(inp, r, with_replacement)
     tu.assert_result_close(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -324,7 +314,7 @@ def test_combinations_raises_on_non_1d(shape, dtype):
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, 2, False)
-    gems_op = _combinations_op()
+    gems_op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError, ValueError, IndexError)):
         gems_op(inp, 2, False)
 
@@ -338,7 +328,7 @@ def test_combinations_raises_on_negative_r():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, -1, False)
-    gems_op = _combinations_op()
+    gems_op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError, ValueError, IndexError)):
         gems_op(inp, -1, False)
 
@@ -351,6 +341,6 @@ def test_combinations_raises_on_non_int_r():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.combinations(ref_inp, 2.0, False)
-    gems_op = _combinations_op()
+    gems_op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError, ValueError, IndexError)):
         gems_op(inp, 2.0, False)

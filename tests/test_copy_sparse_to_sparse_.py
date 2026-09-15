@@ -141,19 +141,7 @@ def _make_values(values_shape, dtype, seed=0, value_range=None):
 
     # Value-range framework. Seed the global RNG so make_tensor is reproducible.
     torch.manual_seed(seed)
-    try:
-        return tu.make_input(dtype, values_shape, list(value_range))
-    except RuntimeError:
-        # Unsigned integer dtypes clamp the negative bound symbols to 0; a range
-        # that collapses after clamping is realized as the constant bound.
-        bound_low, bound_high = tu.dtype_bounds(dtype)
-        low = int(max(tu.resolve_bound(value_range[0], dtype), bound_low))
-        high = int(min(tu.resolve_bound(value_range[1], dtype), bound_high))
-        if low >= high:
-            return torch.full(values_shape, low, dtype=dtype, device=flag_gems.device)
-        return torch.randint(
-            low, high + 1, values_shape, dtype=dtype, device=flag_gems.device
-        )
+    return tu.make_input(dtype, values_shape, list(value_range))
 
 
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, value_range=None):
