@@ -42,10 +42,6 @@ def _resolve_gems_op_inplace():
     return flag_gems.testing.resolve_gems_op("abs_", flag_gems.abs_)
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op("abs", getattr(flag_gems, "abs", None))
-
-
 @pytest.mark.abs
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
@@ -184,7 +180,7 @@ def test_abs_out(shape, value_range, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.abs.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, out=res_out)
+    res_ret = _resolve_gems_op()(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out

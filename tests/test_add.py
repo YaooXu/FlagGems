@@ -71,10 +71,6 @@ def _resolve_gems_op_inplace():
     return flag_gems.testing.resolve_gems_op("add_", flag_gems.add_)
 
 
-def _resolve_gems_op_out():
-    return flag_gems.testing.resolve_gems_op("add", getattr(flag_gems, "add", None))
-
-
 @pytest.mark.add
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
@@ -478,7 +474,7 @@ def test_add_out(shape, value_range, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.add.out(ref_inp, ref_other, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, other, out=res_out)
+    res_ret = _resolve_gems_op()(inp, other, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -499,7 +495,7 @@ def test_add_out_alpha(shape, alpha, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.add.out(ref_inp, ref_other, alpha=alpha, out=ref_out)
-    res_ret = _resolve_gems_op_out()(inp, other, alpha=alpha, out=res_out)
+    res_ret = _resolve_gems_op()(inp, other, alpha=alpha, out=res_out)
 
     assert res_ret is res_out
     tu.assert_result_close(res_out, ref_out)
