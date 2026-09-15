@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -19,57 +21,10 @@ import flag_gems
 
 from . import test_utils as tu
 
-# aten::copy_sparse_to_sparse_(Tensor(a!) self, Tensor src, bool non_blocking=False)
-# -> Tensor(a!)
-#
-# Copies the sparse structure and stored entries of ``src`` into ``self`` (both
-# sparse COO tensors), resizing ``self`` to ``src``'s shape / sparse_dim / nnz as
-# needed, and returns ``self``. The copy is a verbatim transfer of the stored
-# indices and values -- it never coalesces, broadcasts, or performs arithmetic.
-#
-# Shape levels: this is a fixed-layout operator, so the spec's dense 0~5-D
-# shapes are realized as sparse COO layouts: 1-D all-sparse, 2-D COO, hybrid
-# COO (dense trailing dims), 3-D/4-D all-sparse, and the empty (nnz == 0)
-# boundary. Broadcast does not apply (``self`` and ``src`` must have a
-# compatible sparse structure). Sparse COO autograd has no derivative for the
-# entry transfer, so backward is not tested (see
-# test_copy_sparse_to_sparse_rejects_backward).
+# Copy COO entries and metadata into the destination, preserving storage order.
+_SUPPORTED_DTYPES = tuple(tu.REQUIRED_DTYPES + [torch.float64, torch.int16, torch.bool])
 
-# ---------------------------------------------------------------------------
-# Dtype coverage
-# ---------------------------------------------------------------------------
-# The required dtype grid (int8 / uint8 / fp8 / fp32 / bf16 / fp16 / int32 /
-# int64) plus the extra storage dtypes this op supports.
-
-_FP8_DTYPES = tuple(
-    d
-    for d in (
-        getattr(torch, "float8_e4m3fn", None),
-        getattr(torch, "float8_e5m2", None),
-    )
-    if d is not None
-)
-
-_REQUIRED_DTYPES = [
-    torch.int8,
-    torch.uint8,
-    *[d for d in _FP8_DTYPES],
-    torch.float32,
-    torch.bfloat16,
-    torch.float16,
-    torch.int32,
-    torch.int64,
-]
-
-_EXTRA_DTYPES = [torch.float64, torch.int16, torch.bool]
-
-# ---------------------------------------------------------------------------
-# Sparse layouts: (shape, sparse_dim, nnz)
-# ---------------------------------------------------------------------------
-# Each triple is a distinct sparse COO layout. ``sparse_dim`` splits the shape
-# into sparse / dense dims, so the list walks 1-D all-sparse, 2-D COO, hybrid
-# (sparse_dim=1 and 2), 3-D / 4-D all-sparse, and the nnz == 0 boundary.
-
+# (shape, sparse_dim, nnz), including hybrid and empty storage.
 _SPARSE_LAYOUTS = [
     ((6,), 1, 4),  # 1-D all-sparse
     ((4, 5), 2, 3),  # 2-D COO
@@ -83,8 +38,6 @@ _SPARSE_LAYOUTS = [
     ((4, 5), 2, 0),  # empty (nnz == 0) boundary
 ]
 
-# Representative subset for the value-range grid (keeps the case count bounded
-# while still covering all-sparse / hybrid / empty layouts).
 _VALUE_RANGE_LAYOUTS = [
     ((6,), 1, 4),
     ((4, 5), 2, 3),
@@ -101,20 +54,10 @@ _NAN_INF_LAYOUTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Input construction
-# ---------------------------------------------------------------------------
-
-
 def _make_indices(shape, sparse_dim, nnz, seed):
-    """Deterministic *coalesced* COO indices (unique, lexicographically sorted).
-
-    Uncoalesced inputs are built explicitly where the storage order matters.
-    """
+    # Generate seeded, unique indices in lexicographic order.
     gen = torch.Generator("cpu").manual_seed(seed)
-    num_sparse = 1
-    for dim in shape[:sparse_dim]:
-        num_sparse *= dim
+    num_sparse = math.prod(shape[:sparse_dim])
     if nnz == 0:
         return torch.empty((sparse_dim, 0), dtype=torch.long)
     linear = torch.sort(torch.randperm(num_sparse, generator=gen)[:nnz]).values
@@ -122,12 +65,7 @@ def _make_indices(shape, sparse_dim, nnz, seed):
 
 
 def _make_values(values_shape, dtype, seed=0, value_range=None):
-    """Stored entries for ``values_shape`` / ``dtype``.
-
-    ``value_range`` selects the regular-operator value-range framework
-    (``tu.make_input``). Without it the entries come from randn / small random
-    integers, matching the existing accuracy-test style.
-    """
+    # Use seeded random values, or the requested per-dtype range.
     if value_range is None:
         gen = torch.Generator("cpu").manual_seed(seed)
         if dtype.is_floating_point:
@@ -158,20 +96,10 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, value_range=None):
 
 def _make_special_values(values_shape, dtype, scenario):
     base = tu.make_special_input(dtype, scenario)
-    numel = 1
-    for dim in values_shape:
-        numel *= dim
+    numel = math.prod(values_shape)
     return base.repeat((numel + base.numel() - 1) // base.numel())[:numel].view(
         values_shape
     )
-
-
-_SUPPORTED_DTYPES = tuple(_REQUIRED_DTYPES + _EXTRA_DTYPES)
-
-
-# ---------------------------------------------------------------------------
-# Candidate resolution and comparison helpers
-# ---------------------------------------------------------------------------
 
 
 def _resolve_gems_op():
@@ -181,8 +109,6 @@ def _resolve_gems_op():
 
 
 def _assert_sparse_equal(res, ref):
-    # Compare stored entries directly: a copy must preserve duplicate entries,
-    # their order and their values without coalescing or rounding.
     assert res.layout == ref.layout
     assert res.shape == ref.shape
     assert res.dtype == ref.dtype
@@ -191,11 +117,6 @@ def _assert_sparse_equal(res, ref):
     assert res.is_coalesced() == ref.is_coalesced()
     tu.assert_result_equal(res._indices(), ref._indices())
     tu.assert_result_equal(res._values(), ref._values())
-
-
-# ---------------------------------------------------------------------------
-# Core equivalence: candidate vs torch.ops.aten, for every layout and dtype
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -217,11 +138,6 @@ def test_copy_sparse_to_sparse_(layout, dtype, non_blocking):
     # Validate the copied structure and entries, and that src is unchanged.
     _assert_sparse_equal(res_out, ref_out)
     _assert_sparse_equal(src, ref_src)
-
-
-# ---------------------------------------------------------------------------
-# Value-range coverage (regular-operator spec)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.copy_sparse_to_sparse_
@@ -273,16 +189,9 @@ def test_copy_sparse_to_sparse_nan_inf(layout, dtype, scenario):
     _assert_sparse_equal(src, ref_src)
 
 
-# ---------------------------------------------------------------------------
-# Resize / structural boundaries
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_resizes_self(dtype):
-    # self is smaller than src ((4, 5) vs (6, 5)) with a different nnz; the copy
-    # must resize self in place to src's shape and nnz.
     src = _make_sparse_input((6, 5), 2, 8, dtype)
     dst = _make_sparse_input((4, 5), 2, 5, dtype, seed=1)
     assert tuple(dst.shape) == (4, 5)
@@ -303,8 +212,6 @@ def test_copy_sparse_to_sparse_resizes_self(dtype):
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_resizes_nnz(dtype):
-    # Same shape on both sides but self stores more entries than src (7 vs 3):
-    # the copy resizes only self's nnz, shrinking its storage.
     src = _make_sparse_input((4, 5), 2, 3, dtype)
     dst = _make_sparse_input((4, 5), 2, 7, dtype, seed=1)
     assert dst._nnz() == 7
@@ -324,8 +231,6 @@ def test_copy_sparse_to_sparse_resizes_nnz(dtype):
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_grows_dense_dims(dtype):
-    # same sparse dims but self has fewer dense columns ((4, 5, 2) vs
-    # (4, 5, 3)): the copy grows the dense dimensions of self.
     src = _make_sparse_input((4, 5, 3), 2, 3, dtype)
     dst = _make_sparse_input((4, 5, 2), 2, 3, dtype, seed=1)
     assert tuple(dst.shape) == (4, 5, 2)
@@ -345,9 +250,6 @@ def test_copy_sparse_to_sparse_grows_dense_dims(dtype):
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_empty_dst_adopts_sparse_dim(dtype):
-    # An empty self may be resized to any structure: self has sparse_dim 2 with
-    # an empty trailing dense dim while src is all-sparse 3-D with the same
-    # logical shape, so the copy must rebuild self's sparse dims as well as nnz.
     shape = (2, 4, 5)
     src = _make_sparse_input(shape, 3, 4, dtype)
     dense_shape = tuple(shape[2:])
@@ -373,7 +275,6 @@ def test_copy_sparse_to_sparse_empty_dst_adopts_sparse_dim(dtype):
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_empty_src(dtype):
-    # An empty src must clear self to nnz == 0 while keeping the shape.
     src = _make_sparse_input((4, 5), 2, 0, dtype)
     dst = _make_sparse_input((4, 5), 2, 3, dtype, seed=1)
     assert dst._nnz() == 3
@@ -393,8 +294,6 @@ def test_copy_sparse_to_sparse_empty_src(dtype):
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
 def test_copy_sparse_to_sparse_uncoalesced(dtype):
-    # (0, 0) appears twice, so the source is uncoalesced; the copy transfers the
-    # stored indices and entries verbatim (never coalesces them).
     indices = torch.tensor(
         [[0, 0, 1, 2], [0, 0, 1, 3]], dtype=torch.long, device=flag_gems.device
     )
@@ -415,20 +314,10 @@ def test_copy_sparse_to_sparse_uncoalesced(dtype):
     _assert_sparse_equal(src, ref_src)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
-
-_NEGATIVE_DTYPE = torch.float32
-
-
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_dense_self():
-    # A dense (strided) self is out of contract; the reference asserts on it.
-    # NotImplementedError is a RuntimeError subclass, TypeError covers a
-    # candidate that rejects the argument type outright.
-    src = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE)
-    self_dense = torch.zeros((4, 5), dtype=_NEGATIVE_DTYPE, device=flag_gems.device)
+    src = _make_sparse_input((4, 5), 2, 3, torch.float32)
+    self_dense = torch.zeros((4, 5), dtype=torch.float32, device=flag_gems.device)
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(self_dense, src, False)
@@ -438,9 +327,9 @@ def test_copy_sparse_to_sparse_rejects_dense_self():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_dense_src():
-    src_dense = torch.randn((4, 5), dtype=_NEGATIVE_DTYPE, device=flag_gems.device)
-    ref_dst = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE)
-    res_dst = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE, seed=1)
+    src_dense = torch.randn((4, 5), dtype=torch.float32, device=flag_gems.device)
+    ref_dst = _make_sparse_input((4, 5), 2, 3, torch.float32)
+    res_dst = _make_sparse_input((4, 5), 2, 3, torch.float32, seed=1)
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, src_dense, False)
@@ -450,9 +339,8 @@ def test_copy_sparse_to_sparse_rejects_dense_src():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_csr():
-    # Sparse CSR is not COO: dispatch rejects both self and src.
     csr = torch.randn(
-        (4, 5), dtype=_NEGATIVE_DTYPE, device=flag_gems.device
+        (4, 5), dtype=torch.float32, device=flag_gems.device
     ).to_sparse_csr()
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
@@ -463,12 +351,10 @@ def test_copy_sparse_to_sparse_rejects_csr():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_sparse_dim_change():
-    # Resizing a non-empty sparse tensor to a different number of sparse dims is
-    # unsupported: self.sparse_dim() must equal src.sparse_dim().
-    ref_src = _make_sparse_input((2, 4, 5), 3, 3, _NEGATIVE_DTYPE)
-    ref_dst = _make_sparse_input((2, 4, 5), 2, 3, _NEGATIVE_DTYPE)
-    res_src = _make_sparse_input((2, 4, 5), 3, 3, _NEGATIVE_DTYPE, seed=1)
-    res_dst = _make_sparse_input((2, 4, 5), 2, 3, _NEGATIVE_DTYPE, seed=2)
+    ref_src = _make_sparse_input((2, 4, 5), 3, 3, torch.float32)
+    ref_dst = _make_sparse_input((2, 4, 5), 2, 3, torch.float32)
+    res_src = _make_sparse_input((2, 4, 5), 3, 3, torch.float32, seed=1)
+    res_dst = _make_sparse_input((2, 4, 5), 2, 3, torch.float32, seed=2)
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
@@ -478,12 +364,10 @@ def test_copy_sparse_to_sparse_rejects_sparse_dim_change():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_shrinking_sparse_dims():
-    # The sparse sizes of a non-empty self may only grow during the resize:
-    # shrinking them (here (6, 5) -> (4, 5)) is unsupported.
-    ref_src = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE)
-    ref_dst = _make_sparse_input((6, 5), 2, 3, _NEGATIVE_DTYPE)
-    res_src = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE, seed=1)
-    res_dst = _make_sparse_input((6, 5), 2, 3, _NEGATIVE_DTYPE, seed=2)
+    ref_src = _make_sparse_input((4, 5), 2, 3, torch.float32)
+    ref_dst = _make_sparse_input((6, 5), 2, 3, torch.float32)
+    res_src = _make_sparse_input((4, 5), 2, 3, torch.float32, seed=1)
+    res_dst = _make_sparse_input((6, 5), 2, 3, torch.float32, seed=2)
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
@@ -493,12 +377,10 @@ def test_copy_sparse_to_sparse_rejects_shrinking_sparse_dims():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_shrinking_dense_dims():
-    # Dense dimensions of a non-empty self may only grow as well: shrinking them
-    # (here dense size 3 -> 2) is unsupported.
-    ref_src = _make_sparse_input((4, 5, 2), 2, 3, _NEGATIVE_DTYPE)
-    ref_dst = _make_sparse_input((4, 5, 3), 2, 3, _NEGATIVE_DTYPE)
-    res_src = _make_sparse_input((4, 5, 2), 2, 3, _NEGATIVE_DTYPE, seed=1)
-    res_dst = _make_sparse_input((4, 5, 3), 2, 3, _NEGATIVE_DTYPE, seed=2)
+    ref_src = _make_sparse_input((4, 5, 2), 2, 3, torch.float32)
+    ref_dst = _make_sparse_input((4, 5, 3), 2, 3, torch.float32)
+    res_src = _make_sparse_input((4, 5, 2), 2, 3, torch.float32, seed=1)
+    res_dst = _make_sparse_input((4, 5, 3), 2, 3, torch.float32, seed=2)
     op = _resolve_gems_op()
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
@@ -508,9 +390,7 @@ def test_copy_sparse_to_sparse_rejects_shrinking_dense_dims():
 
 @pytest.mark.copy_sparse_to_sparse_
 def test_copy_sparse_to_sparse_rejects_backward():
-    # Sparse COO autograd has no formula for the raw entry transfer; a
-    # differentiable call must fail loudly rather than silently drop the grad.
-    src = _make_sparse_input((4, 5), 2, 3, _NEGATIVE_DTYPE)
+    src = _make_sparse_input((4, 5), 2, 3, torch.float32)
     src.requires_grad_(True)
     dst = torch.zeros_like(src)
     op = _resolve_gems_op()

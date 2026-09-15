@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -21,64 +23,11 @@ from . import accuracy_utils as utils
 from . import conftest as cfg
 from . import test_utils as tu
 
-# aten::sparse_coo_tensor overload group
-# =====================================
-# Three schemas share the public name ``sparse_coo_tensor`` and dispatch on the
-# argument count / shape:
-#
-#   * ``sparse_coo_tensor(int[] size, *, dtype, layout, device, pin_memory)``
-#     -- the size-only overload: an empty (nnz == 0) sparse tensor;
-#   * ``sparse_coo_tensor(Tensor indices, Tensor values, *, ...)``
-#     -- the size-inferred overload: the sparse part of the size is
-#        ``max(index[d]) + 1`` per sparse dim and the dense part comes from the
-#        values shape;
-#   * ``sparse_coo_tensor(Tensor indices, Tensor values, int[] size, *, ...)``
-#     -- the explicit ``indices_size`` overload.
-#
-# A fourth schema, ``sparse_coo_tensor.size_out(int[] size, *, Tensor(a!) out)``,
-# is a real, separately dispatched overload (verified callable on the active
-# device): it writes the empty tensor into a caller-provided sparse COO buffer
-# whose logical shape already matches and returns that same buffer. It is
-# resolved through the same public name ``sparse_coo_tensor`` with ``out=``.
-#
-# The candidate is the same public callable for the first three schemas --
-# resolved inside every test through ``flag_gems.testing.resolve_gems_op`` (never
-# at module import time, never through the dispatcher) -- and every reference
-# call mirrors the candidate call exactly with
-# ``torch.ops.aten.sparse_coo_tensor``. ``dtype`` is always passed explicitly
-# (otherwise the aten op forces float32) and ``device`` is passed explicitly so
-# the reference device (``--ref cpu`` or the active device) never has to be
-# inferred from the component tensors.
-#
-# COO layout facts asserted below: ``layout == torch.sparse_coo``, indices shape
-# ``(sparse_dim, nnz)`` with dtype int64, values shape
-# ``(nnz,) + size[sparse_dim:]`` and ``sparse_dim + dense_dim == ndim``. The
-# constructor stores the raw components verbatim (duplicate / unsorted
-# coordinates stay uncoalesced, ``nnz == 0`` inputs are coalesced), so the
-# candidate must reproduce the coalesced flag instead of normalising it.
-#
-# Regular-operator spec adaptation (sparse / metadata operator):
-#   * value ranges -- the five spec ranges feed ``tu.make_input`` for every
-#     supported dtype (float and exact), one pytest case per
-#     (range, layout, dtype) combination; the shared generator clamps bounds
-#     to each dtype's representable interval;
-#   * shapes -- sparse COO indexing has no sensible 0-dim / 5-dim analogue and
-#     the shared dense ``tu.selected_shapes()`` set does not map onto
-#     (indices, values), so a dedicated sparse grid replaces it: 1..4 logical
-#     dims, dense dims, nnz == 0 and a zero-extent logical dim;
-#   * dtypes -- all nine required dtypes plus float64 / int16 / bool,
-#     one workload per dtype;
-#   * nan / inf -- independent representable NaN, Inf and mixed scenarios;
-#   * negative -- malformed indices / size / values, the wrong layout and a
-#     mismatched ``.size_out`` buffer must raise, with the candidate held to
-#     the same contract;
-#   * broadcast and backward do not apply: this is a pure factory with no
-#     arithmetic, no broadcasting semantics and no autograd formula.
+# Exercise explicit/inferred size, size-only and size_out COO construction.
+# Preserve the stored entries and coalesced flag; pass dtype/device explicitly.
+_COO_DTYPES = tu.REQUIRED_DTYPES + [torch.float64, torch.int16, torch.bool]
 
-# Each 2-D case is (size, indices): ``indices`` is a Python list with one inner
-# list per sparse dimension and nnz columns. The column order deliberately
-# repeats / reorders coordinates so the constructed tensor is uncoalesced,
-# exercising verbatim storage of the raw components.
+# (size, indices) with explicit 2-D sizes.
 _COO_2D_CASES = [
     ((2, 3), [[0, 1, 1], [2, 0, 2]]),
     ((4, 5), [[0, 1, 3, 0], [1, 2, 4, 0]]),
@@ -87,9 +36,7 @@ _COO_2D_CASES = [
     ((3, 3), [[0, 2, 1, 2], [0, 1, 2, 0]]),
 ]
 
-# Multi-dim cases: (size, indices) where sparse_dim == len(indices) and the
-# trailing dims of size are dense (values shape (nnz,) + size[sparse_dim:]).
-# Covers 1 sparse dim, dense dims (2 sparse + 1/2 dense) and 3 sparse dims.
+# Trailing dimensions beyond len(indices) are dense.
 _COO_ND_CASES = [
     ((5,), [[0, 2, 4]]),
     ((3, 4, 5), [[0, 1, 2, 1], [1, 3, 0, 2]]),
@@ -99,9 +46,7 @@ _COO_ND_CASES = [
     ((3, 3, 3), [[0, 2, 1], [1, 0, 2], [2, 1, 0]]),
 ]
 
-# Size-inferred cases: (expected_size, indices, dense_shape). The sparse part
-# of the size is max(index[d]) + 1 per sparse dim, the dense part comes from
-# the values shape (nnz,) + dense_shape. The last case has a dense dim.
+# (inferred_size, indices, dense_shape).
 _COO_INFERRED_CASES = [
     ((2, 3), [[0, 1, 1], [2, 0, 2]], ()),
     ((4, 5), [[0, 1, 3, 0], [1, 2, 4, 0]], ()),
@@ -109,16 +54,14 @@ _COO_INFERRED_CASES = [
     ((2, 3, 4), [[0, 1, 1], [2, 0, 2]], (4,)),
 ]
 
-# Sizes for the size-only overload: the empty sparse tensor (nnz == 0) with
-# sparse_dim == len(size) and dense_dim == 0.
+# Size-only construction creates empty storage.
 _COO_SIZE_ONLY_CASES = [
     ((5,),),
     ((2, 3),),
     ((4, 5, 6),),
 ]
 
-# Explicit-size empty cases: (size, sparse_dim). nnz == 0 but the logical shape
-# and the dense dims are still carried by the tensor.
+# (size, sparse_dim), with no stored entries.
 _COO_EMPTY_CASES = [
     ((2, 3), 2),
     ((4, 5, 6), 2),
@@ -126,69 +69,34 @@ _COO_EMPTY_CASES = [
     ((3, 4, 5), 3),
 ]
 
-# Value-range sweep subset: (variant, size, indices, dense_shape) covering the
-# explicit-size 2-D path, the explicit-size ND path with dense dims and the
-# size-inferred path. For the inferred variant ``size`` is the expected result
-# shape (sparse dims are max(index[d]) + 1, dense dims come from the values).
+# (variant, size, indices, dense_shape); inferred cases use the expected size.
 _COO_VALUE_CASES = [
     ("indices_size", (2, 3), [[0, 1, 1], [2, 0, 2]], ()),
     ("indices_size", (2, 3, 4, 5), [[0, 1, 1], [2, 0, 2]], (4, 5)),
     ("indices", (2, 3, 4), [[0, 1, 1], [2, 0, 2]], (4,)),
 ]
 
-# Special-value layouts: (size, indices).
+# (size, indices) for special-value scenarios.
 _NAN_INF_CASES = [
     ((5,), [[0, 2, 4]]),
     ((2, 3), [[0, 1, 1], [2, 0, 2]]),
     ((4, 5, 6), [[0, 1, 1], [2, 0, 2]]),
 ]
 
-
-# The COO factory accepts all declared storage dtypes.
-_COO_DTYPES = [
-    torch.int8,
-    torch.uint8,
-    torch.float8_e4m3fn,
-    torch.float8_e5m2,
-    torch.float32,
-    torch.bfloat16,
-    torch.float16,
-    torch.int32,
-    torch.int64,
-    torch.float64,
-    torch.int16,
-    torch.bool,
+_VALUE_RANGE_CASES = [
+    (value_range, case, dtype)
+    for case in _COO_VALUE_CASES
+    for dtype in _COO_DTYPES
+    for value_range in tu.selected_ranges()
 ]
 
 
-_EXACT_COO_DTYPES = [dtype for dtype in _COO_DTYPES if not dtype.is_floating_point]
-
-
 def _reference_device():
-    # The reference runs on the CPU only under ``--ref cpu``; otherwise it runs
-    # on the active device, exactly like the candidate.
+    # Use CPU only when --ref cpu was requested.
     return "cpu" if cfg.TO_CPU else flag_gems.device
 
 
-def _value_range_cases():
-    # One case per (range, layout, dtype); tu.make_input clamps unsigned bounds.
-    cases = []
-    for case in _COO_VALUE_CASES:
-        for dtype in _COO_DTYPES:
-            for value_range in tu.selected_ranges():
-                cases.append((value_range, case, dtype))
-    return cases
-
-
-def _make_index_tensor(indices):
-    return torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
-
-
 def _make_values(nnz, dense_shape, dtype, value_range=None):
-    # Stored values come from the shared value-range framework (tu.make_input):
-    # range-bound symbols resolve per-dtype, so every storage dtype gets valid
-    # inputs within the requested numeric range. Construction copies the raw
-    # entries verbatim, so any representable value round-trips exactly.
     if value_range is None:
         value_range = ["-1", "1"]
     shape = (nnz,) + tuple(dense_shape)
@@ -197,16 +105,13 @@ def _make_values(nnz, dense_shape, dtype, value_range=None):
 
 def _make_special_values(shape, dtype, scenario):
     base = tu.make_special_input(dtype, scenario)
-    numel = 1
-    for extent in shape:
-        numel *= int(extent)
+    numel = math.prod(int(extent) for extent in shape)
     repeats = (numel + base.numel() - 1) // base.numel()
     return base.repeat(repeats)[:numel].reshape(shape)
 
 
 def _make_out_buffer(size, dtype, device, nnz):
-    # A sparse COO buffer of exactly the requested logical shape. nnz > 0 makes
-    # it "dirty" so ``.size_out`` has to reset the stored entries to zero.
+    # Non-empty buffers make size_out clear existing entries.
     if nnz == 0:
         return torch.ops.aten.sparse_coo_tensor(list(size), dtype=dtype, device=device)
     indices = torch.zeros((len(size), nnz), dtype=torch.long, device=device)
@@ -219,8 +124,6 @@ def _make_out_buffer(size, dtype, device, nnz):
 def _assert_coo_structure(
     res_out, ref_out, size, nnz, dtype, sparse_dim, dense_dim, is_coalesced=None
 ):
-    # Structural checks independent of the stored values: layout, shape, dtype,
-    # device, sparse/dense split, the nnz count and the coalesced flag.
     assert res_out.layout == torch.sparse_coo
     assert tuple(res_out.shape) == tuple(size)
     assert res_out.dtype == dtype
@@ -232,9 +135,7 @@ def _assert_coo_structure(
     assert tuple(torch.ops.aten._values(res_out).shape) == (nnz,) + tuple(
         size[sparse_dim:]
     )
-    # The constructor records the coalesced flag verbatim, so the candidate
-    # must match the reference exactly (uncoalesced for nnz > 0, coalesced for
-    # nnz == 0 unless is_coalesced=True is passed).
+    # Preserve the constructor's coalesced flag.
     assert res_out.is_coalesced() == ref_out.is_coalesced()
     if is_coalesced is not None:
         assert res_out.is_coalesced() == is_coalesced
@@ -245,26 +146,13 @@ def _assert_coo_structure(
 
 
 def _resolve_gems_op():
-    """Resolve the single candidate entrypoint for this OPERATOR.
-
-    One callable per operator, registered under the public name
-    ``sparse_coo_tensor`` — the injector dispatches the four schemas
-    (``size`` / ``indices`` / ``indices_size`` / ``size_out``) itself, so the
-    test never probes overload-level names. Resolution happens inside the test
-    (never at import time), and ``LookupError`` is deliberately not caught:
-    without a candidate the test must fail loudly rather than evaluate the
-    PyTorch reference a second time and pass.
-    """
     return flag_gems.testing.resolve_gems_op(
         "sparse_coo_tensor", getattr(flag_gems, "sparse_coo_tensor", None)
     )
 
 
 def _call_reference(indices, values, size, dtype):
-    # Mirrors the candidate call exactly. size=None selects the size-inferred
-    # ``indices`` overload, a list selects the explicit ``indices_size``
-    # overload; the component tensors are cloned and moved to the reference
-    # device so a mutating candidate cannot hide behind shared storage.
+    # Clone components; size=None selects the size-inferred overload.
     ref_indices = tu.to_reference(indices)
     ref_values = tu.to_reference(values)
     if size is None:
@@ -277,8 +165,7 @@ def _call_reference(indices, values, size, dtype):
 
 
 def _call_candidate(indices, values, size, dtype, **extra):
-    # size=None means the size-inferred overload; a list selects the explicit
-    # ``indices_size`` overload (same shape of decision as _call_reference).
+    # Match the reference overload: size=None selects size inference.
     call = _resolve_gems_op()
     if size is None:
         return call(indices, values, dtype=dtype, device=indices.device, **extra)
@@ -287,21 +174,7 @@ def _call_candidate(indices, values, size, dtype, **extra):
     )
 
 
-def _call_candidate_size_only(size, dtype, **extra):
-    return _resolve_gems_op()(list(size), dtype=dtype, device=flag_gems.device, **extra)
-
-
-def _call_candidate_size_out(size, out):
-    # Same single candidate, called with the ``size_out`` form. torch.ops.aten
-    # does not select an overload for you, so the call form must match the
-    # reference (torch.ops.aten.sparse_coo_tensor.size_out(...)) exactly.
-    return _resolve_gems_op()(list(size), out=out)
-
-
 def _assert_rejected(ref_call, candidate_call):
-    # The reference must raise and the candidate is held to the same contract;
-    # NotImplementedError is a RuntimeError subclass, and a candidate that
-    # forgets the overload surfaces as TypeError / ValueError.
     with pytest.raises(RuntimeError):
         ref_call()
     with pytest.raises((NotImplementedError, RuntimeError, TypeError, ValueError)):
@@ -312,14 +185,12 @@ def _assert_rejected(ref_call, candidate_call):
 @pytest.mark.parametrize("case", _COO_SIZE_ONLY_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_size(case, dtype):
-    # Size-only overload: an empty sparse tensor (nnz == 0, coalesced) with the
-    # requested logical shape and storage dtype.
     (size,) = case
     ref_device = _reference_device()
     ref_out = torch.ops.aten.sparse_coo_tensor(
         list(size), dtype=dtype, device=ref_device
     )
-    res_out = _call_candidate_size_only(size, dtype)
+    res_out = _resolve_gems_op()(list(size), dtype=dtype, device=flag_gems.device)
 
     _assert_coo_structure(res_out, ref_out, size, 0, dtype, len(size), 0)
     tu.assert_result_equal(res_out._values(), ref_out._values())
@@ -329,15 +200,13 @@ def test_sparse_coo_tensor_size(case, dtype):
 @pytest.mark.parametrize("case", _COO_SIZE_ONLY_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_size_out(case, dtype):
-    # .size_out overload: writes the empty tensor into the caller-provided
-    # buffer (resetting a dirty nnz > 0 buffer to nnz == 0) and returns it.
     (size,) = case
     ref_device = _reference_device()
     ref_out = _make_out_buffer(size, dtype, ref_device, nnz=2)
     out = _make_out_buffer(size, dtype, flag_gems.device, nnz=2)
 
     ref_ret = torch.ops.aten.sparse_coo_tensor.size_out(list(size), out=ref_out)
-    res_ret = _call_candidate_size_out(size, out)
+    res_ret = _resolve_gems_op()(list(size), out=out)
 
     assert res_ret is out
     _assert_coo_structure(res_ret, ref_ret, size, 0, dtype, len(size), 0)
@@ -352,11 +221,9 @@ def test_sparse_coo_tensor_size_out(case, dtype):
 @pytest.mark.parametrize("case", _COO_2D_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_indices_size(case, dtype):
-    # Explicit-size overload (2 sparse dims, no dense dims). The components are
-    # stored verbatim, so duplicate / unsorted coordinates stay uncoalesced.
     size, indices = case
     nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, (), dtype)
 
     ref_out = _call_reference(indices_t, values, size, dtype)
@@ -370,13 +237,11 @@ def test_sparse_coo_tensor_indices_size(case, dtype):
 @pytest.mark.parametrize("case", _COO_ND_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_indices_size_nd(case, dtype):
-    # Multi-dim overload coverage: 1 sparse dim, dense dims (sparse_dim == 2)
-    # and 3 sparse dims.
     size, indices = case
     sparse_dim = len(indices)
     dense_dim = len(size) - sparse_dim
     nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, tuple(size[sparse_dim:]), dtype)
 
     ref_out = _call_reference(indices_t, values, size, dtype)
@@ -390,13 +255,11 @@ def test_sparse_coo_tensor_indices_size_nd(case, dtype):
 @pytest.mark.parametrize("case", _COO_INFERRED_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_indices(case, dtype):
-    # Size-inferred overload: the sparse part of the size is max(index[d]) + 1
-    # per sparse dim and the dense part comes from the values shape.
     size, indices, dense_shape = case
     sparse_dim = len(indices)
     dense_dim = len(dense_shape)
     nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, dense_shape, dtype)
 
     ref_out = _call_reference(indices_t, values, None, dtype)
@@ -410,8 +273,6 @@ def test_sparse_coo_tensor_indices(case, dtype):
 @pytest.mark.parametrize("case", _COO_EMPTY_CASES)
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_indices_size_empty(case, dtype):
-    # Explicit-size overload with nnz == 0: the index / value storage is empty
-    # but the requested shape, dense dims and dtype are carried by the tensor.
     size, sparse_dim = case
     dense_shape = tuple(size[sparse_dim:])
     indices_t = torch.empty(sparse_dim, 0, dtype=torch.long, device=flag_gems.device)
@@ -429,13 +290,10 @@ def test_sparse_coo_tensor_indices_size_empty(case, dtype):
 @pytest.mark.sparse_coo_tensor
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
-    # An explicit is_coalesced=True kwarg is honored by the constructor even
-    # when the stored coordinates contain duplicates (the flag is recorded
-    # verbatim); the result must be coalesced like the reference.
     size = (2, 3)
     indices = [[0, 1, 1], [2, 0, 2]]
     nnz = 3
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, (), dtype)
     ref_indices = tu.to_reference(indices_t)
     ref_values = tu.to_reference(values)
@@ -455,16 +313,13 @@ def test_sparse_coo_tensor_indices_size_is_coalesced(dtype):
 
 
 @pytest.mark.sparse_coo_tensor
-@pytest.mark.parametrize("value_range,case,dtype", _value_range_cases())
+@pytest.mark.parametrize("value_range,case,dtype", _VALUE_RANGE_CASES)
 def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
-    # Value-range sweep over the full dtype contract: construction copies the
-    # stored values verbatim, so every range (including the dtype-extreme
-    # [0, max] / [min, 0] ranges) must round-trip exactly for every dtype.
     variant, size, indices, dense_shape = case
     sparse_dim = len(indices)
     dense_dim = len(dense_shape)
     nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, dense_shape, dtype, value_range)
 
     ref_out = _call_reference(
@@ -488,7 +343,7 @@ def test_sparse_coo_tensor_nan_inf(case, dtype, scenario):
     sparse_dim = len(indices)
     dense_shape = tuple(size[sparse_dim:])
     nnz = len(indices[0])
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_special_values((nnz,) + dense_shape, dtype, scenario)
 
     ref_out = _call_reference(indices_t, values, size, dtype)
@@ -503,8 +358,6 @@ def test_sparse_coo_tensor_nan_inf(case, dtype, scenario):
 @pytest.mark.sparse_coo_tensor
 @pytest.mark.parametrize("dtype", _COO_DTYPES)
 def test_sparse_coo_tensor_zero_extent(dtype):
-    # A logical size with a zero extent is valid: the result is an nnz == 0
-    # coalesced tensor that still carries the full logical shape.
     size = (0, 4)
     indices_t = torch.empty(2, 0, dtype=torch.long, device=flag_gems.device)
     values = _make_values(0, (), dtype)
@@ -519,12 +372,10 @@ def test_sparse_coo_tensor_zero_extent(dtype):
 @pytest.mark.sparse_coo_tensor
 @pytest.mark.parametrize("case", _COO_VALUE_CASES)
 def test_sparse_coo_tensor_inputs_not_mutated(case):
-    # Construction returns a fresh tensor and must not modify the (indices,
-    # values) it was handed.
     variant, size, indices, dense_shape = case
     nnz = len(indices[0])
     dtype = torch.float32
-    indices_t = _make_index_tensor(indices)
+    indices_t = torch.tensor(indices, dtype=torch.long, device=flag_gems.device)
     values = _make_values(nnz, dense_shape, dtype)
     # Snapshot through the reference-device helper: under ``--ref cpu`` the
     # snapshots live on the CPU, which is the convention the accuracy helpers
@@ -541,15 +392,8 @@ def test_sparse_coo_tensor_inputs_not_mutated(case):
     tu.assert_result_equal(values, values_before)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases: malformed inputs must raise, and the candidate is held to the
-# same contract as the reference.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_indices_ndim():
-    # indices must be 2-D (sparse_dim, nnz); a 1-D index tensor is rejected.
     indices_t = torch.tensor([0, 1, 2], dtype=torch.long, device=flag_gems.device)
     values = _make_values(3, (), torch.float32)
 
@@ -561,9 +405,9 @@ def test_sparse_coo_tensor_negative_indices_ndim():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_size():
-    # A negative logical size is rejected (numel overflow); the candidate must
-    # fail too rather than accept a nonsensical shape.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]])
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    )
     values = _make_values(2, (), torch.float32)
 
     _assert_rejected(
@@ -574,32 +418,32 @@ def test_sparse_coo_tensor_negative_size():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_size_only_size():
-    # The same negative-size rule applies to the size-only overload.
     ref_device = _reference_device()
 
     _assert_rejected(
         lambda: torch.ops.aten.sparse_coo_tensor(
             [-2, 3], dtype=torch.float32, device=ref_device
         ),
-        lambda: _call_candidate_size_only([-2, 3], torch.float32),
+        lambda: _resolve_gems_op()(
+            [-2, 3], dtype=torch.float32, device=flag_gems.device
+        ),
     )
 
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_non_integer_size():
-    # The size must be an int[]; a float size matches no schema and is rejected.
     _assert_rejected(
         lambda: torch.ops.aten.sparse_coo_tensor(
             [2.5, 3], dtype=torch.float32, device=_reference_device()
         ),
-        lambda: _call_candidate_size_only([2.5, 3], torch.float32),
+        lambda: _resolve_gems_op()(
+            [2.5, 3], dtype=torch.float32, device=flag_gems.device
+        ),
     )
 
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_indices_dtype():
-    # The sparse COO layout requires int64 indices; an int32 index tensor is
-    # rejected by the reference and must be by the candidate too.
     indices_t = torch.tensor(
         [[0, 1], [2, 0]], dtype=torch.int32, device=flag_gems.device
     )
@@ -613,8 +457,9 @@ def test_sparse_coo_tensor_negative_indices_dtype():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_indices_float():
-    # A floating-point index tensor is likewise rejected.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]]).float()
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    ).float()
     values = _make_values(2, (), torch.float32)
 
     _assert_rejected(
@@ -625,9 +470,9 @@ def test_sparse_coo_tensor_negative_indices_float():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_nnz_mismatch():
-    # indices and values must carry the same number of entries; a mismatch is
-    # rejected by the reference and must be by the candidate too.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]])
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    )
     values = _make_values(3, (), torch.float32)
 
     _assert_rejected(
@@ -638,9 +483,9 @@ def test_sparse_coo_tensor_negative_nnz_mismatch():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_values_dense_dims():
-    # The values tensor must have exactly sparse_dim + dense_dim dims; a values
-    # tensor with the wrong rank is rejected.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]])
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    )
     values = _make_values(2, (), torch.float32)
 
     _assert_rejected(
@@ -651,9 +496,9 @@ def test_sparse_coo_tensor_negative_values_dense_dims():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_indices_size_rank():
-    # ``indices`` carries one row per sparse dim; a size with a different rank
-    # cannot be reconciled and is rejected.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]])
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    )
     values = _make_values(2, (), torch.float32)
 
     _assert_rejected(
@@ -664,8 +509,6 @@ def test_sparse_coo_tensor_negative_indices_size_rank():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_inferred_negative_index():
-    # The size-inferred overload derives each sparse dim from max(index) + 1,
-    # so a negative coordinate cannot be resolved and is rejected.
     indices_t = torch.tensor([[-1, 1]], dtype=torch.long, device=flag_gems.device)
     values = _make_values(2, (), torch.float32)
 
@@ -677,9 +520,9 @@ def test_sparse_coo_tensor_negative_inferred_negative_index():
 
 @pytest.mark.sparse_coo_tensor_negative
 def test_sparse_coo_tensor_negative_layout():
-    # Only the sparse COO layout is produced by this name; a CSR request is
-    # rejected even though the components are otherwise valid.
-    indices_t = _make_index_tensor([[0, 1], [2, 0]])
+    indices_t = torch.tensor(
+        [[0, 1], [2, 0]], dtype=torch.long, device=flag_gems.device
+    )
     values = _make_values(2, (), torch.float32)
     ref_indices = tu.to_reference(indices_t)
     ref_values = tu.to_reference(values)
@@ -701,9 +544,6 @@ def test_sparse_coo_tensor_negative_layout():
 
 @pytest.mark.sparse_coo_tensor_size_out
 def test_sparse_coo_tensor_size_out_negative_shape():
-    # The out buffer must already carry the requested logical shape: a
-    # mismatched buffer needs a sparse resize, which has no kernel here, so the
-    # overload raises and the candidate must reject it as well.
     ref_out = torch.ops.aten.sparse_coo_tensor(
         [4, 5], dtype=torch.float32, device=_reference_device()
     )
@@ -713,5 +553,5 @@ def test_sparse_coo_tensor_size_out_negative_shape():
 
     _assert_rejected(
         lambda: torch.ops.aten.sparse_coo_tensor.size_out([2, 3], out=ref_out),
-        lambda: _call_candidate_size_out([2, 3], out),
+        lambda: _resolve_gems_op()([2, 3], out=out),
     )

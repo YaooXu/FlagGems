@@ -21,10 +21,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_coalesce`` starts with an underscore, and ``pytest.mark`` refuses to
-# generate a marker via attribute access for such names. Register the markers
-# directly on the MarkGenerator so ``@pytest.mark._coalesce``,
-# ``@pytest.mark._coalesce_out`` and ``-m _coalesce`` all work.
+# Register underscore-prefixed pytest markers explicitly.
 setattr(
     pytest.mark,
     "_coalesce",
@@ -36,42 +33,9 @@ setattr(
     MarkDecorator(Mark("_coalesce_out", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# aten::_coalesce(Tensor self) -> Tensor merges the duplicate entries of an
-# *uncoalesced* sparse COO tensor: the result has unique, lexicographically
-# sorted coordinates and each stored value is the sum of the entries sharing
-# that coordinate. aten::_coalesce.out(Tensor self, *, Tensor(a!) out) writes
-# the same result into a caller-provided (empty) sparse COO tensor.
-#
-# Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shapes: 1-D .. 4-D sparse COO layouts (local set -- the shared
-#     ``tu.selected_shapes()`` set is dense-only and has no sparse analogue),
-#     always with nnz > numel so the pigeonhole principle guarantees duplicate
-#     entries and coalescing has real merging work to do;
-#   * value ranges: ``tu.selected_ranges()`` (the spec's five ranges) fed
-#     through ``tu.make_input``, which clamps unsigned bounds. Integer
-#     extremes are included; half-precision reduction limits are noted below;
-#   * .out overload: the same grid, with an empty out buffer and return/alias
-#     checks;
-#   * edge cases: nan / +-inf values (float dtypes);
-#   * negative: dense, SparseCsr and float8 storage inputs have no registered
-#     kernel and must raise.
-#
-# Broadcast and backward do not apply: ``_coalesce`` is unary (nothing to
-# broadcast against) and sparse COO autograd has no formula for it (the
-# operator only re-orders/merges stored values, there is no gradient rule to
-# exercise).
-#
-# The CUDA implementation asserts ``!self.is_coalesced()`` internally, so every
-# input here is left uncoalesced (``torch.sparse_coo_tensor`` does not set the
-# coalesced flag on this runtime); the tests assert that the *candidate* also
-# leaves its input uncoalesced, i.e. it must not coalesce in place.
-
-# The sparse COO reduction has no FP8 implementation: it raises
-# ``"coalesce_sparse_cuda" not implemented for 'Float8_e4m3fn'`` on CUDA and is
-# therefore excluded; every other required dtype is accepted. complex64 is
-# accepted by the CUDA kernel as well but is outside the spec's required dtype
-# contract, so it is not swept.
-_REQUIRED_CANDIDATE_DTYPES = [
+# Merge duplicate COO coordinates and sum their stored values.
+# FP8 inputs are exercised by the rejection test.
+_COALESCE_DTYPES = [
     torch.float16,
     torch.bfloat16,
     torch.float32,
@@ -82,67 +46,42 @@ _REQUIRED_CANDIDATE_DTYPES = [
     torch.int32,
     torch.int64,
     torch.bool,
-    torch.float8_e4m3fn,
-    torch.float8_e5m2,
 ]
 
+# (shape, nnz); small coordinate spaces exercise duplicate reduction.
+_COALESCE_CASES = tu.selected_cases(
+    [
+        ((4, 4), 20),
+        ((5, 5), 30),
+        ((8, 8), 80),
+        ((16, 16), 300),
+        ((64,), 200),
+        ((2, 3, 4), 28),
+        ((3, 5, 7), 120),
+        ((4, 8, 16), 600),
+        ((16, 7, 57), 2000),
+        ((4, 4, 4, 4), 400),
+    ],
+    quick=[((4, 4), 20), ((3, 5, 7), 120)],
+)
 
-_COALESCE_DTYPES = [
-    dtype
-    for dtype in _REQUIRED_CANDIDATE_DTYPES
-    if dtype not in (torch.float8_e4m3fn, torch.float8_e5m2)
-]
+_VALUE_RANGE_CASES = tu.selected_cases(
+    [((64,), 200), ((3, 5, 7), 120), ((4, 4, 4, 4), 400)], quick=[((3, 5, 7), 120)]
+)
 
-# (shape, nnz) sparse layouts. nnz is always > numel(shape), which forces at
-# least one duplicate coordinate and therefore real merging work. Ranks 1-4
-# and a mixture of tiny / medium / larger index spaces are covered.
-_COALESCE_CASES = [
-    ((4, 4), 20),
-    ((5, 5), 30),
-    ((8, 8), 80),
-    ((16, 16), 300),
-    ((64,), 200),
-    ((2, 3, 4), 28),
-    ((3, 5, 7), 120),
-    ((4, 8, 16), 600),
-    ((16, 7, 57), 2000),
-    ((4, 4, 4, 4), 400),
-]
-
-# --quick smoke subset selected by tests/conftest.QUICK_MODE (tu.QUICK_MODE).
-_COALESCE_CASES_QUICK = [((4, 4), 20), ((3, 5, 7), 120)]
-
-# Representative layouts for the value-range sweep (a 1-D, a 3-D and a 4-D
-# index space), so every range is exercised on more than one rank.
-_VALUE_RANGE_CASES = [((64,), 200), ((3, 5, 7), 120), ((4, 4, 4, 4), 400)]
-_VALUE_RANGE_CASES_QUICK = [((3, 5, 7), 120)]
-
-# Integer sums wrap in the output dtype, so their extreme ranges are covered.
-# The random fp16/bf16 sweep stays same-sign and avoids extremes because CPU
-# and CUDA accumulation can disagree on cancellation and overflow.
+# Preserve the same-sign, non-extreme fp16/bf16 sweep: CPU/CUDA accumulation
+# may differ on cancellation and overflow. Integer extremes remain covered.
 _NARROW_FLOAT_DTYPES = (torch.float16, torch.bfloat16)
 _EXTREME_RANGES = (("0", "max"), ("min", "0"))
-
-
-def _coalesce_cases():
-    return _COALESCE_CASES_QUICK if tu.QUICK_MODE else _COALESCE_CASES
-
-
-def _value_range_cases():
-    cases = []
-    shapes = _VALUE_RANGE_CASES_QUICK if tu.QUICK_MODE else _VALUE_RANGE_CASES
-    for dtype in _COALESCE_DTYPES:
-        if dtype == torch.bool:
-            # A single degenerate {0, 1} range; the main grid covers bool.
-            continue
-        for value_range in tu.selected_ranges():
-            if dtype in _NARROW_FLOAT_DTYPES and value_range == ["-1", "1"]:
-                continue
-            if tuple(value_range) in _EXTREME_RANGES and dtype in _NARROW_FLOAT_DTYPES:
-                continue
-            for case in shapes:
-                cases.append((value_range, dtype, case))
-    return cases
+_VALUE_CASES = [
+    (value_range, dtype, case)
+    for dtype in _COALESCE_DTYPES
+    if dtype != torch.bool
+    for value_range in tu.selected_ranges()
+    if dtype not in _NARROW_FLOAT_DTYPES
+    or (value_range != ["-1", "1"] and tuple(value_range) not in _EXTREME_RANGES)
+    for case in _VALUE_RANGE_CASES
+]
 
 
 def _default_bounds(dtype):
@@ -153,13 +92,7 @@ def _default_bounds(dtype):
 
 
 def _make_input(shape, nnz, dtype, value_range=None, low=None, high=None, seed=2026):
-    # Deterministic CPU-side index generation; the sparse tensor is created on
-    # the test device. Index rows are drawn with replacement, so duplicates are
-    # guaranteed whenever nnz > numel. Values come from the shared value-range
-    # helper (tu.make_input) when a spec range is given; otherwise duplicate
-    # values are summed by coalescing, so the default float range is
-    # non-negative ([0, 1]) to avoid fp16/bf16 cancellation error and signed
-    # integer dtypes default to a small symmetric range that cannot overflow.
+    # Seeded indices may repeat; default floats are non-negative to avoid cancellation.
     gen = torch.Generator("cpu").manual_seed(seed)
     if low is None or high is None:
         low, high = _default_bounds(dtype)
@@ -201,8 +134,6 @@ def _make_special_values(nnz, dtype, scenario):
 
 
 def _make_empty_out(shape, dtype, device):
-    # Empty sparse COO tensor of the right shape/dtype; _coalesce.out writes the
-    # coalesced indices and values into this storage.
     indices = torch.empty((len(shape), 0), dtype=torch.long, device=device)
     values = torch.empty((0,), dtype=dtype, device=device)
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
@@ -215,7 +146,6 @@ def _resolve_gems_op():
 
 
 def _assert_coalesced(res_out, ref_out, dtype, *, equal_nan=False):
-    # Both sides must be coalesced sparse COO tensors with the same structure.
     assert res_out.layout == torch.sparse_coo
     assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype
@@ -232,7 +162,7 @@ def _assert_coalesced(res_out, ref_out, dtype, *, equal_nan=False):
 
 
 @pytest.mark._coalesce
-@pytest.mark.parametrize("case", _coalesce_cases())
+@pytest.mark.parametrize("case", _COALESCE_CASES)
 @pytest.mark.parametrize("dtype", _COALESCE_DTYPES)
 def test__coalesce(case, dtype):
     shape, nnz = case
@@ -250,12 +180,8 @@ def test__coalesce(case, dtype):
 
 
 @pytest.mark._coalesce
-@pytest.mark.parametrize("value_range,dtype,case", _value_range_cases())
+@pytest.mark.parametrize("value_range,dtype,case", _VALUE_CASES)
 def test__coalesce_value_ranges(value_range, dtype, case):
-    # The stored values sweep the spec's five ranges via the shared
-    # tu.make_input helper (positive, negative, extreme and degenerate); the
-    # summed duplicate value must still match the reference within the dtype
-    # tolerance.
     shape, nnz = case
     inp = _make_input(shape, nnz, dtype, value_range=value_range)
     assert not inp.is_coalesced()
@@ -270,7 +196,7 @@ def test__coalesce_value_ranges(value_range, dtype, case):
 
 
 @pytest.mark._coalesce
-@pytest.mark.parametrize("case", _coalesce_cases())
+@pytest.mark.parametrize("case", _COALESCE_CASES)
 @pytest.mark.parametrize(
     "dtype,scenario",
     tu.selected_cases(tu.special_value_cases(_COALESCE_DTYPES)),
@@ -297,7 +223,7 @@ def test__coalesce_nan_inf(case, dtype, scenario):
 
 
 @pytest.mark._coalesce_out
-@pytest.mark.parametrize("case", _coalesce_cases())
+@pytest.mark.parametrize("case", _COALESCE_CASES)
 @pytest.mark.parametrize("dtype", _COALESCE_DTYPES)
 def test__coalesce_out(case, dtype):
     shape, nnz = case
@@ -318,9 +244,6 @@ def test__coalesce_out(case, dtype):
 
 @pytest.mark._coalesce
 def test__coalesce_rejects_dense_input():
-    # _coalesce is a sparse-COO-only operator; a dense (strided) input has no
-    # registered kernel and must raise. NotImplementedError is a RuntimeError
-    # subclass, so the candidate is held to the same contract on any device.
     inp = torch.randn(4, 4, dtype=torch.float32, device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten._coalesce(inp)
@@ -330,7 +253,6 @@ def test__coalesce_rejects_dense_input():
 
 @pytest.mark._coalesce
 def test__coalesce_rejects_csr_input():
-    # Sparse CSR layout is not COO: _coalesce must reject it as well.
     inp = torch.randn(4, 4, dtype=torch.float32, device=flag_gems.device)
     inp = inp.to_sparse_csr()
     with pytest.raises(RuntimeError):
@@ -341,8 +263,6 @@ def test__coalesce_rejects_csr_input():
 
 @pytest.mark._coalesce
 def test__coalesce_rejects_fp8_input():
-    # float8 storage has no registered coalesce kernel; the candidate must
-    # reject it too rather than silently producing a bogus result.
     indices = torch.zeros((1, 3), dtype=torch.long, device=flag_gems.device)
     values = torch.zeros(3, dtype=torch.float8_e4m3fn, device=flag_gems.device)
     inp = torch.sparse_coo_tensor(indices, values, (4,), device=flag_gems.device)

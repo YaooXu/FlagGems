@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -20,71 +22,17 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::sparse_csc_tensor.ccol_row_value_size(Tensor ccol_indices,
-#     Tensor row_indices, Tensor values, int[] size, *, ScalarType? dtype=None,
-#     Layout? layout=None, Device? device=None, bool? pin_memory=False) -> Tensor
-# constructs a sparse CSC tensor from compressed column pointers (length N + 1
-# for an N-column matrix), stored row indices (length nnz) and values (shape
-# (nnz,) for 2-D or (batch..., nnz) for batched), laid out over a logical
-# matrix of size ``size``. The no-size sibling
-# (``aten::sparse_csc_tensor.ccol_row_value``) infers the shape from the index
-# tensors: rows = max(row) + 1, cols = len(ccol) - 1.
-#
-# Both overloads share the single public name ``sparse_csc_tensor``; the aten
-# dispatcher picks the overload by argument count (4 positional args -> the
-# explicit-size variant, 3 -> the shape-inferred variant). The candidate under
-# test is the same public callable, so every reference call below mirrors the
-# candidate call exactly (same argument order, same keyword set).
-#
-# The ``dtype`` keyword is always passed explicitly: without it the aten op
-# forces float32 storage and raises for every other values dtype ("dtype of
-# values (...) must match dtype of sparse tensor"). The ``device`` keyword is
-# passed explicitly too: on CUDA this torch build fails to infer the target
-# device from the input tensors ("Values and compressed tensor instance need
-# to be on the same device") unless it is given. ``layout=torch.sparse_csc``
-# pins the compressed-column layout.
-#
-# CSC layout facts exercised below: layout == torch.sparse_csc, sparse_dim == 2,
-# dense_dim == 0 (the batch dims of batched tensors are sparse batch dims),
-# values stored at values[batch..., nnz], and ccol/row carry the compressed
-# column structure verbatim (the constructor never re-sorts or coalesces).
-#
-# Regular-operator spec dimensions:
-# - Value ranges: the data path of this constructor is a pure copy -- the op
-#   stores the given values verbatim -- so the value-range dimension is covered
-#   by running the shared tu.selected_ranges() (sign coverage, per-dtype bounds
-#   and constants) over the storage values of every supported float/exact
-#   dtype, plus a dedicated boundary case pinning the finfo min/max/zero
-#   round-trip. The uint8 storage cannot represent the negative half of two of
-#   the spec ranges, so a local clamp collapses those to the dtype's lower
-#   bound (0) before generation; the reference and candidate receive the same
-#   clamped values.
-# - Shape levels: tu.selected_shapes() is covered through _shape_level_cases()
-#   (which skips the 0-dim scalar, meaningless for a 2-D sparse layout, and
-#   turns 1-dim entries into square 2-D tensors), plus dedicated 2-D, batched
-#   and empty (nnz == 0) cases.
-# - Broadcast: N/A -- a constructor taking three index/value tensors, with no
-#   broadcasting semantics.
-# - Backward: N/A -- the op is a structural constructor with no autograd
-#   formula (sparse CSC constructors are non-differentiable).
-# - Negative cases: a dtype kwarg contradicting the values dtype, a missing
-#   dtype for non-float32 values, a non-CSC layout kwarg, cross-device
-#   index/value tensors, a missing device kwarg on CUDA and a negative size
-#   must raise on the aten reference and the candidate alike.
-# - nan/inf: non-finite values are stored verbatim and compared with
-#   equal_nan=True.
-#
-# Dtype coverage (spec REQUIRED_DTYPES): int8, uint8, float8_e4m3fn,
-# float8_e5m2, float32, bfloat16, float16, int32 and int64 are all supported by
-# this aten constructor on CUDA and are included. float64, int16 and bool are
-# added on top. All stored values are compared exactly through the shared
-# helper, including FP8, without densifying or accumulating duplicate entries.
+# Store CSC indices and values verbatim, including repeated/unsorted rows.
+# Pass dtype and device explicitly to the ATen factory.
+_EXACT_CSC_DTYPES = [torch.int8, torch.uint8] + utils.ALL_INT_DTYPES + [torch.bool]
+_FLOAT_STORAGE_DTYPES = utils.ALL_FLOAT_DTYPES + [
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+]
+_CSC_DTYPES = _FLOAT_STORAGE_DTYPES + _EXACT_CSC_DTYPES
+_INDEX_DTYPES = [torch.int32, torch.int64]
 
-# ---------------------------------------------------------------------------
-# Shared cases and dtype sets
-# ---------------------------------------------------------------------------
-
-# (matrix shape, nnz) pairs: 1-D row, tall, wide, square and empty (nnz == 0).
+# (matrix_shape, nnz), then batched variants.
 _CSC_CASES = [
     ((1, 8), 4),
     ((8, 1), 4),
@@ -93,17 +41,12 @@ _CSC_CASES = [
     ((7, 5), 13),
     ((4, 4), 0),
 ]
-
-# Batched CSC: 3-D and 4-D matrices; batch dims become sparse batch dims of the
-# resulting tensor (sparse_dim stays 2, dense_dim stays 0).
 _CSC_BATCHED_CASES = [
     ((2, 4, 4), 4),
     ((3, 6, 5), 6),
 ]
 
-# Shape-inferred (no-size) overload: ccol is given as a Python list (batch
-# shape (N + 1,)), row as a Python list of length nnz; expected rows are
-# max(row) + 1.
+# (ccol_indices, row_indices, inferred_size).
 _CSC_NO_SIZE_CASES = [
     ([0, 2, 3, 5], [0, 2, 1, 3, 2], (4, 3)),
     ([0, 3, 3, 4], [0, 1, 2, 3], (4, 3)),
@@ -111,29 +54,27 @@ _CSC_NO_SIZE_CASES = [
     ([0, 2, 4], [0, 1, 1, 0], (2, 2)),
 ]
 
-# The op stores every dtype the CUDA storage supports: fp16/fp32/bf16 (plus
-# fp64 when the device supports it), the two fp8 flavours, int8/uint8,
-# int16/int32/int64 (int16 on top of the spec set) and bool. Index tensors are
-# int32 or int64.
-_FLOAT_CSC_DTYPES = utils.ALL_FLOAT_DTYPES
-_FP8_CSC_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-_SMALL_INT_CSC_DTYPES = [torch.int8, torch.uint8]
-_EXACT_CSC_DTYPES = _SMALL_INT_CSC_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
-_CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES + _EXACT_CSC_DTYPES
-# Floating storage dtypes used by the shape and special-value grids.
-_FLOATISH_CSC_DTYPES = _FLOAT_CSC_DTYPES + _FP8_CSC_DTYPES
-_INDEX_DTYPES = [torch.int32, torch.int64]
+# Skip scalars; map 1-D shapes to square matrices.
+_CSC_SHAPE_CASES = [
+    (
+        (shape + shape, shape[0])
+        if len(shape) == 1
+        else (shape, min(shape[-2] * shape[-1], 8))
+    )
+    for shape in tu.selected_shapes()
+    if shape
+]
+_BOUNDARY_RANGES = [
+    ["min", "min"],
+    ["max", "max"],
+    ["0", "0"],
+    ["1", "1"],
+    ["-1", "-1"],
+]
 
 
 def _make_values(nnz, dtype, shape=None, value_range=("-1", "1")):
-    # The stored values come from the shared value-range framework: the
-    # [low, high] range symbols resolve per-dtype via tu.make_input and the
-    # tensor is generated on the test device. The construction is a pure copy,
-    # so every in-range value round-trips verbatim.
-    #
-    # uint8 cannot represent the spec's negative bounds; clamp the resolved
-    # symbols to [0, dtype_max] so the generated range stays representable
-    # (torch.testing.make_tensor rejects a negative low for an unsigned dtype).
+    # Clamp uint8 bounds and fill ranges that collapse to a constant.
     shape = (nnz,) if shape is None else shape
     if dtype == torch.uint8:
         low = max(int(tu.resolve_bound(value_range[0], dtype)), 0)
@@ -151,20 +92,11 @@ def _make_values(nnz, dtype, shape=None, value_range=("-1", "1")):
 def _make_csc_inputs(
     shape, nnz, dtype, seed=0, index_dtype=torch.int64, value_range=("-1", "1")
 ):
-    """Build valid (ccol_indices, row_indices, values) for a (batch..., M, N)
-    logical matrix with ``nnz`` stored entries.
-
-    Indices are generated deterministically on the CPU and moved to the test
-    device; values come from the value-range framework. The nnz entries are
-    spread across the N column blocks by random cut points, and the row
-    indices are drawn with replacement (duplicate entries and unsorted rows
-    are legal CSC structure that the constructor must keep verbatim)."""
+    # Seeded column splits permit duplicate and unsorted row indices.
     device = flag_gems.device
     gen = torch.Generator("cpu").manual_seed(seed)
     batch, (M, N) = shape[:-2], shape[-2:]
-    total_batch = 1
-    for d in batch:
-        total_batch *= d
+    total_batch = math.prod(batch)
     if N <= 1:
         counts = torch.full((total_batch, 1), nnz, dtype=torch.long)
     else:
@@ -200,7 +132,6 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out, dtype, index_dtype):
-    """Structural and value comparison of a CSC tensor against the reference."""
     assert res_out.layout == torch.sparse_csc
     assert res_out.dtype == dtype
     assert tuple(res_out.shape) == tuple(ref_out.shape)
@@ -214,11 +145,6 @@ def _assert_result(res_out, ref_out, dtype, index_dtype):
     # Metadata and index arrays above, stored values here: no densification
     # is needed to validate the constructor.
     tu.assert_result_equal(res_out.values(), ref_out.values())
-
-
-# ---------------------------------------------------------------------------
-# 2-D explicit-size constructor
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.sparse_csc_tensor
@@ -299,15 +225,10 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
     tu.assert_result_equal(values, ref_values)
 
 
-# ---------------------------------------------------------------------------
-# Shape-inferred (no-size) overload
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("ccol_list, row_list, expected_shape", _CSC_NO_SIZE_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_STORAGE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_no_size(
     ccol_list, row_list, expected_shape, dtype, index_dtype, value_range
@@ -384,17 +305,10 @@ def test_sparse_csc_tensor_no_size_exact(
     assert tuple(res_out.shape) == tuple(ref_out.shape)
 
 
-# ---------------------------------------------------------------------------
-# Structural preservation: uncoalesced and unsorted entries
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
 def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
-    # Duplicate (row, col) entries: the constructor must keep them verbatim,
-    # not coalesce them (nnz stays 3 for a logical 2x2 matrix).
     ccol = torch.tensor([0, 1, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([0, 0, 0], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
@@ -433,8 +347,6 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
 def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
-    # Non-monotonic row indices within a column: legal CSC structure, kept
-    # verbatim by the constructor.
     ccol = torch.tensor([0, 3, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([1, 0, 2], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
@@ -468,29 +380,10 @@ def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
     tu.assert_result_equal(values, ref_values)
 
 
-# ---------------------------------------------------------------------------
-# Shape levels (tu.selected_shapes())
-# ---------------------------------------------------------------------------
-
-
-def _shape_level_cases():
-    # The 0-dim scalar shape is meaningless for a 2-D sparse layout; 1-dim
-    # entries become square 2-D tensors. Larger shapes are used as-is.
-    cases = []
-    for shape in tu.selected_shapes():
-        if not shape:
-            continue
-        if len(shape) == 1:
-            cases.append((shape + shape, shape[0]))
-        else:
-            cases.append((shape, min(shape[-2] * shape[-1], 8)))
-    return cases
-
-
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.parametrize("shape, nnz", _shape_level_cases())
+@pytest.mark.parametrize("shape, nnz", _CSC_SHAPE_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)
+@pytest.mark.parametrize("dtype", _FLOAT_STORAGE_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_range):
     ccol, row, values = _make_csc_inputs(
@@ -527,25 +420,10 @@ def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_ra
     assert tuple(res_out.shape) == tuple(shape)
 
 
-# ---------------------------------------------------------------------------
-# Boundary and non-finite values
-# ---------------------------------------------------------------------------
-
-_BOUNDARY_RANGES = [
-    ["min", "min"],
-    ["max", "max"],
-    ["0", "0"],
-    ["1", "1"],
-    ["-1", "-1"],
-]
-
-
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("value_range", _BOUNDARY_RANGES)
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
 def test_sparse_csc_tensor_boundary_values(dtype, value_range):
-    # Constant tensors at the dtype extremes must round-trip bit-exactly
-    # through the construction (a pure copy).
     ccol, row, values = _make_csc_inputs(
         (4, 4), 4, dtype, index_dtype=torch.int64, value_range=value_range
     )
@@ -617,11 +495,6 @@ def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
     tu.assert_result_equal(values, ref_values)
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
-
-
 def _build_default_inputs(dtype=torch.float32, index_dtype=torch.int64):
     values = _make_values(2, dtype, value_range=["0", "1"])
     ccol = torch.tensor([0, 1, 2], dtype=index_dtype, device=flag_gems.device)
@@ -631,8 +504,6 @@ def _build_default_inputs(dtype=torch.float32, index_dtype=torch.int64):
 
 @pytest.mark.sparse_csc_tensor
 def test_sparse_csc_tensor_rejects_dtype_mismatch():
-    # dtype kwarg contradicting the values dtype is rejected by the aten
-    # reference; the candidate must raise too.
     ccol, row, values = _build_default_inputs(dtype=torch.float16)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_csc_tensor(
@@ -659,8 +530,6 @@ def test_sparse_csc_tensor_rejects_dtype_mismatch():
 
 @pytest.mark.sparse_csc_tensor
 def test_sparse_csc_tensor_rejects_missing_dtype():
-    # Without an explicit dtype the aten op forces float32 storage and rejects
-    # non-float32 values.
     ccol, row, values = _build_default_inputs(dtype=torch.float64)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_csc_tensor(
@@ -685,7 +554,6 @@ def test_sparse_csc_tensor_rejects_missing_dtype():
 
 @pytest.mark.sparse_csc_tensor
 def test_sparse_csc_tensor_rejects_wrong_layout():
-    # A non-CSC layout kwarg must be rejected.
     ccol, row, values = _build_default_inputs()
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_csc_tensor(
@@ -712,8 +580,6 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
 
 @pytest.mark.sparse_csc_tensor
 def test_sparse_csc_tensor_rejects_negative_size():
-    # A negative logical size makes the reference overflow while computing the
-    # number of dense elements; the candidate must reject it as well.
     ccol, row, values = _build_default_inputs()
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_csc_tensor(
@@ -744,7 +610,6 @@ def test_sparse_csc_tensor_rejects_negative_size():
     reason="cross-device construction requires a non-CPU device",
 )
 def test_sparse_csc_tensor_rejects_device_mismatch():
-    # Index tensors on a different device than the values are rejected.
     ccol, row, values = _build_default_inputs()
     values = values.to("cpu")
     with pytest.raises(RuntimeError):
@@ -776,8 +641,6 @@ def test_sparse_csc_tensor_rejects_device_mismatch():
     reason="cross-device construction requires a non-CPU device",
 )
 def test_sparse_csc_tensor_rejects_missing_device():
-    # Without an explicit device kwarg the CUDA constructor cannot infer the
-    # target device from the index tensors.
     ccol, row, values = _build_default_inputs()
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_csc_tensor(

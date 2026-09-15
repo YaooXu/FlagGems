@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 
@@ -20,43 +22,8 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::sparse_resize_and_clear_(Tensor(a!) self, int[] size, int sparse_dim,
-# int dense_dim) -> Tensor(a!) resizes a sparse COO tensor in place to ``size``
-# with ``sparse_dim`` sparse and ``dense_dim`` dense dimensions and then clears
-# all stored entries (nnz becomes 0), returning ``self``.
-#
-# Because the clear discards the stored indices/values, every redistribution is
-# legal: the sparse/dense split may change freely, dimensions may both grow and
-# shrink, and the source nnz does not constrain the target. The reference still
-# validates the requested (size, sparse_dim, dense_dim) triple, so the negative
-# dimension below pins those rejection paths.
-#
-# The overload is purely structural (no arithmetic), so
-#   * every sparse COO storage dtype the runtime supports (the spec's required
-#     int8/uint8/fp8/fp16/fp32/bf16/int32/int64 set plus int16, float64 and
-#     bool) is exercised;
-#   * the regular-operator spec's value-range dimension draws the stored values
-#     from tu.selected_ranges() (they are discarded by the clear, so the result
-#     must be identical for every range);
-#   * the shape-level dimension resizes a fixed source to every
-#     tu.selected_shapes() level (ranks 0-5) with a legal sparse/dense split;
-#   * nan / inf / -inf payloads are covered explicitly.
-#
-# No broadcast dimension applies (single input tensor) and no backward
-# dimension applies (the op has no autograd support).
-
-
-def _unique(items):
-    out = []
-    for item in items:
-        if item not in out:
-            out.append(item)
-    return out
-
-
-# Sparse COO storage dtypes. int8/uint8/fp8 are part of the spec's required
-# set and are included in the declared case list.
-_RESIZE_DTYPES = _unique(
+# Resize COO metadata in place and discard all stored entries.
+_RESIZE_DTYPES = (
     [torch.float16, torch.float32]
     + ([torch.bfloat16] if utils.bf16_is_supported else [])
     + ([torch.float64] if utils.fp64_is_supported else [])
@@ -70,15 +37,7 @@ _RESIZE_DTYPES = _unique(
     + utils.BOOL_TYPES
 )
 
-
-# Each case is
-# (src_shape, src_sparse_dim, src_dense_dim, dst_shape, dst_sparse_dim,
-#  dst_dense_dim, src_nnz).
-#
-# The layouts covered are: identical metadata, grow/shrink all-sparse, hybrid
-# (dense trailing dims) unchanged/grow, sparse<->dense redistribution, 1-D/4-D/
-# 5-D, an all-dense-view target (sparse_dim == 0), and the empty (nnz == 0)
-# source.
+# (src_shape, src_sparse_dim, src_dense_dim, dst_shape, dst_sparse_dim, dst_dense_dim, nnz).
 _RESIZE_CASES = [
     ((4, 5), 2, 0, (4, 5), 2, 0, 5),
     ((4, 5), 2, 0, (4, 5), 1, 1, 5),
@@ -95,7 +54,7 @@ _RESIZE_CASES = [
     ((4, 5), 2, 0, (4, 5), 2, 0, 0),
 ]
 
-# Arbitrary reshapes of an empty (nnz == 0) source: every target is legal.
+# (dst_shape, sparse_dim, dense_dim) for an empty source.
 _EMPTY_SOURCE_TARGETS = [
     ((7,), 1, 0),
     ((2, 3), 2, 0),
@@ -104,15 +63,8 @@ _EMPTY_SOURCE_TARGETS = [
     ((3, 3, 3, 3), 3, 1),
 ]
 
-# Shape levels and value ranges from the regular-operator spec (quick/default
-# selected by the pytest --quick flag, read at import time).
-_SELECTED_SHAPES = tu.selected_shapes()
-_SELECTED_RANGES = tu.selected_ranges()
-
 _NEGATIVE_DTYPES = [torch.float32, torch.int8]
 
-# Invalid triples have a mismatched dimension count, a negative dimension
-# count or a negative size. Dense targets and zero extents are valid.
 _INVALID_CALLS = [
     pytest.param([4, 5], 1, 0, id="split_too_small"),
     pytest.param([4, 5], 2, 1, id="split_too_large"),
@@ -122,17 +74,20 @@ _INVALID_CALLS = [
     pytest.param([4, -5], 2, 0, id="negative_size"),
 ]
 
+_SELECTED_RANGES = tu.selected_ranges()
 
-def _num_sparse_positions(shape, sparse_dim):
-    num_sparse = 1
-    for d in shape[:sparse_dim]:
-        num_sparse *= d
-    return num_sparse
+_VALUE_RANGE_PAIRS = [
+    (dtype, value_range) for dtype in _RESIZE_DTYPES for value_range in _SELECTED_RANGES
+]
+
+_VALUE_RANGE_IDS = [
+    f"{str(dtype).replace('torch.', '')}-{'_'.join(value_range)}"
+    for dtype, value_range in _VALUE_RANGE_PAIRS
+]
 
 
 def _default_values(dtype, values_shape, gen):
-    # Values are always generated on CPU (torch.randn is not implemented for
-    # fp8 on CUDA) and moved to the test device by _make_sparse_input.
+    # Generate on CPU before transferring; FP8 is cast from float32.
     if dtype.is_floating_point:
         base = torch.randn(values_shape, dtype=torch.float32, generator=gen)
         return base.to(dtype)
@@ -144,14 +99,10 @@ def _default_values(dtype, values_shape, gen):
 
 
 def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
-    # Deterministic CPU-side generation of a *coalesced* sparse COO tensor
-    # (unique, lexicographically sorted indices). nnz must not exceed the number
-    # of sparse positions; for sparse_dim == 0 only nnz == 0 is representable.
-    # ``values``, when given, overrides the default payload (used by the
-    # value-range / nan-inf tests) and is already on the test device.
+    # Use seeded unique coordinates; supplied values replace the default payload.
     gen = torch.Generator("cpu").manual_seed(seed)
     values_shape = (nnz,) + tuple(shape[sparse_dim:])
-    num_sparse = _num_sparse_positions(shape, sparse_dim)
+    num_sparse = math.prod(shape[:sparse_dim])
     if nnz == 0:
         indices = torch.empty((sparse_dim, 0), dtype=torch.long)
     else:
@@ -169,8 +120,7 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
 
 
 def _split_for_shape(shape):
-    # A legal (sparse_dim, dense_dim) split for a target ``shape`` covering
-    # all-sparse, hybrid and dense-heavy layouts across the shape levels.
+    # Use half the target dimensions as sparse dimensions, rounded up.
     ndim = len(shape)
     if ndim == 0:
         return 0, 0
@@ -184,20 +134,8 @@ def _resolve_gems_op():
     )
 
 
-_VALUE_RANGE_PAIRS = [
-    (dtype, value_range) for dtype in _RESIZE_DTYPES for value_range in _SELECTED_RANGES
-]
-_VALUE_RANGE_IDS = [
-    f"{str(dtype).replace('torch.', '')}-{'_'.join(value_range)}"
-    for dtype, value_range in _VALUE_RANGE_PAIRS
-]
-
-
 def _assert_empty_resized(t, shape, sparse_dim, dense_dim, dtype):
-    # The resize+clear contract: the target shape / sparse / dense split is
-    # applied and the storage is cleared, so nnz == 0 with indices (sparse_dim,
-    # 0) and values (0,) + dense_shape. An nnz == 0 sparse tensor is coalesced
-    # by definition.
+    # Check the requested split and empty storage, including its coalesced flag.
     assert t.layout == torch.sparse_coo
     assert tuple(t.shape) == tuple(shape)
     assert t.dtype == dtype
@@ -233,8 +171,6 @@ def test_sparse_resize_and_clear_(case, dtype):
 @pytest.mark.parametrize("dst_shape,dst_spd,dst_dnd", _EMPTY_SOURCE_TARGETS)
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_and_clear_empty_source(dst_shape, dst_spd, dst_dnd, dtype):
-    # An empty (nnz == 0) source may be reshaped to any size / sparse / dense
-    # split; the result stays empty with the requested metadata.
     inp = _make_sparse_input((4, 5), 2, 0, dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -251,9 +187,6 @@ def test_sparse_resize_and_clear_empty_source(dst_shape, dst_spd, dst_dnd, dtype
 @pytest.mark.sparse_resize_and_clear_
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_and_clear_uncoalesced(dtype):
-    # (0, 0) appears twice, so the input is uncoalesced; the clear must discard
-    # the duplicated entries just like any other storage (never coalesce them
-    # into a non-empty result).
     indices = torch.tensor(
         [[0, 0, 1, 2], [0, 0, 1, 3]], dtype=torch.long, device=flag_gems.device
     )
@@ -273,10 +206,6 @@ def test_sparse_resize_and_clear_uncoalesced(dtype):
 @pytest.mark.sparse_resize_and_clear_
 @pytest.mark.parametrize("dtype,value_range", _VALUE_RANGE_PAIRS, ids=_VALUE_RANGE_IDS)
 def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
-    # Value-range dimension: the stored entries are drawn from the shared
-    # per-dtype ranges (sign coverage, [0,max], [min,0], and constant ranges).
-    # The clear discards every payload, so all ranges must produce the same
-    # empty result as the reference.
     values = tu.make_input(dtype, (5,), value_range)
     inp = _make_sparse_input((4, 5), 2, 5, dtype, values=values)
     ref_inp = tu.to_reference(inp)
@@ -312,12 +241,9 @@ def test_sparse_resize_and_clear_nan_inf(dtype, scenario):
 
 
 @pytest.mark.sparse_resize_and_clear_
-@pytest.mark.parametrize("shape", _SELECTED_SHAPES)
+@pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_and_clear_shape_levels(shape, dtype):
-    # Shape-level dimension: a fixed non-empty source resized to every shape
-    # level (quick/default, ranks 0-5) with a legal sparse/dense split; the clear
-    # keeps the result empty regardless of the target.
     sparse_dim, dense_dim = _split_for_shape(shape)
     inp = _make_sparse_input((4, 5), 2, 3, dtype)
     ref_inp = tu.to_reference(inp)
@@ -336,9 +262,6 @@ def test_sparse_resize_and_clear_shape_levels(shape, dtype):
 @pytest.mark.parametrize("size,sparse_dim,dense_dim", _INVALID_CALLS)
 @pytest.mark.parametrize("dtype", _NEGATIVE_DTYPES)
 def test_sparse_resize_and_clear_invalid_params(size, sparse_dim, dense_dim, dtype):
-    # Negative cases: the sparse/dense split must sum to len(size) and every
-    # entry must be non-negative; the reference raises RuntimeError before
-    # storage is touched and the candidate must fail loudly too.
     inp = _make_sparse_input((4, 5), 2, 3, dtype)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_and_clear_(
@@ -353,9 +276,6 @@ def test_sparse_resize_and_clear_invalid_params(size, sparse_dim, dense_dim, dty
 
 @pytest.mark.sparse_resize_and_clear_
 def test_sparse_resize_and_clear_non_sparse_input():
-    # A dense (non-sparse) input cannot be routed to the sparse resize kernel;
-    # the reference raises NotImplementedError (a RuntimeError subclass) and
-    # the candidate must reject it too.
     inp = torch.randn((4, 5), dtype=torch.float32, device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_and_clear_(tu.to_reference(inp), [4, 5], 2, 0)
