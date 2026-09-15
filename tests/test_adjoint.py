@@ -35,7 +35,7 @@ from . import test_utils as tu
 #
 # Coverage follows the regular-operator spec adapted to a view/metadata op:
 #   * dtypes: the 9 required spec dtypes (int8/uint8/fp8/fp32/bf16/fp16/int32/
-#     int64) probed on the active device, plus the operator's float64 / int16 /
+#     int64), plus the operator's float64 / int16 /
 #     complex32 / complex64 / bool storage dtypes, each over the five value
 #     ranges (tu.make_input clamps a negative bound to the dtype minimum, so
 #     unsigned dtypes realise such a range as a constant fill);
@@ -52,40 +52,17 @@ from . import test_utils as tu
 #     reference and the candidate.
 
 
-def _candidate_dtypes():
-    # Required spec dtypes first, then the operator's remaining storage dtypes,
-    # de-duplicated while preserving order.
-    return list(
-        dict.fromkeys(
-            tu.REQUIRED_DTYPES
-            + utils.ALL_FLOAT_DTYPES
-            + utils.ALL_INT_DTYPES
-            + utils.COMPLEX_DTYPES
-            + utils.BOOL_TYPES
-        )
+# Required spec dtypes plus the remaining storage dtypes, de-duplicated in
+# order. Collection must not run the operator or infer support from failures.
+_ADJOINT_DTYPES = list(
+    dict.fromkeys(
+        tu.REQUIRED_DTYPES
+        + utils.ALL_FLOAT_DTYPES
+        + utils.ALL_INT_DTYPES
+        + utils.COMPLEX_DTYPES
+        + utils.BOOL_TYPES
     )
-
-
-def _supported_dtypes():
-    # Probe the real aten op on the active device (adjoint needs rank >= 2, so
-    # the shared tu.supported_dtypes 1-D probe cannot be used) and keep only the
-    # dtypes whose transpose/conj view is implemented on this backend.
-    supported = []
-    for dtype in _candidate_dtypes():
-        try:
-            probe = tu.make_input(dtype, (2, 2), ["0", "1"])
-            torch.ops.aten.adjoint(probe)
-        except Exception:
-            continue
-        supported.append(dtype)
-    if not supported:
-        # Keep the full candidate list: a failed probe must not silently drop
-        # the spec-required int8/uint8/fp8 dtypes.
-        supported = list(_candidate_dtypes())
-    return supported
-
-
-_ADJOINT_DTYPES = _supported_dtypes()
+)
 
 # Shape levels aligned with the spec's 7 shapes. adjoint only accepts 2-D and
 # higher tensors (0-D falls back to a deprecated lazy conj() and 1-D raises
