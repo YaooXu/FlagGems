@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -238,30 +236,23 @@ def test__neg_view_toggle(shape, dtype):
 
 
 @pytest.mark._neg_view
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test__neg_view_special_values(dtype):
-    # Materializing the view flips every sign: +inf <-> -inf, nan stays nan,
-    # +0.0 <-> -0.0. equal_nan=True tolerates the nan output; copysign pins the
-    # sign of the two zero outputs (the sign bit is indistinguishable in a
-    # plain value comparison).
-    values = torch.tensor(
-        [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
+)
+def test__neg_view_special_values(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten._neg_view(ref_inp)
     res_out = _resolve_gems_op()(values)
 
     _assert_view_semantics(res_out, ref_out, values)
-    utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    items = res_out.cpu().tolist()
-    assert math.isinf(items[0]) and items[0] < 0  # +inf -> -inf
-    assert math.isinf(items[1]) and items[1] > 0  # -inf -> +inf
-    assert math.isnan(items[2])  # nan -> nan
-    assert math.copysign(1.0, items[3]) == -1.0  # +0.0 -> -0.0
-    assert math.copysign(1.0, items[4]) == 1.0  # -0.0 -> +0.0
+    tu.assert_result_equal(res_out, ref_out)
+    # Exact numerical equality does not distinguish the signs of zero.
+    zeros = values == 0
+    tu.assert_result_equal(
+        torch.signbit(res_out[zeros]), torch.signbit(ref_out[ref_inp == 0])
+    )
 
 
 @pytest.mark._neg_view

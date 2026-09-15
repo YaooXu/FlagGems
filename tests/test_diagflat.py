@@ -64,14 +64,6 @@ _DIAGFLAT_DTYPES = [
     torch.bool,
 ]
 
-# Every floating dtype is exercised here, fp8 included. The narrow types do
-# carry the special values: float8_e5m2 stores +/-inf and nan bit-for-bit and
-# float8_e4m3fn preserves nan (its inf overflows to nan). The comparison below
-# is done in fp32 because torch.testing.assert_close on an fp8 pair raises
-# RuntimeError("mul_cpu_reduced_float" not implemented for 'Float8_e5m2') -- a
-# CPU mul gap in the comparison, which fails even for two identical fp8
-# tensors -- so it is the comparison, not the dtype, that has to be adapted.
-_NAN_INF_DTYPES = [d for d in _DIAGFLAT_DTYPES if d.is_floating_point]
 # double precision gives an exact analytic-gradient check; other float types
 # only get the candidate-vs-reference check when autograd is available.
 _GRAD_DTYPES = [d for d in _DIAGFLAT_DTYPES if d in (torch.float32, torch.float64)] or [
@@ -221,29 +213,11 @@ def test_diagflat_strided(shape, offset, dtype):
 
 
 @pytest.mark.diagflat
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_diagflat_nan_inf(dtype):
-    # diagflat is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the diagonal (assert_result_equal permits matching NaNs).
-    # 1e30 overflows to inf in fp16 and remains finite in bf16. float8_e4m3fn
-    # turns inf into nan. Candidate and reference use the same stored values, so
-    # the comparison must hold whatever the dtype did to them. fp8 is compared
-    # after casting to fp32 (see _NAN_INF_DTYPES).
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_DIAGFLAT_DTYPES))
+)
+def test_diagflat_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 1)

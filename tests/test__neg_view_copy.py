@@ -204,23 +204,22 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
 
 
 @pytest.mark._neg_view_copy
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test__neg_view_copy_special_values(dtype):
-    # Negation flips the sign bit, so signed zero, infinities and NaN must be
-    # preserved exactly (including the -0.0 sign).
-    values = torch.tensor(
-        [0.0, -0.0, float("inf"), float("-inf"), 1.5, -1.5, float("nan")],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(utils.ALL_FLOAT_DTYPES))
+)
+def test__neg_view_copy_special_values(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten._neg_view_copy(ref_inp)
     res_out = _resolve_gems_op()(values)
 
     tu.assert_result_equal(res_out, ref_out)
-    # Sign-bit flip: +0.0 negates to -0.0 and -0.0 negates to +0.0.
-    assert torch.signbit(res_out[0]).item() and not torch.signbit(res_out[1]).item()
+    # Exact numerical equality does not distinguish the signs of zero.
+    zeros = values == 0
+    tu.assert_result_equal(
+        torch.signbit(res_out[zeros]), torch.signbit(ref_out[ref_inp == 0])
+    )
 
 
 @pytest.mark._neg_view_copy

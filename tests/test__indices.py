@@ -68,8 +68,6 @@ _INDICES_DTYPES = list(
 )
 
 
-_INDICES_FLOAT_DTYPES = [dtype for dtype in _INDICES_DTYPES if dtype.is_floating_point]
-
 # (shape, sparse_dim, nnz) triples covering 1-D/2-D/3-D all-sparse, 2-D/3-D
 # hybrid, and mixed sparse+dense ranks up to 5-D.
 _INDICES_COO_CASES_CORE = [
@@ -327,16 +325,12 @@ def test__indices_full_storage(dtype):
 
 
 @pytest.mark._indices
-@pytest.mark.parametrize("dtype", tu.selected_cases(_INDICES_FLOAT_DTYPES))
-def test__indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: _indices must still return
-    # exactly the stored index tensor, unchanged, for every one of them.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_INDICES_DTYPES))
+)
+def test__indices_nan_inf_values_ignored(dtype, scenario):
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
 

@@ -225,26 +225,11 @@ def test_combinations_non_contiguous(dtype):
 
 
 @pytest.mark.combinations
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_CLOSE_DTYPES))
-def test_combinations_nan_inf(dtype):
-    # combinations is a pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
-    # (assert_result_equal permits matching NaNs). 1e30 overflows to inf in
-    # fp16 and remains finite in bf16.
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_DTYPES))
+)
+def test_combinations_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.combinations(ref_inp, 2, False)

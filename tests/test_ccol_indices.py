@@ -61,13 +61,6 @@ _CSC_DTYPES = list(
 )
 
 
-_CSC_FLOAT_DTYPES = [dtype for dtype in _CSC_DTYPES if dtype.is_floating_point]
-# fp8_e4m3fn cannot represent inf, so the nan/inf/-0.0 case only covers the
-# real floating families.
-_CSC_NAN_DTYPES = [
-    dtype for dtype in _CSC_DTYPES if dtype in set(utils.ALL_FLOAT_DTYPES)
-]
-
 # (shape, nnz) layouts covering 2-D all-sparse, 3-D batched, and 4-D
 # multi-batch-dims.
 _CSC_CASES_CORE = [
@@ -334,20 +327,16 @@ def test_ccol_indices_full_storage(dtype):
 
 
 @pytest.mark.ccol_indices
-@pytest.mark.parametrize("dtype", tu.selected_cases(_CSC_NAN_DTYPES))
-def test_ccol_indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: ccol_indices must still
-    # return exactly the stored ccol tensor, unchanged, for every one of them.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CSC_DTYPES))
+)
+def test_ccol_indices_nan_inf_values_ignored(dtype, scenario):
     shape = (3, 4)
     ccol = torch.tensor([0, 2, 4, 6, 7], dtype=torch.long, device=flag_gems.device)
     rows = torch.tensor(
         [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
     )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     inp = torch.sparse_csc_tensor(ccol, rows, values, shape)
     ref_inp = tu.to_reference(inp)
 

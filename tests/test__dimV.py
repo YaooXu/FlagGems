@@ -103,7 +103,6 @@ def _make_empty_coo(shape, dense_dim, dtype):
 
 
 _DIMV_DTYPES = list(dict.fromkeys(_DIMV_DTYPE_CANDIDATES))
-_DIMV_FLOAT_DTYPES = [dtype for dtype in _DIMV_DTYPES if dtype.is_floating_point]
 
 # (shape, dense_dim) pairs: dense_dim is the reported result and
 # sparse_dim == len(shape) - dense_dim. Covers all-sparse (dense_dim == 0) and
@@ -337,22 +336,11 @@ def test__dimV_uncoalesced(dtype):
 
 
 @pytest.mark._dimV
-@pytest.mark.parametrize("dtype", tu.selected_cases(_DIMV_FLOAT_DTYPES))
-def test__dimV_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
-    # reports the dense dim of the layout, independent of the payload.
-    values = torch.tensor(
-        [
-            [float("nan"), float("inf")],
-            [float("inf"), float("-inf")],
-            [0.0, -0.0],
-            [1.5, 2.5],
-            [float("nan"), 1.0],
-            [float("-inf"), 0.0],
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_DIMV_DTYPES))
+)
+def test__dimV_nan_inf_values_ignored(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(3)[:12].reshape(6, 2)
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
     inp = torch.sparse_coo_tensor(indices, values, (6, 2), device=flag_gems.device)
     ref_inp = tu.to_reference(inp)

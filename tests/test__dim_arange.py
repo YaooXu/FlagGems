@@ -149,14 +149,13 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
 
 
 @pytest.mark._dim_arange
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.FLOAT_DTYPES))
-def test__dim_arange_nan_inf(dtype):
-    # nan/inf are ordinary storage values for this op and must be ignored: the
-    # result is still the deterministic arange sequence over the selected dim.
-    inp = tu.make_input(dtype, (4, 8, 6), ["-1", "1"]).clone()
-    inp[0, :, 0] = float("inf")
-    inp[1, :, 1] = float("-inf")
-    inp[2, :, 2] = float("nan")
+@pytest.mark.parametrize(
+    "dtype, scenario",
+    tu.selected_cases(tu.special_value_cases(_DIM_ARANGE_INPUT_DTYPES)),
+)
+def test__dim_arange_nan_inf(dtype, scenario):
+    # Metadata must ignore each representable special-value scenario.
+    inp = tu.make_special_input(dtype, scenario).expand(4, 8, -1)
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dim_arange(ref_inp, 1)

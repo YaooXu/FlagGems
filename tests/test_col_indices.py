@@ -195,9 +195,6 @@ _COL_DTYPES = [
 ]
 
 
-_NAN_INF_DTYPES = [dtype for dtype in utils.ALL_FLOAT_DTYPES if dtype in _COL_DTYPES]
-
-
 # ---------------------------------------------------------------------------
 # Reference / candidate resolution and assertions
 # ---------------------------------------------------------------------------
@@ -388,19 +385,14 @@ def test_col_indices_bsr_ragged_blocks(dtype):
 
 
 @pytest.mark.col_indices
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_col_indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/+-0.0 are ordinary stored values: col_indices must still
-    # return exactly the stored col_indices tensor, unchanged, for every one of
-    # them.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_COL_DTYPES))
+)
+def test_col_indices_nan_inf_values_ignored(dtype, scenario):
     shape = (3, 4)
     crow = torch.tensor([0, 2, 4, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 1, 2, 3, 0], dtype=torch.long, device=flag_gems.device)
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario)
     inp = torch.sparse_csr_tensor(crow, cols, values, shape)
     ref_inp = tu.to_reference(inp)
 

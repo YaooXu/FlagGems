@@ -269,26 +269,11 @@ def test_dstack_empty_inputs(shape_set, dtype):
 
 
 @pytest.mark.dstack
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test_dstack_nan_inf(dtype):
-    # dstack is a pure data-movement op: +inf/-inf/nan/+-0.0 pass through
-    # unchanged onto the depth axis (assert_result_equal permits matching NaNs).
-    # 1e30 overflows to inf in fp16 and remains finite in bf16.
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(DSTACK_DTYPES))
+)
+def test_dstack_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     inp = [values, values]
     ref_inp = [tu.to_reference(t) for t in inp]
 

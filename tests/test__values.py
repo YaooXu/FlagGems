@@ -74,8 +74,6 @@ _VALUES_DTYPES = list(
 )
 
 
-_VALUES_FLOAT_DTYPES = [d for d in _VALUES_DTYPES if d.is_floating_point]
-
 # ---------------------------------------------------------------------------
 # Sparse COO layouts: (shape, sparse_dim, nnz)
 # ---------------------------------------------------------------------------
@@ -294,16 +292,11 @@ def test__values_uncoalesced(dtype):
 
 
 @pytest.mark._values
-@pytest.mark.parametrize("dtype", tu.selected_cases(_VALUES_FLOAT_DTYPES))
-def test__values_nan_inf(dtype):
-    # nan/inf/-inf/+-0.0 are ordinary stored values: _values must return them
-    # verbatim (equal_nan=True), never sanitized. fp8-e4m3fn has no infinity
-    # encoding, so inf/-inf collapse to nan there (still returned verbatim).
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_VALUES_DTYPES))
+)
+def test__values_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
     inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
     ref_inp = tu.to_reference(inp)

@@ -70,12 +70,6 @@ _RESIZE_DTYPES = _unique(
     + utils.BOOL_TYPES
 )
 
-# Floating dtypes that can represent nan/inf/-inf (fp8_e4m3fn has no inf).
-_NAN_INF_DTYPES = _unique(
-    [torch.float16, torch.float32]
-    + ([torch.bfloat16] if utils.bf16_is_supported else [])
-    + ([torch.float64] if utils.fp64_is_supported else [])
-)
 
 # Each case is
 # (src_shape, src_sparse_dim, src_dense_dim, dst_shape, dst_sparse_dim,
@@ -172,17 +166,6 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
         shape,
         device=flag_gems.device,
     )
-
-
-def _nan_inf_values(dtype, values_shape, device):
-    # A deterministic nan/inf/-inf/0/-0/finite pattern covering the non-finite
-    # payloads a resize+clear must discard (no arithmetic is performed).
-    pattern = [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5]
-    numel = 1
-    for d in values_shape:
-        numel *= d
-    flat = (pattern * (numel // len(pattern) + 1))[:numel]
-    return torch.tensor(flat, dtype=dtype, device=device).reshape(values_shape)
 
 
 def _split_for_shape(shape):
@@ -307,11 +290,11 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
 
 
 @pytest.mark.sparse_resize_and_clear_
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_sparse_resize_and_clear_nan_inf(dtype):
-    # nan / inf / -inf stored values are discarded by the clear; the resized
-    # tensor is empty and exactly matches the reference.
-    values = _nan_inf_values(dtype, (6,), flag_gems.device)
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_RESIZE_DTYPES))
+)
+def test_sparse_resize_and_clear_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     indices = torch.tensor(
         [[0, 1, 2, 3, 0, 1], [0, 1, 2, 3, 4, 4]],
         dtype=torch.long,

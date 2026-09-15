@@ -68,7 +68,6 @@ _FP8_DTYPE_SET = {torch.float8_e4m3fn, torch.float8_e5m2}
 # fp64 support is device dependent, so only the shared float set is used there.
 _FLOAT_DTYPES = [d for d in _SUPPORTED_DTYPES if d in utils.ALL_FLOAT_DTYPES]
 _BACKWARD_DTYPES = [d for d in _FLOAT_DTYPES if d in utils.FLOAT_DTYPES]
-_NAN_INF_DTYPES = [d for d in _FLOAT_DTYPES if d not in _FP8_DTYPE_SET]
 
 # The value-range grid applies to every supported non-bool dtype; bool ignores
 # the range (it is still covered, range-independently, by the shape grid).
@@ -204,25 +203,11 @@ def test_cartesian_prod_non_contiguous(dtype):
 
 
 @pytest.mark.cartesian_prod
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NAN_INF_DTYPES))
-def test_cartesian_prod_nan_inf(dtype):
-    # Pure gather: +inf/-inf/nan/+-0.0 pass through unchanged
-    # (assert_result_close uses equal_nan=True on the float path).
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_SUPPORTED_DTYPES))
+)
+def test_cartesian_prod_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
     ref_inp = [
         tu.to_reference(values),

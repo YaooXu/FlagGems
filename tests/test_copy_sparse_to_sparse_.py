@@ -156,25 +156,8 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, value_range=None):
     )
 
 
-def _make_nan_inf_values(values_shape, dtype):
-    # Repeating nan / +inf / -inf / finite pattern. A verbatim copy keeps every
-    # stored entry identical, so the CPU reference and the device candidate
-    # agree exactly (nan handled by equal_nan=True).
-    base = torch.tensor(
-        [
-            float("nan"),
-            float("inf"),
-            float("-inf"),
-            0.5,
-            -0.5,
-            2.0,
-            float("nan"),
-            float("inf"),
-            float("-inf"),
-            1.5,
-        ],
-        dtype=dtype,
-    )
+def _make_special_values(values_shape, dtype, scenario):
+    base = tu.make_special_input(dtype, scenario)
     numel = 1
     for dim in values_shape:
         numel *= dim
@@ -184,9 +167,6 @@ def _make_nan_inf_values(values_shape, dtype):
 
 
 _SUPPORTED_DTYPES = tuple(_REQUIRED_DTYPES + _EXTRA_DTYPES)
-_FLOAT_DTYPES = tuple(d for d in _SUPPORTED_DTYPES if d.is_floating_point) or (
-    torch.float32,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +247,16 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
 
 @pytest.mark.copy_sparse_to_sparse_
 @pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_DTYPES))
-def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_SUPPORTED_DTYPES))
+)
+def test_copy_sparse_to_sparse_nan_inf(layout, dtype, scenario):
     shape, sparse_dim, nnz = layout
     base = _make_sparse_input(shape, sparse_dim, nnz, dtype)
     values_shape = (nnz,) + tuple(shape[sparse_dim:])
     src = torch.sparse_coo_tensor(
         base._indices().clone(),
-        _make_nan_inf_values(values_shape, dtype),
+        _make_special_values(values_shape, dtype, scenario),
         tuple(shape),
         device=flag_gems.device,
     )
@@ -287,8 +269,6 @@ def test_copy_sparse_to_sparse_nan_inf(layout, dtype):
 
     assert res_out is dst
     assert dst._nnz() == src._nnz()
-    # Verbatim copy keeps nan / +inf / -inf entries identical; the comparison
-    # uses equal_nan=True.
     _assert_sparse_equal(res_out, ref_out)
     _assert_sparse_equal(src, ref_src)
 

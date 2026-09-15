@@ -66,7 +66,6 @@ _NNZ_DTYPES = list(
 )
 
 
-_NNZ_FLOAT_DTYPES = [dtype for dtype in _NNZ_DTYPES if dtype.is_floating_point]
 # float8 has no sparse coalesce kernel, so the coalesce-count assertion below
 # is only checked for the non-fp8 storage dtypes.
 _NNZ_COALESCE_DTYPES = [
@@ -320,14 +319,11 @@ def test__nnz_full_storage(dtype):
 
 
 @pytest.mark._nnz
-@pytest.mark.parametrize("dtype", tu.selected_cases(_NNZ_FLOAT_DTYPES))
-def test__nnz_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: all six entries count.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_NNZ_DTYPES))
+)
+def test__nnz_nan_inf_values_ignored(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
     inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
     ref_inp = tu.to_reference(inp)

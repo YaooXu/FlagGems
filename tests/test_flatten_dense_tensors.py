@@ -191,26 +191,11 @@ def test_flatten_dense_tensors_non_contiguous(dtype):
 
 
 @pytest.mark.flatten_dense_tensors
-@pytest.mark.parametrize("dtype", tu.selected_cases(_FLOAT_DTYPES + _ACTIVE_FP8_DTYPES))
-def test_flatten_dense_tensors_nan_inf(dtype):
-    # A pure copy: +inf/-inf/nan/+-0.0 pass through unchanged (equal_nan=True is
-    # active on both comparison paths; 1e30 overflows identically on both sides
-    # for the low-precision dtypes).
-    values = torch.tensor(
-        [
-            float("inf"),
-            float("-inf"),
-            float("nan"),
-            0.0,
-            -0.0,
-            1.5,
-            -2.5,
-            1e30,
-            -1e30,
-        ],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype, scenario", tu.selected_cases(tu.special_value_cases(_SUPPORTED_DTYPES))
+)
+def test_flatten_dense_tensors_nan_inf(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario)
     other = torch.tensor([1.0, -1.0], dtype=dtype, device=flag_gems.device)
     ref_inp = [
         tu.to_reference(values),

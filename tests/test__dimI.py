@@ -66,7 +66,6 @@ _DIMI_DTYPE_CANDIDATES = (
 
 
 _DIMI_DTYPES = list(dict.fromkeys(_DIMI_DTYPE_CANDIDATES))
-_DIMI_FLOAT_DTYPES = [dtype for dtype in _DIMI_DTYPES if dtype.is_floating_point]
 
 # (shape, sparse_dim) pairs covering 1-D/2-D/3-D all-sparse, hybrid layouts and
 # mixed sparse+dense ranks up to 6-D.
@@ -314,15 +313,11 @@ def test__dimI_uncoalesced(dtype):
 
 
 @pytest.mark._dimI
-@pytest.mark.parametrize("dtype", tu.selected_cases(_DIMI_FLOAT_DTYPES))
-def test__dimI_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: the metadata query still
-    # reports the sparse dim of the layout, independent of the payload.
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_DIMI_DTYPES))
+)
+def test__dimI_nan_inf_values_ignored(dtype, scenario):
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     indices = torch.tensor([[0, 1, 2, 3, 4, 5]], dtype=torch.long)
     inp = torch.sparse_coo_tensor(indices, values, (6,), device=flag_gems.device)
     ref_inp = tu.to_reference(inp)

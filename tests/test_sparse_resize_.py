@@ -181,17 +181,6 @@ def _make_sparse_input(shape, sparse_dim, nnz, dtype, seed=0, values=None):
     )
 
 
-def _nan_inf_values(dtype, values_shape, device):
-    # A deterministic nan/inf/-inf/0/-0/finite pattern covering the non-finite
-    # payloads a resize must carry verbatim (no arithmetic is performed).
-    pattern = [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5]
-    numel = 1
-    for d in values_shape:
-        numel *= d
-    flat = (pattern * (numel // len(pattern) + 1))[:numel]
-    return torch.tensor(flat, dtype=dtype, device=device).reshape(values_shape)
-
-
 def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op(
         "sparse_resize_", getattr(flag_gems, "sparse_resize_", None)
@@ -273,12 +262,12 @@ def test_sparse_resize_shape_levels(shape, dtype):
 
 
 @pytest.mark.sparse_resize_
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test_sparse_resize_nan_inf(dtype):
-    # nan/inf/-inf/-0.0 are ordinary payloads for this structural op: growing
-    # the sparse dims must move them verbatim (no arithmetic is performed).
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_RESIZE_DTYPES))
+)
+def test_sparse_resize_nan_inf(dtype, scenario):
     src_shape, sparse_dim, nnz = (4, 5, 6), 2, 4
-    values = _nan_inf_values(dtype, (nnz, 6), flag_gems.device)
+    values = tu.make_special_input(dtype, scenario).repeat(5)[:24].reshape(nnz, 6)
     inp = _make_sparse_input(src_shape, sparse_dim, nnz, dtype, values=values)
     ref_inp = tu.to_reference(inp)
 

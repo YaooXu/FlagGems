@@ -310,20 +310,16 @@ def test_crow_indices_full_storage(dtype):
 
 
 @pytest.mark.crow_indices
-@pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
-def test_crow_indices_nan_inf_values_ignored(dtype):
-    # nan/inf/-inf/±0.0 are ordinary stored values: crow_indices must still
-    # return exactly the stored crow tensor, unchanged, for every one of them.
+@pytest.mark.parametrize(
+    "dtype,scenario", tu.selected_cases(tu.special_value_cases(_CSR_DTYPES))
+)
+def test_crow_indices_nan_inf_values_ignored(dtype, scenario):
     shape = (3, 4)
     crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor(
         [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
     )
-    values = torch.tensor(
-        [float("nan"), float("inf"), float("-inf"), 0.0, -0.0, 1.5, -2.5],
-        dtype=dtype,
-        device=flag_gems.device,
-    )
+    values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     inp = torch.sparse_csr_tensor(crow, cols, values, shape)
     ref_inp = tu.to_reference(inp)
 
