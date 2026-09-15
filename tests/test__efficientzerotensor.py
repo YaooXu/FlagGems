@@ -22,10 +22,7 @@ from . import accuracy_utils as utils
 from . import conftest as cfg
 from . import test_utils as tu
 
-# ``_efficientzerotensor`` starts with an underscore, and ``pytest.mark``
-# refuses to create a marker through attribute access for such names. Register
-# the markers on the MarkGenerator directly so both
-# ``@pytest.mark._efficientzerotensor`` and ``-m _efficientzerotensor`` work.
+# Register underscore-prefixed pytest markers explicitly.
 for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
     setattr(
         pytest.mark,
@@ -33,30 +30,24 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
         MarkDecorator(Mark(_name, (), {}, _ispytest=True), _ispytest=True),
     )
 
-# ``aten::_efficientzerotensor`` is a *factory*: given a size (plus optional
-# dtype/device) it returns a fresh all-zero tensor. The regular-operator spec
-# dimensions adapt as follows:
-# - Value ranges -- there is no input tensor to vary, so the range framework is
-#   applied to the only data the operator touches: the pre-existing contents of
-#   the ``out`` buffer of the ``.out`` overload, which must be overwritten with
-#   zeros. ``tu.make_input`` fills that buffer with each of the five spec
-#   ranges, and one further test fills it with a fixed non-zero sentinel so a
-#   missing write is always detected.
-# - Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) plus a
-#   zero-sized-shape boundary set.
-# - Dtypes -- bool / int / float, including float8 / int8 / uint8; every value
-#   comparison is exact because the output is bit-exact zero.
-# - Broadcast -- N/A, the only "input" is a size list; nothing to broadcast.
-# - Backward -- N/A, a factory has no differentiable input and its output is not
-#   a function of another tensor.
-# - nan/inf -- trivially satisfied, the output is deterministic zeros that can
-#   never contain nan/inf and there is no input through which non-finite values
-#   could leak.
-# - Negative cases -- a negative dimension, a non-strided layout and a
-#   non-integer size element must all be rejected.
+# Create fresh zeros, or overwrite and return the supplied out buffer.
+_EFFICIENTZEROTENSOR_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + [torch.bool]
+    + tu.selected_cases([torch.int16])
+    + ([torch.float64] if utils.fp64_is_supported else [])
+)
+
+_OUT_RANGE_PARAMS = [
+    (dtype, value_range)
+    for dtype in _EFFICIENTZEROTENSOR_DTYPES
+    for value_range in tu.selected_ranges()
+]
+
+_ZERO_SIZE_SHAPES = [(0,), (0, 3), (2, 0, 4), (0, 0)]
 
 
-def _resolve(name):
+def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op(
         "_efficientzerotensor", getattr(flag_gems, "_efficientzerotensor", None)
     )
@@ -64,40 +55,6 @@ def _resolve(name):
 
 def _reference_device():
     return "cpu" if cfg.TO_CPU else flag_gems.device
-
-
-def _unique(dtypes):
-    seen = set()
-    ordered = []
-    for dtype in dtypes:
-        if dtype not in seen:
-            seen.add(dtype)
-            ordered.append(dtype)
-    return ordered
-
-
-_EFFICIENTZEROTENSOR_DTYPES = _unique(
-    tu.REQUIRED_DTYPES
-    + utils.BOOL_TYPES
-    + utils.ALL_INT_DTYPES
-    + utils.ALL_FLOAT_DTYPES
-)
-
-
-# One (dtype, value_range) pair per Workload: this crosses the five spec ranges
-# with every supported dtype without hiding cases inside a loop. The negative
-# ranges are realised for every dtype because ``tu.make_input`` clamps a bound
-# the dtype cannot represent (e.g. ``[-1, 0]`` on uint8) into the dtype's range
-# and fills that constant.
-_OUT_RANGE_PARAMS = [
-    (dtype, value_range)
-    for dtype in _EFFICIENTZEROTENSOR_DTYPES
-    for value_range in tu.selected_ranges()
-]
-
-# Zero-element boundary shapes (rank 1 to 3); the factory must still report the
-# requested shape and return exactly zero elements.
-_ZERO_SIZE_SHAPES = [(0,), (0, 3), (2, 0, 4), (0, 0)]
 
 
 @pytest.mark._efficientzerotensor
@@ -108,7 +65,7 @@ def test__efficientzerotensor_zero_fill(shape, dtype):
         shape, dtype=dtype, device=_reference_device()
     )
 
-    gems_op = _resolve("_efficientzerotensor")
+    gems_op = _resolve_gems_op()
     res_out = gems_op(shape, dtype=dtype, device=flag_gems.device)
 
     assert res_out.shape == ref_out.shape == torch.Size(shape)
@@ -130,7 +87,7 @@ def test__efficientzerotensor_zero_size(shape, dtype):
         shape, dtype=dtype, device=_reference_device()
     )
 
-    gems_op = _resolve("_efficientzerotensor")
+    gems_op = _resolve_gems_op()
     res_out = gems_op(shape, dtype=dtype, device=flag_gems.device)
 
     assert res_out.shape == ref_out.shape == torch.Size(shape)
@@ -139,9 +96,6 @@ def test__efficientzerotensor_zero_size(shape, dtype):
     utils.gems_assert_equal(res_out, ref_out)
 
 
-# aten::_efficientzerotensor.out writes zeros into the supplied ``out`` buffer
-# and returns that same object (alias semantics). The buffer is pre-filled with
-# range-generated garbage via the shared value-range helper.
 @pytest.mark._efficientzerotensor_out
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype,value_range", _OUT_RANGE_PARAMS)
@@ -153,7 +107,7 @@ def test__efficientzerotensor_out_range(shape, dtype, value_range):
 
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
 
-    gems_op = _resolve("_efficientzerotensor")
+    gems_op = _resolve_gems_op()
     res_out = gems_op(shape, out=act_buf)
     assert res_out is act_buf
 
@@ -163,9 +117,6 @@ def test__efficientzerotensor_out_range(shape, dtype, value_range):
     utils.gems_assert_equal(act_buf, ref_buf)
 
 
-# Same overload, but every buffer starts from a fixed non-zero sentinel: this
-# guarantees a candidate that silently skips the write is caught for every
-# dtype, independently of the range framework.
 @pytest.mark._efficientzerotensor_out
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _EFFICIENTZEROTENSOR_DTYPES)
@@ -176,7 +127,7 @@ def test__efficientzerotensor_out_overwrites(shape, dtype):
 
     ref_out = torch.ops.aten._efficientzerotensor.out(shape, out=ref_buf)
 
-    gems_op = _resolve("_efficientzerotensor")
+    gems_op = _resolve_gems_op()
     res_out = gems_op(shape, out=act_buf)
     assert res_out is act_buf
 
@@ -187,35 +138,26 @@ def test__efficientzerotensor_out_overwrites(shape, dtype):
 
 @pytest.mark._efficientzerotensor
 def test__efficientzerotensor_rejects_negative_size():
-    # A negative dimension is invalid; the aten reference raises RuntimeError
-    # and the candidate must reject it too rather than silently truncating.
     with pytest.raises(RuntimeError):
         torch.ops.aten._efficientzerotensor(
             (-1,), dtype=torch.float32, device=flag_gems.device
         )
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve("_efficientzerotensor")(
-            (-1,), dtype=torch.float32, device=flag_gems.device
-        )
+        _resolve_gems_op()((-1,), dtype=torch.float32, device=flag_gems.device)
 
 
 @pytest.mark._efficientzerotensor
 def test__efficientzerotensor_rejects_non_integer_size():
-    # Size elements must be integers; 2.5 cannot match any aten schema.
     with pytest.raises(RuntimeError):
         torch.ops.aten._efficientzerotensor(
             (2.5,), dtype=torch.float32, device=flag_gems.device
         )
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve("_efficientzerotensor")(
-            (2.5,), dtype=torch.float32, device=flag_gems.device
-        )
+        _resolve_gems_op()((2.5,), dtype=torch.float32, device=flag_gems.device)
 
 
 @pytest.mark._efficientzerotensor
 def test__efficientzerotensor_rejects_non_strided_layout():
-    # Only the strided layout is supported; aten has no sparse kernel and the
-    # candidate must reject the request as well.
     with pytest.raises((NotImplementedError, RuntimeError)):
         torch.ops.aten._efficientzerotensor(
             (2, 3),
@@ -224,7 +166,7 @@ def test__efficientzerotensor_rejects_non_strided_layout():
             device=flag_gems.device,
         )
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve("_efficientzerotensor")(
+        _resolve_gems_op()(
             (2, 3),
             dtype=torch.float32,
             layout=torch.sparse_coo,

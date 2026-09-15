@@ -21,39 +21,14 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_fw_primal`` starts with an underscore and ``pytest.mark`` refuses to
-# generate a marker via attribute access for such names, so register it on the
-# MarkGenerator directly (``@pytest.mark._fw_primal`` and ``-m _fw_primal``).
+# Register underscore-prefixed pytest markers explicitly.
 setattr(
     pytest.mark,
     "_fw_primal",
     MarkDecorator(Mark("_fw_primal", (), {}, _ispytest=True), _ispytest=True),
 )
 
-# aten::_fw_primal(Tensor(a) self, int level) -> Tensor(a) is the forward-mode
-# AD view primitive: it returns an aliasing view of ``self`` that shares the
-# input storage (same shape, strides, storage offset, data_ptr and dtype)
-# without any arithmetic. Coverage adapts the regular-operator spec to a pure
-# metadata view:
-#   * shapes:       tu.selected_shapes() (ranks 0-5 at the full level);
-#   * value ranges: tu.selected_ranges() (the five spec ranges), so every
-#                   supported dtype round-trips negative, positive, extreme and
-#                   degenerate value windows bit-for-bit;
-#   * dtypes:       the required dtypes plus float64/complex/bool; this pure
-#                   view accepts every storage dtype, FP8 included;
-#   * levels:       the documented level 0 plus higher levels, which aten also
-#                   accepts for plain tensors with no registered tangent;
-#   * edge cases:   non-contiguous strided inputs, empty tensors, nan/inf/+-0.0,
-#                   aliasing mutation through the returned view, and an
-#                   autograd/backward gradient check;
-#   * negative:     non-tensor input, non-int level and a missing level must be
-#                   rejected.
-# There is no broadcast dimension: the operator is unary and performs no
-# arithmetic, so there is nothing to broadcast against.
-
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
-
+# Return the primal view, preserving storage and layout.
 _FW_PRIMAL_DTYPES = (
     utils.ALL_FLOAT_DTYPES
     + [torch.int8, torch.uint8, torch.float8_e4m3fn, torch.float8_e5m2]
@@ -62,11 +37,8 @@ _FW_PRIMAL_DTYPES = (
     + utils.COMPLEX_DTYPES
 )
 
-# ``level`` is the forward-AD level: 0 is the documented level, while 1/3
-# validate that a plain tensor without a registered tangent still round-trips.
 _FW_PRIMAL_LEVELS = [0, 1, 3]
 _FW_PRIMAL_LEVEL_SHAPES = [(), (256,), (7, 13, 29)]
-
 _FW_PRIMAL_NONCONTIG_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _FW_PRIMAL_MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _FW_PRIMAL_EMPTY_SHAPES = [(0,), (2, 0, 3)]
@@ -74,6 +46,7 @@ _FW_PRIMAL_BACKWARD_SHAPES = [(), (256,), (7, 13, 29)]
 _FW_PRIMAL_BACKWARD_DTYPES = [
     d for d in _FW_PRIMAL_DTYPES if d.is_floating_point or d.is_complex
 ]
+
 _FW_PRIMAL_SPECIAL_VALUES = [
     0.0,
     -0.0,
@@ -92,8 +65,6 @@ def _resolve_gems_op():
 
 
 def _assert_view_semantics(res_out, ref_out, inp):
-    # _fw_primal returns an aliasing view (Tensor(a)): the observable layout
-    # must match aten exactly and the result must share the input storage.
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()
     assert res_out._is_view() == ref_out._is_view()
@@ -105,9 +76,6 @@ def _assert_view_semantics(res_out, ref_out, inp):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_DTYPES)
 def test__fw_primal(shape, value_range, dtype):
-    # The full shape x value-range x dtype grid at the documented level 0. A
-    # view never inspects or transforms the stored values, so every range must
-    # round-trip exactly.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -123,8 +91,6 @@ def test__fw_primal(shape, value_range, dtype):
 @pytest.mark.parametrize("level", _FW_PRIMAL_LEVELS)
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_DTYPES)
 def test__fw_primal_level(shape, level, dtype):
-    # The ``level`` argument is orthogonal to the shape/value grid, so sweep it
-    # over representative ranks (0-dim, 1-dim, 3-dim) for every dtype.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -140,9 +106,6 @@ def test__fw_primal_level(shape, level, dtype):
 @pytest.mark.parametrize("level", [0, 1])
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_DTYPES)
 def test__fw_primal_non_contiguous(shape, level, dtype):
-    # The aliasing view must preserve the exact strides and storage offset of a
-    # non-contiguous input. Slice on both the test device and the reference
-    # device so the two inputs share the same memory layout.
     base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
     inp = base[..., ::2]
@@ -162,10 +125,6 @@ def test__fw_primal_non_contiguous(shape, level, dtype):
     "dtype", utils.FLOAT_DTYPES + utils.ALL_INT_DTYPES + utils.BOOL_TYPES
 )
 def test__fw_primal_mutation(shape, dtype):
-    # The result is a true alias of the input: writing through the returned view
-    # must be observable on the candidate-side input tensor, and the reference
-    # must behave identically. The reference runs on an independent clone so the
-    # two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -190,8 +149,6 @@ def test__fw_primal_mutation(shape, dtype):
 @pytest.mark._fw_primal
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test__fw_primal_special_values(dtype):
-    # A pure view preserves every bit: signed zero, infinities and NaN
-    # (including the NaN payload) must round-trip exactly.
     values = torch.tensor(
         _FW_PRIMAL_SPECIAL_VALUES, dtype=dtype, device=flag_gems.device
     )
@@ -210,8 +167,6 @@ def test__fw_primal_special_values(dtype):
 @pytest.mark.parametrize("shape", _FW_PRIMAL_EMPTY_SHAPES)
 @pytest.mark.parametrize("dtype", _FW_PRIMAL_DTYPES)
 def test__fw_primal_empty(shape, dtype):
-    # Empty tensors (0 elements) still carry a valid layout; the view must
-    # preserve shape, strides, storage offset and data_ptr exactly.
     inp = torch.empty(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
 
@@ -242,9 +197,6 @@ def test__fw_primal_backward(shape, dtype):
 
 @pytest.mark._fw_primal
 def test__fw_primal_rejects_non_tensor():
-    # The aten schema requires a Tensor; a Python float hits the invalid
-    # argument path and raises. The candidate must fail too rather than silently
-    # accept scalars.
     with pytest.raises(RuntimeError):
         torch.ops.aten._fw_primal(3.14, 0)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -253,8 +205,6 @@ def test__fw_primal_rejects_non_tensor():
 
 @pytest.mark._fw_primal
 def test__fw_primal_rejects_non_int_level():
-    # ``level`` is an int in the schema; a float is a cast error at the
-    # dispatcher boundary and must be rejected by the candidate as well.
     inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -266,8 +216,6 @@ def test__fw_primal_rejects_non_int_level():
 
 @pytest.mark._fw_primal
 def test__fw_primal_rejects_missing_level():
-    # ``level`` has no default in the schema; omitting it must fail on both the
-    # reference and the candidate instead of silently using level 0.
     inp = tu.make_input(torch.float32, (8,), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 

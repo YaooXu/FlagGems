@@ -20,49 +20,20 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::data(Tensor self) -> Tensor is the deprecated ``Tensor.data`` accessor:
-# it returns a new tensor that shares the input's storage (same data_ptr, shape,
-# stride and storage_offset) and is detached from autograd (requires_grad=False,
-# is_leaf=True, grad_fn=None), i.e. it behaves like detach() + view. No
-# arithmetic happens at the call, so every storage dtype is supported and the
-# observed values round-trip bit-for-bit.
-#
-# Coverage follows the regular-operator spec adapted to a view/metadata op:
-#   * dtype grid: the nine required spec dtypes (int8, uint8, fp8-e4m3fn,
-#     fp8-e5m2, fp32, bf16, fp16, int32, int64), plus fp64/int16/complex32/
-#     complex64/bool;
-#   * shape levels: tu.selected_shapes() (ranks 0-5, selected by --quick);
-#   * value ranges: tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
-#     [min,0]) crossed with every shape level, so each supported dtype sees
-#     negative, positive, dtype-extreme and degenerate ranges;
-#   * layouts: non-contiguous sliced and transposed inputs must keep their exact
-#     shape/stride/storage_offset while aliasing the input storage;
-#   * edge cases: writing through the returned alias (mutation must be visible
-#     in the original), nan/inf/±0.0 round-trip;
-#   * autograd: the result is always detached — even a requires_grad input
-#     yields a leaf that shares storage (broadcast/backward do not apply to a
-#     unary detach-and-alias op, so they are not covered);
-#   * negative: a non-tensor input raises on both the aten reference and the
-#     candidate.
-_DATA_DTYPES = list(
-    dict.fromkeys(
-        tu.REQUIRED_DTYPES
-        + utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-        + [torch.complex32, torch.complex64]
-    )
+# Return a storage alias detached from autograd.
+_DATA_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool, torch.complex32, torch.complex64]
 )
 
-
-# Representative non-contiguous layouts: strided slice (::2), offset slice
-# (1:) and transpose. Each one aliases the input storage but has a layout the
-# element-wise path can no longer assume contiguous.
 _LAYOUT_FNS = [
     ("stride2", lambda t: t[..., ::2]),
     ("offset1", lambda t: t[..., 1:]),
     ("transpose", lambda t: t.transpose(-1, -2)),
 ]
+
 _LAYOUT_SHAPES = [(8, 16, 32), (4, 8, 16, 32)]
 _MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _AUTOGRAD_SHAPES = [(16, 64), (7, 13, 29)]
@@ -73,7 +44,6 @@ def _resolve_gems_op():
 
 
 def _assert_alias_semantics(res_out, ref_out, inp):
-    # Preserve storage, layout and detached autograd state.
     assert res_out.device == inp.device
     assert res_out.data_ptr() == inp.data_ptr()
     assert res_out.stride() == inp.stride()
@@ -88,8 +58,6 @@ def _assert_alias_semantics(res_out, ref_out, inp):
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _DATA_DTYPES)
 def test_data(shape, dtype):
-    # Shape levels x every supported dtype, with values drawn from the default
-    # [-1, 1] range (negative and positive for each dtype).
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -104,9 +72,6 @@ def test_data(shape, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DATA_DTYPES)
 def test_data_value_ranges(shape, value_range, dtype):
-    # The op never inspects or transforms the stored values, so the full spec
-    # range sweep (negative, positive, dtype-extreme and degenerate ranges) must
-    # round-trip exactly through the aliased shallow copy for every shape level.
     inp = tu.make_input(dtype, shape, value_range)
     ref_inp = tu.to_reference(inp)
 
@@ -121,10 +86,6 @@ def test_data_value_ranges(shape, value_range, dtype):
 @pytest.mark.parametrize("shape", _LAYOUT_SHAPES)
 @pytest.mark.parametrize("dtype", _DATA_DTYPES)
 def test_data_non_contiguous(layout, shape, dtype):
-    # The zero-copy alias must preserve the exact layout of a non-contiguous
-    # input: shape, stride, storage offset and the shared data pointer. Slice -
-    # on both the test device and the reference device so the two inputs share
-    # the same memory layout.
     _, extract = layout
     base = tu.make_input(dtype, shape, ["-1", "1"])
     ref_base = tu.to_reference(base)
@@ -141,8 +102,6 @@ def test_data_non_contiguous(layout, shape, dtype):
 @pytest.mark.data
 @pytest.mark.parametrize("dtype", tu.selected_cases(utils.ALL_FLOAT_DTYPES))
 def test_data_special_values(dtype):
-    # data is a pure alias: +inf/-inf/nan/±0.0 round-trip unchanged; the
-    # equal_nan comparison tolerates the nan value.
     values = torch.tensor(
         [float("inf"), float("-inf"), float("nan"), 0.0, -0.0, 1.5, -2.5],
         dtype=dtype,
@@ -162,9 +121,6 @@ def test_data_special_values(dtype):
 @pytest.mark.parametrize("shape", _MUTATION_SHAPES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_data_mutation(shape, dtype):
-    # The result shares storage with the input: mutating through the result
-    # must be visible in the original tensor. The reference runs on an
-    # independent clone so the two aliases are validated separately.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
@@ -183,10 +139,6 @@ def test_data_mutation(shape, dtype):
 @pytest.mark.parametrize("shape", _AUTOGRAD_SHAPES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test_data_autograd_detach(shape, dtype):
-    # aten::data detaches from autograd: even when the input requires grad, the
-    # result is a leaf that requires no grad while still aliasing the input
-    # storage. There is no gradient to compute (the op is not differentiable),
-    # so autograd.grad does not apply.
     inp = tu.make_input(dtype, shape, ["-1", "1"]).requires_grad_()
     ref_inp = tu.to_reference(inp)
     if not ref_inp.requires_grad:
@@ -200,9 +152,6 @@ def test_data_autograd_detach(shape, dtype):
 
 @pytest.mark.data
 def test_data_rejects_non_tensor():
-    # The aten op requires a Tensor (a Python float hits a different overload
-    # and raises); the candidate must fail too rather than silently accept
-    # scalars or strings.
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.data(3.14)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
@@ -216,8 +165,6 @@ def test_data_rejects_non_tensor():
 
 @pytest.mark.data
 def test_data_rejects_extra_arguments():
-    # aten::data takes exactly one Tensor argument; a second positional argument
-    # must be rejected by the reference and by the candidate.
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     ref_inp = tu.to_reference(inp)
     with pytest.raises((TypeError, RuntimeError)):
