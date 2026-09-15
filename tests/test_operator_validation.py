@@ -668,6 +668,64 @@ def test_quantized_factory_special_cases_check_output_device(test_name, value):
             getattr(cases, test_name)((2, 3), torch.qint8, value)
 
 
+@pytest.mark.parametrize("dtype", [torch.float8_e4m3fn, torch.float8_e5m2, torch.bool])
+@pytest.mark.parametrize("toggle", [False, True])
+def test_negative_view_checks_stored_values_without_materialization(dtype, toggle):
+    from . import test__neg_view as cases
+
+    def corrupted(inp):
+        stored = torch.ops.aten._neg_view(inp) if inp.is_neg() else inp
+        stored.view(torch.uint8).bitwise_xor_(1)
+        return torch.ops.aten._neg_view(inp)
+
+    with testing.override_gems_op("_neg_view", corrupted):
+        with pytest.raises(AssertionError):
+            if toggle:
+                cases.test__neg_view_toggle((4, 5), dtype)
+            else:
+                cases.test__neg_view_unmaterializable_dtypes((4, 5), dtype)
+
+
+def test_negative_view_requires_exact_sign_flip_gradient():
+    from . import test__neg_view as cases
+
+    class BiasedGradient(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, inp):
+            return torch.ops.aten._neg_view(inp)
+
+        @staticmethod
+        def backward(ctx, grad):
+            return -grad + 1e-6
+
+    with testing.override_gems_op("_neg_view", BiasedGradient.apply):
+        with pytest.raises(AssertionError):
+            cases.test__neg_view_backward((4, 5), torch.float32)
+
+
+def test_negative_view_requires_aliasing_for_empty_inputs():
+    from . import test__neg_view as cases
+
+    def copied(inp):
+        return torch.ops.aten._neg_view(torch.empty_like(inp))
+
+    with testing.override_gems_op("_neg_view", copied):
+        with pytest.raises(AssertionError):
+            cases.test__neg_view((0,), torch.float32)
+
+
+def test_negative_view_checks_result_before_mutating_it():
+    from . import test__neg_view as cases
+
+    def corrupted(inp):
+        inp.zero_()
+        return torch.ops.aten._neg_view(inp)
+
+    with testing.override_gems_op("_neg_view", corrupted):
+        with pytest.raises(AssertionError):
+            cases.test__neg_view_mutation((4, 5), torch.float32)
+
+
 @pytest.mark.parametrize(
     "operator,args",
     [
