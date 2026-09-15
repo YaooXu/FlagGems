@@ -86,14 +86,14 @@ _CCOLS_ALL = [
 
 def _ccol_cases():
     """(layout, size, nnz, blocks) cases for the quick vs full (default) level."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [("csc_batch", (2, 19, 7), 20, None)]
     return _CCOLS_CORE + _CCOLS_ALL
 
 
 def _ccol_value_range_cases():
     """Representative sparse + batched layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [("csc", (5, 4), 6, None)]
     return [
         ("csc", (5, 4), 6, None),
@@ -587,7 +587,7 @@ def _nan_inf_csc(dtype):
     return torch.sparse_csc_tensor(ccol, rows, values, shape)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.ccol_indices_copy
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -604,7 +604,7 @@ if tu.LEVEL == "all":
         _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (5,))
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.ccol_indices_copy_out
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)

@@ -122,7 +122,7 @@ _COALESCE_CASES = [
     ((4, 4, 4, 4), 400),
 ]
 
-# --quick smoke subset selected by tests/conftest.QUICK_MODE (tu.LEVEL).
+# --quick smoke subset selected by tests/conftest.QUICK_MODE (tu.QUICK_MODE).
 _COALESCE_CASES_QUICK = [((4, 4), 20), ((3, 5, 7), 120)]
 
 # Representative layouts for the value-range sweep (a 1-D, a 3-D and a 4-D
@@ -144,12 +144,12 @@ _NARROW_FLOAT_DTYPES = (torch.float16, torch.bfloat16)
 
 
 def _coalesce_cases():
-    return _COALESCE_CASES_QUICK if tu.LEVEL == "quick" else _COALESCE_CASES
+    return _COALESCE_CASES_QUICK if tu.QUICK_MODE else _COALESCE_CASES
 
 
 def _value_range_cases():
     cases = []
-    shapes = _VALUE_RANGE_CASES_QUICK if tu.LEVEL == "quick" else _VALUE_RANGE_CASES
+    shapes = _VALUE_RANGE_CASES_QUICK if tu.QUICK_MODE else _VALUE_RANGE_CASES
     for dtype in _COALESCE_DTYPES:
         if dtype == torch.bool:
             # A single degenerate {0, 1} range; the main grid covers bool.
@@ -317,7 +317,7 @@ def test__coalesce_value_ranges(value_range, dtype, case):
     assert not ref_inp.is_coalesced()
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._coalesce
     @pytest.mark.parametrize("case", _coalesce_cases())

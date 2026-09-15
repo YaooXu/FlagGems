@@ -162,7 +162,7 @@ def test__dim_arange_non_contiguous(view_case, value_range, dtype):
     _assert_arange_result(res_out, ref_out, inp, expected_len)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._dim_arange
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)

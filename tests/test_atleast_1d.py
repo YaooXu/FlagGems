@@ -100,7 +100,7 @@ def test_atleast_1d_value_ranges(shape, value_range, dtype):
     _assert_result_equal(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_1d
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -165,7 +165,7 @@ def test_atleast_1d_sequence_empty():
     assert len(res_out) == 0
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_1d_backward
     @pytest.mark.parametrize("shape", _ATLEAST_1D_BACKWARD_SHAPES)
@@ -208,7 +208,7 @@ def test_atleast_1d_rejects_non_tensor():
         gems_op([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_1d
     @pytest.mark.parametrize(

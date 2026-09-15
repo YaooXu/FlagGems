@@ -239,7 +239,7 @@ def test__neg_view_copy_out_value_ranges(shape, dtype, value_range):
     tu.assert_result_equal(out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._neg_view_copy
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -294,7 +294,7 @@ def test__neg_view_copy_empty(shape, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._neg_view_copy
     @pytest.mark.parametrize("shape", _NEG_VIEW_COPY_BACKWARD_SHAPES)

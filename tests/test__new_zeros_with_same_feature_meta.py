@@ -58,7 +58,7 @@ setattr(
 #   * Value ranges -- all five spec ranges ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over a representative dtype family (``_VALUE_RANGE_DTYPES``);
 #     the op ignores values, so the output is identical for every range.
-#   * Shape levels -- ``tu.selected_shapes()`` (quick/all via ``--quick``) are
+#   * Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) are
 #     placed in both the self and other position with every valid N, bounded so
 #     the zero allocation stays cheap.
 #   * Broadcast -- N/A: the op concatenates shapes, it does not compute on
@@ -360,7 +360,7 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     _assert_zero_output(res_out, ref_out, self_t, other_t, 1)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._new_zeros_with_same_feature_meta
     @pytest.mark.parametrize("shape", tu.selected_shapes())

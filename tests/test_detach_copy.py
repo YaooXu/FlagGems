@@ -36,7 +36,7 @@ from . import test_utils as tu
 # time, so the process-local override installed by the harness is honored.
 #
 # Coverage follows the regular-operator spec (tests/test_utils.py):
-#   * shape levels: tu.selected_shapes() (0~5 dims, quick/all via --quick);
+#   * shape levels: tu.selected_shapes() (0~5 dims, quick/default via --quick);
 #   * value ranges: tu.selected_ranges() ([-1,1], [0,1], [-1,0], [0,max],
 #     [min,0]) over representative 0/1/3-dim shapes for every supported dtype;
 #   * dtypes: the 9 spec dtypes the op accepts (int8, uint8, float8_e4m3fn,
@@ -151,7 +151,7 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.detach_copy
     @pytest.mark.parametrize("dtype", _DETACH_COPY_FLOAT_DTYPES)
@@ -325,7 +325,7 @@ def test_detach_copy_out_rejects_wrong_dtype():
         _resolve_gems_op_out()(inp, out=res_out_bad)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.detach_copy
     @pytest.mark.parametrize(

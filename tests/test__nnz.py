@@ -126,8 +126,8 @@ _NNZ_SPEC_NNZ = 6
 
 
 def _coo_cases():
-    """(shape, sparse_dim, nnz) layouts selected by the quick / full level."""
-    if tu.LEVEL == "quick":
+    """(shape, sparse_dim, nnz) layouts selected by the quick/default level."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 2, 8)]
     return _NNZ_COO_CASES_CORE + _NNZ_COO_CASES_ALL
 
@@ -340,7 +340,7 @@ def test__nnz_full_storage(dtype):
     _assert_result(res_out, ref_out, nnz)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._nnz
     @pytest.mark.parametrize("dtype", _NNZ_FLOAT_DTYPES)

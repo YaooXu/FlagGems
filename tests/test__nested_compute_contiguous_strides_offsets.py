@@ -104,7 +104,7 @@ _UNSUPPORTED_DTYPES = [
 
 def _value_range_layouts():
     """(num_tensors, num_dims) layouts for the value-range sweep (tu levels)."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [(8, 2)]
     return [(8, 2), (64, 3)]
 

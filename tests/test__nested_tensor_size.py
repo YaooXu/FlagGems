@@ -175,7 +175,7 @@ def _shape_level_ranks():
     """Component ranks (>= 1) taken from the shared shape levels.
 
     A rank-0 sparse/0-dim component cannot form a strided nested tensor, so only
-    ranks >= 1 are kept; this keeps the same quick/all shape-level selection as
+    ranks >= 1 are kept; this keeps the same quick/default shape-level selection as
     ``tu.selected_shapes()`` while adapting it to nested-tensor batches.
     """
     ranks = sorted({len(shape) for shape in tu.selected_shapes() if len(shape) >= 1})
@@ -201,10 +201,9 @@ def _shape_level_cases():
 
 def _value_range_layouts():
     """(num_tensors, num_dims) layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [(8, 2)]
-    if tu.LEVEL == "all":
-        return [(8, 2), (32, 3), (64, 4)]
+    return [(8, 2), (32, 3), (64, 4)]
 
 
 def _resolve_gems_op():
@@ -349,7 +348,7 @@ def test__nested_tensor_size_with_empty_components(dtype):
     assert bool(torch.all(res_out[:, 1] == 4))
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._nested_tensor_size
     @pytest.mark.parametrize("dtype", _FLOAT_COMPONENT_DTYPES)

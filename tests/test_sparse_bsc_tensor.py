@@ -348,7 +348,7 @@ def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
     _assert_value_range_result(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_bsc_tensor
     @pytest.mark.parametrize("dtype", _BSC_NAN_INF_DTYPES)

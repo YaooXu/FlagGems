@@ -40,7 +40,7 @@ from . import test_utils as tu
 #     for the single-row boundary -- together with the 2-D (256, 256) /
 #     (1024, 1024), 3-D (20, 320, 15), 4-D (16, 128, 64, 60) and 5-D
 #     (16, 7, 57, 32, 29) regular levels and higher-rank multi-batch-dims
-#     layouts, all from the quick/all levels;
+#     layouts, all from the quick/default levels;
 #   * value ranges: tu.selected_ranges() over representative layouts, so every
 #     supported storage dtype is exercised with negative, positive, extreme and
 #     degenerate value ranges (the returned crow is identical for all of them);
@@ -86,19 +86,17 @@ _CSR_CASES_ALL = [
 
 
 def _csr_cases():
-    """(shape, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
-    if tu.LEVEL == "quick":
+    """(shape, nnz) layouts selected by pytest --quick (quick) vs default."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 8)]
-    if tu.LEVEL == "all":
-        return _CSR_CASES_CORE + _CSR_CASES_ALL
+    return _CSR_CASES_CORE + _CSR_CASES_ALL
 
 
 def _csr_value_range_cases():
     """Representative 2-D + batched layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 8)]
-    if tu.LEVEL == "all":
-        return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
+    return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
 
 
 # Every spec dtype (int8/uint8/fp8 are hard requirements) plus the float/int/bool
@@ -341,7 +339,7 @@ def test_crow_indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.crow_indices
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)

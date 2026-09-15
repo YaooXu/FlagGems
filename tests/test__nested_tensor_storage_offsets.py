@@ -310,7 +310,7 @@ def test__nested_tensor_storage_offsets_value_ranges(dtype, value_range):
     _assert_offsets(res_out, ref_out, num_tensors)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._nested_tensor_storage_offsets
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)

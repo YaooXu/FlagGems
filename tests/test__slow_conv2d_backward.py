@@ -590,7 +590,7 @@ def test__slow_conv2d_backward_backward(case, dtype):
     _assert_grads_close(res, ref, in_reduce_dim, out_reduce_dim, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._slow_conv2d_backward
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)

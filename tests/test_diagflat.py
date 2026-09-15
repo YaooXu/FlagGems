@@ -129,7 +129,7 @@ _DIAGFLAT_BACKWARD_SHAPES = [(8,), (2, 3), (4, 5, 6)]
 
 def _diagflat_shapes():
     """The bounded spec shape levels for the main sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [(2, 19, 7)]
     return list(_DIAGFLAT_SHAPES)
 
@@ -247,7 +247,7 @@ def test_diagflat_strided(shape, offset, dtype):
     _assert_output(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.diagflat
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -302,7 +302,7 @@ def test_diagflat_empty_input(offset, dtype):
     _assert_output(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.diagflat
     @pytest.mark.parametrize("shape", _DIAGFLAT_BACKWARD_SHAPES)

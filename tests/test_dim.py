@@ -132,42 +132,37 @@ _EMPTY_CSR_CASES = [
 
 def _dense_cases():
     """(shape, expected) strided layouts selected by --quick (quick) vs default."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 3)]
-    if tu.LEVEL == "all":
-        return _DENSE_CASES_CORE + _DENSE_CASES_ALL
+    return _DENSE_CASES_CORE + _DENSE_CASES_ALL
 
 
 def _coo_cases():
     """(sparse_shape, dense_shape, nnz) COO layouts selected by --quick."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), (), 8)]
-    if tu.LEVEL == "all":
-        return _COO_CASES_CORE + _COO_CASES_ALL
+    return _COO_CASES_CORE + _COO_CASES_ALL
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid COO layouts for the range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), (), 8)]
-    if tu.LEVEL == "all":
-        return [((3, 4), (), 7), ((3, 4), (3,), 8), ((12, 9, 3, 6), (4,), 9)]
+    return [((3, 4), (), 7), ((3, 4), (3,), 8), ((12, 9, 3, 6), (4,), 9)]
 
 
 def _csr_cases():
     """(shape, nnz) CSR layouts selected by --quick (quick) vs default."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 3)]
-    if tu.LEVEL == "all":
-        return _CSR_CASES_CORE + _CSR_CASES_ALL
+    return _CSR_CASES_CORE + _CSR_CASES_ALL
 
 
 def _csr_value_range_cases():
     """Representative 2-D + batched CSR layouts for the range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 3)]
-    if tu.LEVEL == "all":
-        return [((4, 4), 3), ((2, 4, 4), 5)]
+    return [((4, 4), 3), ((2, 4, 4), 5)]
 
 
 def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
@@ -297,7 +292,7 @@ def test_dim_dense_value_ranges(shape, value_range, dtype):
 @pytest.mark.dim
 @pytest.mark.parametrize(
     "shape",
-    [(16, 32), (8, 16, 32), (4, 8, 16, 32)] if tu.LEVEL == "all" else [(2, 19, 7)],
+    [(16, 32), (8, 16, 32), (4, 8, 16, 32)] if not tu.QUICK_MODE else [(2, 19, 7)],
 )
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
 def test_dim_noncontiguous_dense(shape, dtype):
@@ -440,7 +435,7 @@ def test_dim_uncoalesced_coo(dtype):
     _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.dim
     @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)
@@ -460,7 +455,7 @@ if tu.LEVEL == "all":
         _assert_result(res_out, ref_out, 2)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.dim
     @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)
@@ -482,7 +477,7 @@ if tu.LEVEL == "all":
         _assert_result(res_out, ref_out, 1)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.dim
     @pytest.mark.parametrize("dtype", _DIM_FLOAT_DTYPES)

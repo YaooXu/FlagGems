@@ -27,7 +27,7 @@ from . import test_utils as tu
 # below feeds a sparse row-compressed tensor.
 #
 # Coverage (regular-operator spec, sparse/metadata adaptation):
-#   * shape levels: (layout, shape, nnz, blocks) layouts from the quick/all
+#   * shape levels: (layout, shape, nnz, blocks) layouts from the quick/default
 #     levels, ranks 2-7 (2-D all-sparse, 3-D/4-D batched, higher-rank
 #     multi-batch-dims, and BSR with varied block shapes), with varying nnz so
 #     the batch_dims + (nnz,) shape of the result is exercised;
@@ -187,15 +187,15 @@ def _select(cases):
 
 
 def _col_cases():
-    """Layouts selected by pytest --quick (quick) vs default (full)."""
-    if tu.LEVEL == "quick":
+    """Layouts selected by pytest --quick (quick) vs default."""
+    if tu.QUICK_MODE:
         return _select([("csr", (2, 19, 7), 8, None)])
     return _select(_COL_CASES_CORE + _COL_CASES_ALL)
 
 
 def _col_value_range_cases():
     """Representative 2-D / batched CSR + BSR layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return _select([("csr", (2, 19, 7), 8, None)])
     return _select(
         [
@@ -441,7 +441,7 @@ def test_col_indices_bsr_ragged_blocks(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.col_indices
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)

@@ -233,7 +233,7 @@ def test_adjoint_toggle(shape, dtype):
     assert not ref_out.is_conj()
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.adjoint
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -289,7 +289,7 @@ def test_adjoint_mutation(shape, dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.adjoint
     @pytest.mark.parametrize("shape", _ADJOINT_BACKWARD_SHAPES)
@@ -367,7 +367,7 @@ def test_adjoint_rejects_non_tensor():
         _resolve_gems_op()(3.14)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.adjoint
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(_ADJOINT_DTYPES))

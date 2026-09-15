@@ -145,19 +145,17 @@ _DIMI_HYBRID_CORE = [
 
 
 def _coo_cases():
-    """(shape, sparse_dim) layouts selected by pytest --quick (quick) vs default (full)."""
-    if tu.LEVEL == "quick":
+    """(shape, sparse_dim) layouts selected by pytest --quick (quick) vs default."""
+    if tu.QUICK_MODE:
         return _DIMI_COO_CASES_QUICK
-    if tu.LEVEL == "all":
-        return _DIMI_COO_CASES_CORE + _DIMI_COO_CASES_ALL
+    return _DIMI_COO_CASES_CORE + _DIMI_COO_CASES_ALL
 
 
 def _hybrid_value_range_cases():
     """Representative hybrid layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 2)]
-    if tu.LEVEL == "all":
-        return _DIMI_HYBRID_CORE
+    return _DIMI_HYBRID_CORE
 
 
 def _shape_level_cases():
@@ -357,7 +355,7 @@ def test__dimI_uncoalesced(dtype):
     _assert_result(res_out, ref_out, sparse_dim)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._dimI
     @pytest.mark.parametrize("dtype", _DIMI_FLOAT_DTYPES)

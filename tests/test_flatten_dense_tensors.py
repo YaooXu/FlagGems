@@ -102,7 +102,7 @@ def _flatten_shape_cases():
     Element counts stay <= 1M except the single high-rank case, which is a pure
     copy and stays cheap.
     """
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [
             [(2, 19, 7)],
             [(2, 3), (4,), (5, 6, 7)],
@@ -246,7 +246,7 @@ def test_flatten_dense_tensors_non_contiguous(dtype):
     _assert_flattened(res_out, ref_out, dtype, views[0].device)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.flatten_dense_tensors
     @pytest.mark.parametrize("dtype", _FLOAT_DTYPES + _ACTIVE_FP8_DTYPES)
@@ -283,7 +283,7 @@ if tu.LEVEL == "all":
         _assert_result(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.flatten_dense_tensors
     @pytest.mark.parametrize("tensor_shapes", _FLATTEN_BACKWARD_CASES)

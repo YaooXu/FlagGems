@@ -558,7 +558,7 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
     _assert_result(res_out, ref_out, dtype, torch.int64)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_csc_tensor
     @pytest.mark.parametrize("dtype", _FLOATISH_CSC_DTYPES)

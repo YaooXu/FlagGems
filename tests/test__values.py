@@ -45,7 +45,7 @@ setattr(
 #     fp64/int16/int32/int64/bool when supported), probed on a real sparse input
 #     through tu.supported_dtypes so a backend lacking e.g. fp8 drops that dtype
 #     instead of failing;
-#   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/all levels,
+#   * shape levels: (shape, sparse_dim, nnz) layouts from the quick/default levels,
 #     ranks 1-7, all-sparse and hybrid sparse+dense, with varying nnz so the
 #     (nnz,) + dense_shape shape of the result is exercised;
 #   * value ranges: the five spec ranges ([-1,1], [0,1], [-1,0], [0,max],
@@ -138,14 +138,14 @@ _VALUES_COO_CASES_QUICK = [
 
 def _coo_cases():
     """(shape, sparse_dim, nnz) layouts selected by pytest --quick vs default."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return _VALUES_COO_CASES_QUICK
     return _VALUES_COO_CASES_CORE + _VALUES_COO_CASES_ALL
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return _VALUES_COO_CASES_QUICK
     return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 48)]
 
@@ -321,7 +321,7 @@ def test__values_uncoalesced(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._values
     @pytest.mark.parametrize("dtype", _VALUES_FLOAT_DTYPES)

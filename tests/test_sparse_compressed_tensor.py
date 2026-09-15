@@ -45,7 +45,7 @@ from . import test_utils as tu
 #     runtime supports them;
 #   * shape levels: the spec ranks >= 2 (the smallest meaningful rank for a
 #     compressed layout) are mapped onto CSR structures, plus dedicated
-#     (layout, shape, nnz, index_dtype) structures for the quick/all levels
+#     (layout, shape, nnz, index_dtype) structures for the quick/default levels
 #     selected by --quick: 2-D CSR/CSC, 2-D block BSR/BSC (2x2 blocks) and
 #     3-D/4-D batched CSR/CSC/BSR with int64 and int32 index tensors;
 #   * value ranges: tu.selected_ranges() (five ranges at the "all" level) over
@@ -152,18 +152,16 @@ _BLOCK_SIZE = 2
 
 def _layout_cases():
     """(layout, shape, nnz, index_dtype) structures by --quick."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return _QUICK_CASES
-    if tu.LEVEL == "all":
-        return _ALL_CASES
+    return _ALL_CASES
 
 
 def _value_range_cases():
     """Representative structures for the value-range sweep by --quick."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return _QUICK_VALUE_CASES
-    if tu.LEVEL == "all":
-        return _ALL_VALUE_CASES
+    return _ALL_VALUE_CASES
 
 
 def _shape_level_cases():
@@ -171,7 +169,7 @@ def _shape_level_cases():
 
     Sparse compressed layouts need at least two dimensions (rows, columns);
     rank 3+ is interpreted as batched CSR. tu.selected_shapes() drives the
-    quick / full split through the --quick flag.
+    quick/default split through the --quick flag.
     """
     return [shape for shape in tu.selected_shapes() if len(shape) >= 2]
 
@@ -474,7 +472,7 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
     _assert_result(res_out, ref_out, dtype, layout, index_dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_compressed_tensor
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -526,7 +524,7 @@ if tu.LEVEL == "all":
         _assert_values(res_out.values(), ref_out.values(), dtype, equal_nan=True)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_compressed_tensor
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)

@@ -338,7 +338,7 @@ def test__unpack_dual_mutation(shape, dtype):
         utils.gems_assert_equal(primal, ref_primal)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._unpack_dual
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -454,7 +454,7 @@ def test__unpack_dual_rejects_inactive_level(dtype, bad_level):
             _resolve_gems_op()(dual, inactive)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._unpack_dual
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))

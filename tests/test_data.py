@@ -167,7 +167,7 @@ def test_data_non_contiguous(layout, shape, dtype):
     _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.data
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -257,7 +257,7 @@ def test_data_rejects_extra_arguments():
         _resolve_gems_op()(inp, inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.data
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(_DATA_DTYPES))

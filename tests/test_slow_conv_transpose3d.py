@@ -527,7 +527,7 @@ def test_slow_conv_transpose3d_out(
     _assert_close(res_ret, ref_ret, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_transpose3d_backward
     @pytest.mark.parametrize("case", _BACKWARD_CASES)
@@ -612,7 +612,7 @@ if tu.LEVEL == "all":
         _assert_close(res_gb, ref_gb.to(dtype), dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_transpose3d_nan_inf
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)

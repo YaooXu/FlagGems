@@ -88,7 +88,7 @@ _CQPT_DTYPES = (
     + utils.BOOL_TYPES
 )
 
-_CQPT_REDUCE_RANGE = [False] if tu.LEVEL == "quick" else [False, True]
+_CQPT_REDUCE_RANGE = [False] if tu.QUICK_MODE else [False, True]
 
 # Small fp32 constants landing on the clamp / rounding branches. Ratios are
 # kept away from exact half-integers so any faithful (fp32- or fp64-arithmetic)

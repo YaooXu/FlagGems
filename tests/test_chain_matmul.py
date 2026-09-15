@@ -99,7 +99,7 @@ if not _CHAIN_DTYPES:
 # rank-2 shapes. They cover a degenerate/single-matrix chain, short chains,
 # rank-collapsing inner dims, 4/5-matrix chains and an odd, non-power-of-two
 # chain that exercises tiling edges.
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     _CHAIN_SHAPES = [[(2, 3), (3, 4)]]
     _OUT_CHAIN_SHAPES = [[(2, 3), (3, 4)]]
     _BACKWARD_CHAINS = [[(2, 3), (3, 4)]]
@@ -239,7 +239,7 @@ def test_chain_matmul_out(shapes, value_range, dtype):
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.chain_matmul
     @pytest.mark.parametrize("dtype", _CHAIN_DTYPES)
@@ -273,7 +273,7 @@ if tu.LEVEL == "all":
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.chain_matmul
     @pytest.mark.parametrize("shapes", _BACKWARD_CHAINS)

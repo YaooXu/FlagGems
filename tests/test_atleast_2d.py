@@ -266,7 +266,7 @@ _NAN_INF_VALUES = [
 ]
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_2d_nan_inf
     @pytest.mark.parametrize("shape", [(), (9,), (3, 3)])
@@ -314,7 +314,7 @@ def test_atleast_2d_complex(shape, dtype, value_range):
 _BACKWARD_SHAPES = [(), (3,), (16, 64), (7, 13, 29)]
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_2d_backward
     @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
@@ -362,7 +362,7 @@ def test_atleast_2d_rejects_non_tensor():
         candidate([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_2d
     @pytest.mark.parametrize(

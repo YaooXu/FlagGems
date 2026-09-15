@@ -217,7 +217,7 @@ def test__slow_conv2d_forward_value_ranges(
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._slow_conv2d_forward
     @pytest.mark.parametrize(
@@ -290,7 +290,7 @@ if tu.LEVEL == "all":
         )
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._slow_conv2d_forward
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)

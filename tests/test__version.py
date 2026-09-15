@@ -257,7 +257,7 @@ def test__version_value_ranges(shape, value_range, dtype):
     _assert_result(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._version
     @pytest.mark.parametrize("shape", tu.selected_shapes())

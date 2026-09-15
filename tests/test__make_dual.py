@@ -312,7 +312,7 @@ def test__make_dual_mutation(shape, dtype):
         tu.assert_result_equal(tangent, ref_tangent)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._make_dual
     @pytest.mark.parametrize("dtype", _SPECIAL_DTYPES)
@@ -432,7 +432,7 @@ def test__make_dual_rejects_non_int_level():
             _resolve_gems_op()(inp, tangent, 1.5)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._make_dual
     @pytest.mark.parametrize("dtype, scenario", tu.special_value_cases(DUAL_DTYPES))

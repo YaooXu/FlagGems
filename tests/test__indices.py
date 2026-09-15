@@ -126,15 +126,15 @@ _INDICES_SPEC_NNZ = 6
 
 
 def _coo_cases():
-    """(shape, sparse_dim, nnz) layouts selected by pytest --quick vs default (full)."""
-    if tu.LEVEL == "quick":
+    """(shape, sparse_dim, nnz) layouts selected by pytest --quick vs default."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 2, 8)]
     return _INDICES_COO_CASES_CORE + _INDICES_COO_CASES_ALL
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 2, 8)]
     return [((3, 4), 2, 7), ((3, 4, 2), 2, 12), ((12, 9, 3, 6), 4, 9)]
 
@@ -356,7 +356,7 @@ def test__indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._indices
     @pytest.mark.parametrize("dtype", _INDICES_FLOAT_DTYPES)

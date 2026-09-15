@@ -101,7 +101,7 @@ def _batch_dims(shape):
 
 
 def _add_batch_dim_cases():
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         shapes = [(2, 19, 7)]
     else:
         shapes = _view_shapes()
@@ -218,7 +218,7 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._add_batch_dim
     @pytest.mark.parametrize(

@@ -42,7 +42,7 @@ for _name in ("_efficientzerotensor", "_efficientzerotensor_out"):
 #   zeros. ``tu.make_input`` fills that buffer with each of the five spec
 #   ranges, and one further test fills it with a fixed non-zero sentinel so a
 #   missing write is always detected.
-# - Shape levels -- ``tu.selected_shapes()`` (quick/all via ``--quick``) plus a
+# - Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) plus a
 #   zero-sized-shape boundary set.
 # - Dtypes -- bool / int / float, including float8 / int8 / uint8 when the
 #   active backend accepts them (probed, never guessed); every value comparison

@@ -49,6 +49,9 @@ an available FlagGems implementation, shape/rank coverage documents observable
 native contracts, not a claim that an unknown future kernel's dispatch thresholds
 have already been covered.
 
+Quick selection reads `tests.conftest.QUICK_MODE`, set only by `--quick`.
+Without that flag, tests use the default cases; there is no separate level setting.
+
 ## Validation scope
 
 Validation used H20-3e physical GPU 3, Torch

@@ -111,7 +111,7 @@ _RANGE_PAIRS = [(d, r) for d in _RANGE_DTYPES for r in tu.selected_ranges()]
 # mixed-length / 3-4 input cases and the resulting empty outputs.
 _CARTESIAN_PROD_SIZES = (
     [[8], [3, 5], [2, 4, 3]]
-    if tu.LEVEL == "quick"
+    if tu.QUICK_MODE
     else [
         [8],  # single input -> (8,)
         [1],  # single singleton input -> (1,)
@@ -131,9 +131,7 @@ _CARTESIAN_PROD_SIZES = (
 )
 
 # Backward input lists stay small (the autograd graph is built per input).
-_BACKWARD_SIZES = (
-    [[8], [3, 5]] if tu.LEVEL == "quick" else [[8], [3, 5], [2, 4, 3], [16, 16]]
-)
+_BACKWARD_SIZES = [[8], [3, 5]] if tu.QUICK_MODE else [[8], [3, 5], [2, 4, 3], [16, 16]]
 
 
 def _resolve_gems_op():
@@ -250,7 +248,7 @@ def test_cartesian_prod_non_contiguous(dtype):
     _assert_close(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.cartesian_prod
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -286,7 +284,7 @@ if tu.LEVEL == "all":
         tu.assert_result_equal(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.cartesian_prod
     @pytest.mark.parametrize("sizes", _BACKWARD_SIZES)

@@ -281,7 +281,7 @@ def test_sparse_mask_out(shape, dtype):
     _assert_masked(res_ret, ref_ret, ref_mask, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_mask
     @pytest.mark.parametrize("shape", _SPARSE_MASK_NANINF_SHAPES)
@@ -325,7 +325,7 @@ if tu.LEVEL == "all":
         _assert_masked(res_out, ref_out, ref_mask, dtype, equal_nan=True)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_mask
     @pytest.mark.parametrize("shape", _SPARSE_MASK_BACKWARD_SHAPES)

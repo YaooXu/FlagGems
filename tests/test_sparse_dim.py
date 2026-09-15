@@ -40,7 +40,7 @@ from . import test_utils as tu
 #     layouts;
 #   * layouts -- strided tensors (ranks 0-8 plus empty), sparse COO
 #     (all-sparse and hybrid) and sparse CSR (2-D, batched 3-D and CSR with
-#     dense dims), selected by the quick / full level;
+#     dense dims), selected by the quick/default level;
 #   * edge cases -- empty dense/COO/CSR tensors, uncoalesced COO, CSR with
 #     dense dims, and nan/inf/-inf/±0.0 stored values;
 #   * negative cases -- non-tensor inputs are rejected.
@@ -157,29 +157,29 @@ _SPEC_NNZ = 6
 
 
 def _dense_cases():
-    """(shape, expected) strided layouts selected by quick / full level."""
-    if tu.LEVEL == "quick":
+    """(shape, expected) strided layouts selected by quick/default level."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 0)]
     return _DENSE_CASES_CORE + _DENSE_CASES_ALL
 
 
 def _coo_cases():
-    """(sparse_shape, dense_shape, nnz) COO layouts selected by quick / full."""
-    if tu.LEVEL == "quick":
+    """(sparse_shape, dense_shape, nnz) COO layouts selected by quick/default."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), (), 8)]
     return _COO_CASES_CORE + _COO_CASES_ALL
 
 
 def _coo_value_range_cases():
     """Representative all-sparse + hybrid COO layouts for the range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), (), 8)]
     return [((3, 4), (), 7), ((3, 4), (3,), 8), ((12, 9, 3, 6), (4,), 9)]
 
 
 def _csr_cases():
-    """(shape, nnz) CSR layouts selected by quick / full level."""
-    if tu.LEVEL == "quick":
+    """(shape, nnz) CSR layouts selected by quick/default level."""
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 3)]
     return _CSR_CASES_CORE + _CSR_CASES_ALL
 
@@ -528,7 +528,7 @@ def test_sparse_dim_csr_spec_shapes(shape, dtype):
 # ---------------------------------------------------------------------------
 # nan/inf payload
 # ---------------------------------------------------------------------------
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_dim
     @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
@@ -548,7 +548,7 @@ if tu.LEVEL == "all":
         _assert_result(res_out, ref_out, 0)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_dim
     @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)
@@ -571,7 +571,7 @@ if tu.LEVEL == "all":
         _assert_result(res_out, ref_out, 1)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_dim
     @pytest.mark.parametrize("dtype", _FLOAT_DTYPES)

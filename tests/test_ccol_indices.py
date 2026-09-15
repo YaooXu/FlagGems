@@ -31,7 +31,7 @@ from . import test_utils as tu
 #     plus fp16/fp32/bf16/fp64/int16/int32/int64/bool, probed at import time so
 #     a backend that cannot materialise a storage dtype is skipped cleanly;
 #   * shape levels: the shared tu.selected_shapes() levels mapped onto CSC
-#     layouts (rank >= 2) and dedicated (shape, nnz) layouts from the quick/all
+#     layouts (rank >= 2) and dedicated (shape, nnz) layouts from the quick/default
 #     levels, ranks 2-7 (2-D all-sparse, 3-D/4-D batched, and higher-rank
 #     multi-batch-dims), with varying nnz so the (batch_dims + (ncols + 1,))
 #     shape of the result is exercised;
@@ -115,13 +115,12 @@ _CSC_CASES_ALL = [
 
 
 def _csc_cases():
-    """(shape, nnz) layouts selected by pytest --quick (quick) vs default (full)."""
-    if tu.LEVEL == "quick":
+    """(shape, nnz) layouts selected by pytest --quick (quick) vs default."""
+    if tu.QUICK_MODE:
         # A 2-D and a batched layout, so the smoke level still exercises the
         # unbatched (ncols + 1,) and batched batch + (ncols + 1,) result shapes.
         return [((2, 19, 7), 8), ((4, 5), 6)]
-    if tu.LEVEL == "all":
-        return _CSC_CASES_CORE + _CSC_CASES_ALL
+    return _CSC_CASES_CORE + _CSC_CASES_ALL
 
 
 def _csc_shape_level_cases():
@@ -143,10 +142,9 @@ def _csc_shape_level_cases():
 
 def _csc_value_range_cases():
     """Representative 2-D + batched layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [((2, 19, 7), 8), ((4, 5), 6)]
-    if tu.LEVEL == "all":
-        return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
+    return [((5, 4), 7), ((3, 5, 4), 7), ((3, 6, 4, 4, 6, 5), 11)]
 
 
 def _make_input(shape, nnz, dtype, value_range, seed=0):
@@ -361,7 +359,7 @@ def test_ccol_indices_full_storage(dtype):
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.ccol_indices
     @pytest.mark.parametrize("dtype", _CSC_NAN_DTYPES)

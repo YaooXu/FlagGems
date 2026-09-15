@@ -270,7 +270,7 @@ def test__neg_view_toggle(shape, dtype):
     assert not ref_out.is_neg()
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._neg_view
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -323,7 +323,7 @@ def test__neg_view_mutation(shape, dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._neg_view
     @pytest.mark.parametrize("shape", _NEG_VIEW_BACKWARD_SHAPES)

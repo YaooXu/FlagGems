@@ -97,9 +97,7 @@ _CUSTOM_SHAPES_AXIS = [
 ]
 
 SHAPE_AXIS = (
-    [((2, 19, 7), 1)]
-    if tu.LEVEL == "quick"
-    else _CUSTOM_SHAPES_AXIS + _CANONICAL_SHAPES_AXIS
+    [((2, 19, 7), 1)] if tu.QUICK_MODE else _CUSTOM_SHAPES_AXIS + _CANONICAL_SHAPES_AXIS
 )
 
 # The quantizer stores scales as float64 and zero_points as int64 regardless of
@@ -307,7 +305,7 @@ def test__empty_per_channel_affine_quantized_out(
     _assert_per_channel_metadata(act_out_buf, ref_out_buf, axis, scales, zero_points)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._empty_per_channel_affine_quantized
     def test__empty_per_channel_affine_quantized_nan_inf_scales():

@@ -49,7 +49,7 @@ setattr(
 # - nan/inf: covered by a dedicated case (non-finite storage values are
 #   ignored; the int64 output compares exactly).
 #
-# Shape coverage follows the regular-operator-spec level selection (quick/all
+# Shape coverage follows the regular-operator-spec level selection (quick/default
 # via the pytest --quick flag): tu.selected_shapes(), which includes the 0-D
 # scalar (mapped to the empty 1-D output) and ranks up to 5.
 
@@ -176,7 +176,7 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     _assert_result(res_out, ref_out, inp, expected)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._shape_as_tensor
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)

@@ -80,7 +80,7 @@ def test_abs_int_value_ranges(shape, value_range, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.abs
     @pytest.mark.parametrize("dtype", _ABS_FLOAT_DTYPES)
@@ -155,7 +155,7 @@ def test_abs_noncontiguous(shape, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.abs
     @pytest.mark.parametrize("shape", _ABS_BACKWARD_SHAPES)

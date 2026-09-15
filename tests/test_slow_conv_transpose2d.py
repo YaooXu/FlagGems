@@ -20,7 +20,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     SLOW_CONV_TRANSPOSE2D_CASES = [
         (
             (1, 2, 5, 5),
@@ -349,7 +349,7 @@ def test_slow_conv_transpose2d_value_ranges(
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_transpose2d
     @pytest.mark.parametrize(
@@ -450,7 +450,7 @@ if tu.LEVEL == "all":
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_transpose2d
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)

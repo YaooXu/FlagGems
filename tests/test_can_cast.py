@@ -78,7 +78,7 @@ def _can_cast_dtypes():
     # The op touches no memory, so the "quick" level keeps the mandated dtype
     # set while "all" widens it to every ScalarType the runtime exposes. Both
     # levels clear the spec's tu.MIN_CASES budget.
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return list(_REQUIRED_CAN_CAST_DTYPES)
     return list(_ALL_CAN_CAST_DTYPES)
 

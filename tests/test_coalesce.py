@@ -108,7 +108,7 @@ _COALESCE_CASES = [
     ((2, 3, 4, 5, 6), 1000),
 ]
 
-# --quick smoke subset selected by tests/conftest.QUICK_MODE (tu.LEVEL).
+# --quick smoke subset selected by tests/conftest.QUICK_MODE (tu.QUICK_MODE).
 _COALESCE_CASES_QUICK = [((4, 4), 20), ((3, 5, 7), 120)]
 
 # The identity branch (input already coalesced -> returns self) is exercised on
@@ -135,16 +135,16 @@ _NARROW_FLOAT_DTYPES = (torch.float16, torch.bfloat16)
 
 
 def _coalesce_cases():
-    return _COALESCE_CASES_QUICK if tu.LEVEL == "quick" else _COALESCE_CASES
+    return _COALESCE_CASES_QUICK if tu.QUICK_MODE else _COALESCE_CASES
 
 
 def _coalesced_cases():
-    return _COALESCED_CASES_QUICK if tu.LEVEL == "quick" else _COALESCED_CASES
+    return _COALESCED_CASES_QUICK if tu.QUICK_MODE else _COALESCED_CASES
 
 
 def _value_range_cases():
     cases = []
-    shapes = _VALUE_RANGE_CASES_QUICK if tu.LEVEL == "quick" else _VALUE_RANGE_CASES
+    shapes = _VALUE_RANGE_CASES_QUICK if tu.QUICK_MODE else _VALUE_RANGE_CASES
     for dtype in _COALESCE_DTYPES:
         if dtype == torch.bool:
             # A single degenerate {0, 1} range; the main grid covers bool.
@@ -306,7 +306,7 @@ def test_coalesce_value_ranges(value_range, dtype, case):
     assert not ref_inp.is_coalesced()
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.coalesce
     @pytest.mark.parametrize("case", _coalesce_cases())

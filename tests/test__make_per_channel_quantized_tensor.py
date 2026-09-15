@@ -106,7 +106,7 @@ _AXIS_BY_RANK = {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 3}
 _SHAPE_AXIS = [
     (tuple(shape), _AXIS_BY_RANK[len(shape)]) for shape in tu.selected_shapes()
 ]
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     # The quick smoke level uses the single shared shape, which would leave the
     # collected case count below tu.MIN_CASES; widen the grid with two extra
     # ranks (the full level already uses the seven shared shape levels).
@@ -115,7 +115,7 @@ if tu.LEVEL == "quick":
 # Axis-semantics grid: every valid positive and negative axis encoding.
 _AXIS_SHAPES = (
     [((2, 3, 4), 1), ((2, 3, 4), -2), ((2, 3, 4), 0), ((7,), -1)]
-    if tu.LEVEL == "quick"
+    if tu.QUICK_MODE
     else [
         ((7,), 0),
         ((7,), -1),

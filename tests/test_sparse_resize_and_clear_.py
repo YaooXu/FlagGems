@@ -111,7 +111,7 @@ _EMPTY_SOURCE_TARGETS = [
     ((3, 3, 3, 3), 3, 1),
 ]
 
-# Shape levels and value ranges from the regular-operator spec (quick/all
+# Shape levels and value ranges from the regular-operator spec (quick/default
 # selected by the pytest --quick flag, read at import time).
 _SELECTED_SHAPES = tu.selected_shapes()
 _SELECTED_RANGES = tu.selected_ranges()
@@ -354,7 +354,7 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
     utils.gems_assert_equal(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_resize_and_clear_
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -385,7 +385,7 @@ if tu.LEVEL == "all":
 @pytest.mark.parametrize("dtype", _RESIZE_DTYPES)
 def test_sparse_resize_and_clear_shape_levels(shape, dtype):
     # Shape-level dimension: a fixed non-empty source resized to every shape
-    # level (quick/all, ranks 0-5) with a legal sparse/dense split; the clear
+    # level (quick/default, ranks 0-5) with a legal sparse/dense split; the clear
     # keeps the result empty regardless of the target.
     sparse_dim, dense_dim = _split_for_shape(shape)
     inp = _make_sparse_input((4, 5), 2, 3, dtype)

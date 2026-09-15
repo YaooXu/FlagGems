@@ -40,7 +40,7 @@ from . import test_utils as tu
 #     [-1,0], [0,max], [min,0]) for every supported dtype (the old randn-only
 #     value test is migrated onto this framework);
 #   * shape levels -- dedicated depth-axis sets merged with the shared shape
-#     levels tu.selected_shapes() (quick/all via --quick) as self-pairs,
+#     levels tu.selected_shapes() (quick/default via --quick) as self-pairs,
 #     bounded so one input stays <= 2**20 elements (the output is ~n_inputs x
 #     the input) and every rank 0..5 is represented;
 #   * broadcast -- N/A: dstack has no broadcast dimension, all non-depth dims
@@ -136,7 +136,7 @@ def _numel(shape):
 # equal/varying depth, a 4-D self-pair, and (in "all") a 5-D case whose dim-2
 # sizes differ (64/96/32) to exercise the "all dims except dim 2 must match"
 # rule.
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     _DSTACK_EXTRA_SHAPE_SETS = [
         [(3,), (3,)],
         [(8, 16, 32), (8, 16, 48)],
@@ -192,7 +192,7 @@ def _dstack_shape_sets():
     """Shape-list levels for the main sweep.
 
     The dedicated depth-axis sets are merged with the shared shape levels
-    (tu.selected_shapes(), quick/all) as self-pairs. Self-pairs whose single
+    (tu.selected_shapes(), quick/default) as self-pairs. Self-pairs whose single
     input would exceed 2**20 elements are skipped because the output is
     ~n_inputs x the input size.
     """
@@ -335,7 +335,7 @@ def test_dstack_empty_inputs(shape_set, dtype):
     _assert_dstack_output(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.dstack
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -388,7 +388,7 @@ def test_dstack_complex(dtype):
     _assert_dstack_output(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.dstack_backward
     @pytest.mark.parametrize("shape_set", _DSTACK_BACKWARD_SHAPE_SETS)

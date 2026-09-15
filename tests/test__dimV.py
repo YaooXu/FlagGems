@@ -204,24 +204,22 @@ _SHAPE_DENSE_DIM = {
 
 
 def _coo_cases():
-    """(shape, dense_dim) layouts selected by pytest --quick (quick) vs default (full)."""
-    if tu.LEVEL == "quick":
+    """(shape, dense_dim) layouts selected by pytest --quick (quick) vs default."""
+    if tu.QUICK_MODE:
         return _DIMV_COO_CASES_QUICK
-    if tu.LEVEL == "all":
-        return _DIMV_COO_CASES_CORE + _DIMV_COO_CASES_ALL
+    return _DIMV_COO_CASES_CORE + _DIMV_COO_CASES_ALL
 
 
 def _hybrid_value_range_cases():
     """Representative hybrid layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [
             ((2, 19, 7), 1),
             ((2, 19, 7), 2),
             ((2, 19, 7, 5), 1),
             ((2, 19, 7, 5, 3), 1),
         ]
-    if tu.LEVEL == "all":
-        return _DIMV_HYBRID_CORE
+    return _DIMV_HYBRID_CORE
 
 
 def _shape_level_cases():
@@ -380,7 +378,7 @@ def test__dimV_uncoalesced(dtype):
     _assert_result(res_out, ref_out, dense_dim)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._dimV
     @pytest.mark.parametrize("dtype", _DIMV_FLOAT_DTYPES)

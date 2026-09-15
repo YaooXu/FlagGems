@@ -265,7 +265,7 @@ def test_atleast_3d_sequence_empty():
     assert len(res_out) == 0
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_3d
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -313,7 +313,7 @@ def test_atleast_3d_complex(dtype):
     assert res_out.data_ptr() == inp.data_ptr()
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_3d_backward
     @pytest.mark.parametrize("shape", _BACKWARD_SHAPES)
@@ -361,7 +361,7 @@ def test_atleast_3d_rejects_non_tensor():
         gems_seq_op([torch.zeros(2, device=flag_gems.device), 3.14])
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.atleast_3d
     @pytest.mark.parametrize(

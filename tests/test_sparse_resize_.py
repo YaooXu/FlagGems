@@ -54,7 +54,7 @@ from . import test_utils as tu
 #   * value ranges: the shared five per-dtype ranges, plus an explicit
 #     nan / inf / -inf / -0.0 payload case;
 #   * shape levels: tu.selected_shapes() with a legal sparse/dense split
-#     (quick/all selected by the pytest --quick flag);
+#     (quick/default selected by the pytest --quick flag);
 #   * negative: the invalid parameter triples the reference rejects, plus a
 #     dense (non-sparse) input that cannot be routed to the sparse kernel.
 _RESIZE_CASES = [
@@ -116,7 +116,7 @@ _RESIZE_DTYPES = tu.supported_dtypes(
     "sparse_resize_", _CANDIDATE_DTYPES, probe=_sparse_dtype_probe
 )
 
-# Shape-level dimension: the shared selected_shapes (quick/all levels via
+# Shape-level dimension: the shared selected_shapes (quick/default levels via
 # --quick) minus the 0-dim scalar, which is not representable as a sparse
 # COO tensor (at least one sparse dimension is required).
 _SPARSE_SHAPE_LEVELS = tuple(s for s in tu.selected_shapes() if len(s) > 0)
@@ -342,7 +342,7 @@ def test_sparse_resize_shape_levels(shape, dtype):
     _assert_values_equal(inp, ref_inp, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_resize_
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)

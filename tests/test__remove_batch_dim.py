@@ -218,7 +218,7 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     _assert_output(res_out, ref_out, shape, out_dim, batch_size, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._remove_batch_dim
     @pytest.mark.parametrize("dtype, value_range", _dtype_range_pairs())
@@ -257,7 +257,7 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     _assert_output(res_out, ref_out, inp.shape, out_dim, batch_size, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._remove_batch_dim
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -284,7 +284,7 @@ if tu.LEVEL == "all":
         _assert_values_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._remove_batch_dim
     @pytest.mark.parametrize("shape, out_dim, batch_size", _BACKWARD_CASES)
@@ -347,7 +347,7 @@ def test__remove_batch_dim_rejects_non_tensor():
         _resolve_gems_op()(3.14, 0, 1, 0)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._remove_batch_dim
     @pytest.mark.parametrize(

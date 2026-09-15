@@ -57,7 +57,7 @@ setattr(
 # - nan/inf: covered by a dedicated case; non-finite payloads are ignored.
 # - Negative: non-tensor / missing arguments are rejected at binding time.
 #
-# Shape coverage follows the regular-operator-spec level selection (quick/all
+# Shape coverage follows the regular-operator-spec level selection (quick/default
 # via the pytest ``--quick`` flag): tu.selected_shapes() (0-D through 5-D).
 
 # ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     assert bool(ref_out) is True
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._has_same_storage_numel
     @pytest.mark.parametrize("shape", tu.selected_shapes())

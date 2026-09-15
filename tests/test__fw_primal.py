@@ -219,7 +219,7 @@ def test__fw_primal_mutation(shape, dtype):
     tu.assert_result_equal(inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._fw_primal
     @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
@@ -256,7 +256,7 @@ def test__fw_primal_empty(shape, dtype):
     _assert_view_semantics(res_out, ref_out, inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._fw_primal
     @pytest.mark.parametrize("shape", _FW_PRIMAL_BACKWARD_SHAPES)
@@ -320,7 +320,7 @@ def test__fw_primal_rejects_missing_level():
         _resolve_gems_op()(inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark._fw_primal
     @pytest.mark.parametrize(

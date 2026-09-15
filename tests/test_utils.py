@@ -16,7 +16,7 @@
 """Shared test utilities for the regular-operator test spec.
 
 Implements the value-range / shape-level / broadcast / backward conventions
-from the "常规算子测试用例" spec (quick / full levels selected by the pytest
+from the "常规算子测试用例" spec (quick/default modes selected by the pytest
 ``--quick`` flag, matching FlagGems' own accuracy_utils convention). Tests
 reference these helpers so the value-range and shape-selection logic lives in
 one place instead of being copied into every ``tests/test_<op>.py`` file.
@@ -31,24 +31,17 @@ import flag_gems
 from .conftest import QUICK_MODE
 
 # ---------------------------------------------------------------------------
-# Level selection
+# Mode selection
 # ---------------------------------------------------------------------------
-#
-# Two levels only, matching FlagGems' ``--quick`` pytest flag:
-#   * quick -- smoke subset (``pytest --quick`` sets conftest.QUICK_MODE)
-#   * full  -- everything else (default)
-# ``LEVEL`` is kept as a derived string so files that branch on it
-# (``tu.LEVEL == "quick"`` / ``tu.LEVEL == "all"``) keep working.
-
-LEVEL = "quick" if QUICK_MODE else "all"
+# QUICK_MODE comes directly from pytest --quick; without it, use default cases.
 
 
 def selected_shapes():
-    return QUICK_SHAPES if QUICK_MODE else ALL_SHAPES
+    return QUICK_SHAPES if QUICK_MODE else REQUIRED_SHAPES
 
 
 def selected_ranges():
-    return QUICK_RANGES if QUICK_MODE else ALL_RANGES
+    return QUICK_RANGES if QUICK_MODE else REQUIRED_RANGES
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +215,6 @@ REQUIRED_SHAPES = [
     (16, 128, 64, 60),  # 4-dim
     (16, 7, 57, 32, 29),  # 5-dim
 ]
-ALL_SHAPES = REQUIRED_SHAPES
 
 QUICK_RANGES = [
     ["-1", "1"],
@@ -237,7 +229,6 @@ REQUIRED_RANGES = [
     ["0", "max"],
     ["min", "0"],
 ]
-ALL_RANGES = REQUIRED_RANGES
 
 # Required dtype coverage (spec). int8/uint8/fp8 must be present for every
 # operator whose CUDA kernel supports them; fp32/bf16/fp16/int32/int64 are

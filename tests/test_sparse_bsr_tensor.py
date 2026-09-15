@@ -459,7 +459,7 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_bsr_tensor
     @pytest.mark.parametrize("dtype", _FLOAT_VALUE_DTYPES)

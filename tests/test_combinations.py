@@ -112,7 +112,7 @@ _SPEC_1D_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) == 1] o
 
 # Level-driven 1-D sizes. The largest all-level case (96, r=3) writes
 # C(96, 3) * 3 = 428,640 output elements, staying under the 1M-element cap.
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     _LEVEL_SHAPES = [(4,), (8,)]
 else:
     _LEVEL_SHAPES = [(1,), (2,), (4,), (8,), (16,), (64,), (96,)]
@@ -254,7 +254,7 @@ def test_combinations_non_contiguous(dtype):
     _assert_match(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.combinations
     @pytest.mark.parametrize("dtype", _FLOAT_CLOSE_DTYPES)
@@ -299,7 +299,7 @@ def test_combinations_does_not_mutate_input(dtype):
     _assert_match(inp, before, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.combinations
     @pytest.mark.parametrize("r", _R_VALUES)

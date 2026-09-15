@@ -52,7 +52,7 @@ _ADD_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 
 # aten requires an integral alpha for integral inputs; 2 and -3 exercise both
 # signs of the scale factor on the int path.
-_ADD_INT_ALPHAS = [1] if tu.LEVEL == "quick" else [0, 1, 2, -3]
+_ADD_INT_ALPHAS = [1] if tu.QUICK_MODE else [0, 1, 2, -3]
 
 # Scalar-scalar add: (a, b, alpha, expected dtype). Both aten and the candidate
 # promote the Python scalars to a 0-dim tensor of the natural dtype.
@@ -127,9 +127,7 @@ def test_add_tensor_tensor_bool_value_ranges(shape, value_range):
 
 @pytest.mark.add
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize(
-    "alpha", [1] if tu.LEVEL == "quick" else [0, 1, *utils.SCALARS]
-)
+@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add_tensor_tensor_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -161,14 +159,12 @@ def test_add_tensor_tensor_int_alpha(shape, alpha, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("shape", tu.selected_shapes())
     @pytest.mark.parametrize("scalar", utils.SCALARS)
-    @pytest.mark.parametrize(
-        "alpha", [1] if tu.LEVEL == "quick" else [0, 1, *utils.SCALARS]
-    )
+    @pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_add_tensor_scalar(shape, scalar, alpha, dtype):
         inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -180,14 +176,12 @@ if tu.LEVEL == "all":
         tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("shape", tu.selected_shapes())
     @pytest.mark.parametrize("scalar", utils.SCALARS)
-    @pytest.mark.parametrize(
-        "alpha", [1] if tu.LEVEL == "quick" else [0, 1, *utils.SCALARS]
-    )
+    @pytest.mark.parametrize("alpha", [0, 1, *utils.SCALARS])
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
     def test_add_scalar_tensor(shape, scalar, alpha, dtype):
         other = tu.make_input(dtype, shape, ["-1", "1"])
@@ -203,7 +197,7 @@ if tu.LEVEL == "all":
         tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("a,b,alpha,dtype", _ADD_SCALAR_SCALAR_CASES)
@@ -217,7 +211,7 @@ if tu.LEVEL == "all":
         tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("broadcast_pair", _ADD_BROADCAST_PAIRS)
@@ -235,7 +229,7 @@ if tu.LEVEL == "all":
         tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -323,7 +317,7 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
     "other_type",
     (
         ["complex"]
-        if tu.LEVEL == "quick"
+        if tu.QUICK_MODE
         else ["complex", "float_tensor", "int_tensor", "int_scalar"]
     ),
 )
@@ -382,7 +376,7 @@ def test_add_noncontiguous(shape, dtype):
     tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("shape", _ADD_BACKWARD_SHAPES)
@@ -417,7 +411,7 @@ if tu.LEVEL == "all":
         tu.assert_result_close(res_other_grad, ref_grad)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add
     @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
@@ -474,9 +468,7 @@ def test_add__value_ranges(shape, value_range, dtype):
 @pytest.mark.add_
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("scalar", utils.SCALARS)
-@pytest.mark.parametrize(
-    "alpha", [1] if tu.LEVEL == "quick" else [0, 1, *utils.SCALARS]
-)
+@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -490,7 +482,7 @@ def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     tu.assert_result_close(inp, ref_inp)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.add_
     @pytest.mark.parametrize("broadcast_pair", _ADD_INPLACE_BROADCAST_PAIRS)
@@ -535,9 +527,7 @@ def test_add_out(shape, value_range, dtype):
 
 @pytest.mark.add_out
 @pytest.mark.parametrize("shape", tu.selected_shapes())
-@pytest.mark.parametrize(
-    "alpha", [1] if tu.LEVEL == "quick" else [0, 1, *utils.SCALARS]
-)
+@pytest.mark.parametrize("alpha", [1] if tu.QUICK_MODE else [0, 1, *utils.SCALARS])
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_add_out_alpha(shape, alpha, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])

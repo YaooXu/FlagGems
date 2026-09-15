@@ -86,14 +86,14 @@ _COLS_ALL = [
 
 def _col_cases():
     """(layout, size, nnz, blocks) cases for the quick vs full (default) level."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [("csr_batch", (2, 19, 7), 20, None)]
     return _COLS_CORE + _COLS_ALL
 
 
 def _col_value_range_cases():
     """Representative sparse + batched layouts for the value-range sweep."""
-    if tu.LEVEL == "quick":
+    if tu.QUICK_MODE:
         return [("csr", (5, 4), 6, None)]
     return [
         ("csr", (5, 4), 6, None),
@@ -593,7 +593,7 @@ def _nan_inf_csr(dtype):
     return torch.sparse_csr_tensor(crow, cols, values, shape)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.col_indices_copy
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)
@@ -610,7 +610,7 @@ if tu.LEVEL == "all":
         _assert_copy_semantics(res_out, ref_out, inp, ref_inp, (7,))
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.col_indices_copy_out
     @pytest.mark.parametrize("dtype", _NAN_INF_DTYPES)

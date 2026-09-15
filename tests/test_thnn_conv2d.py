@@ -20,7 +20,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-if tu.LEVEL == "quick":
+if tu.QUICK_MODE:
     THNN_CONV2D_CASES = [
         ((1, 2, 5, 5), (1, 2, 3, 3), (3, 3), (1, 1), (1, 1)),
     ]
@@ -219,7 +219,7 @@ def test_thnn_conv2d_value_ranges(
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.thnn_conv2d
     @pytest.mark.parametrize(
@@ -297,7 +297,7 @@ if tu.LEVEL == "all":
 # ---------------------------------------------------------------------------
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.thnn_conv2d
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)

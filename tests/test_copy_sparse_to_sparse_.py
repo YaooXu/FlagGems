@@ -320,7 +320,7 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     _assert_sparse_values_close(dst, src)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.copy_sparse_to_sparse_
     @pytest.mark.parametrize("layout", _NAN_INF_LAYOUTS)

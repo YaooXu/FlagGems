@@ -494,7 +494,7 @@ def test_sparse_csr_tensor_shape_levels(case, dtype, value_range):
     _assert_csr_equal(res_out, ref_out, dtype)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_csr_tensor
     @pytest.mark.parametrize("dtype", _BOUNDARY_CSR_DTYPES)

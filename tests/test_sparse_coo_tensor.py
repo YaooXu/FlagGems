@@ -572,7 +572,7 @@ def test_sparse_coo_tensor_value_ranges(value_range, case, dtype):
         tu.assert_result_close(res_out, ref_out)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.sparse_coo_tensor
     @pytest.mark.parametrize("case", _NAN_INF_CASES)

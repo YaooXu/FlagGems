@@ -320,7 +320,7 @@ def test_slow_conv_dilated2d_value_ranges(
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_dilated2d_backward
     @pytest.mark.parametrize(
@@ -387,7 +387,7 @@ if tu.LEVEL == "all":
         )
 
 
-if tu.LEVEL == "all":
+if not tu.QUICK_MODE:
 
     @pytest.mark.slow_conv_dilated2d_nan_inf
     @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
