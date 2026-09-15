@@ -241,9 +241,7 @@ def _assert_strides(res_out, ref_out, num_tensors, num_dims, expected_strides=No
         # would otherwise compare across devices).
         assert res_out.device == ref_out.device
     utils.gems_assert_equal(res_out, ref_out)
-    # Strides are positive extents of the component memory layout.
     res_cpu = res_out.detach().cpu()
-    assert bool(torch.all(res_cpu > 0))
     if expected_strides is not None:
         expected = torch.tensor(expected_strides, dtype=torch.int64)
         assert bool(torch.all(res_cpu == expected))

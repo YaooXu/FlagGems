@@ -147,18 +147,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_close(res_out, ref_out, dtype):
-    """Floats use ``gems_assert_close``; int/bool/fp8 must be bit-exact.
-
-    ``torch.testing.assert_close`` has no working tolerance path for fp8, and
-    the op is a pure gather, so fp8 is compared exactly like int/bool.
-    """
-    if (dtype.is_floating_point or dtype.is_complex) and dtype not in _FP8_DTYPE_SET:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
-
-
 def _expected_grads(grad_output, sizes):
     """Analytic gradient of a pure gather per input.
 
@@ -190,7 +178,7 @@ def test_cartesian_prod(sizes, dtype, value_range):
     res_out = _resolve_gems_op()(inp)
 
     assert res_out.dtype == ref_out.dtype == dtype
-    _assert_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
     # cartesian_prod is a pure gather: the inputs must not be mutated.
     for t, before in zip(inp, inp_before):
@@ -237,7 +225,7 @@ def test_cartesian_prod_non_contiguous(dtype):
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -298,7 +286,7 @@ if not tu.QUICK_MODE:
 
         # ...the candidate forward output must match the reference...
         res_out = _resolve_gems_op()(inp)
-        _assert_close(res_out, ref_out, dtype)
+        tu.assert_result_equal(res_out, ref_out)
 
         # ...and, if the candidate output is differentiable, its gradient must match
         # the analytic value too.

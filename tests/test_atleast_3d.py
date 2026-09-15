@@ -155,16 +155,6 @@ def _resolve_gems_op():
     return _resolve_named_gems_op("atleast_3d")
 
 
-def _assert_result(res_out, ref_out, dtype):
-    """Compare shape/dtype/values; fp8 uses the device-resident exact helper
-    (torch.testing has no CPU fp8 comparison support), everything else goes
-    through the tolerance-aware value-range helper (exact for int/bool)."""
-    if dtype in _FP8_DTYPES:
-        utils.gems_assert_equal(res_out, ref_out)
-    else:
-        tu.assert_result_equal(res_out, ref_out)
-
-
 @pytest.mark.atleast_3d
 @pytest.mark.parametrize("shape", _SHAPES)
 @pytest.mark.parametrize("dtype", ATLEAST_3D_DTYPES)
@@ -177,7 +167,7 @@ def test_atleast_3d(shape, dtype):
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     # A view/identity op must alias its input (Tensor(a)).
     assert res_out.data_ptr() == inp.data_ptr()
 
@@ -195,7 +185,7 @@ def test_atleast_3d_value_ranges(shape, dtype, value_range):
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     assert res_out.data_ptr() == inp.data_ptr()
 
 
@@ -218,7 +208,7 @@ def test_atleast_3d_sequence(shape, dtype):
 
     assert len(res_out) == len(ref_out) == 4
     for res, ref, src in zip(res_out, ref_out, inp):
-        _assert_result(res, ref, dtype)
+        tu.assert_result_equal(res, ref)
         # Each result is a view of its own input.
         assert res.data_ptr() == src.data_ptr()
 
@@ -240,7 +230,7 @@ def test_atleast_3d_sequence_value_ranges(dtype, value_range):
 
     assert len(res_out) == len(ref_out) == 3
     for res, ref, src in zip(res_out, ref_out, inp):
-        _assert_result(res, ref, dtype)
+        tu.assert_result_equal(res, ref)
         assert res.data_ptr() == src.data_ptr()
 
 
@@ -282,7 +272,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.atleast_3d(ref_inp)
         res_out = _resolve_gems_op()(inp)
 
-        _assert_result(res_out, ref_out, dtype)
+        tu.assert_result_equal(res_out, ref_out)
         assert res_out.data_ptr() == inp.data_ptr()
 
 
@@ -298,7 +288,7 @@ def test_atleast_3d_complex(dtype):
     ref_out = torch.ops.aten.atleast_3d(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     assert res_out.data_ptr() == inp.data_ptr()
 
 
@@ -319,7 +309,7 @@ if not tu.QUICK_MODE:
 
         # The candidate forward must match the reference...
         res_out = _resolve_gems_op()(inp)
-        _assert_result(res_out, ref_out, dtype)
+        tu.assert_result_equal(res_out, ref_out)
 
         # ...and, when the candidate view is autograd-aware (a compiled kernel that
         # returns a plain tensor is not), its gradient must match too.

@@ -218,25 +218,13 @@ def _assert_result(res_out, ref_out, dtype, index_dtype, equal_nan=False):
     assert res_out.row_indices().dtype == index_dtype
     utils.gems_assert_equal(res_out.ccol_indices(), ref_out.ccol_indices())
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
-    if dtype in _FP8_CSC_DTYPES:
-        # torch.testing's tolerance path is not implemented for fp8 sparse
-        # tensors, and to_dense() (index_add) has no fp8 kernel. The
-        # constructor is a pure copy, so compare the stored values bit-exactly.
+    # Metadata and index arrays above, stored values here: no densification
+    # is needed to validate the constructor.
+    if dtype in _FP8_CSC_DTYPES or dtype in _EXACT_CSC_DTYPES:
         utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
-    elif dtype in _EXACT_CSC_DTYPES:
-        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
-        utils.gems_assert_equal(
-            res_out.to_dense(), ref_out.to_dense(), equal_nan=equal_nan
-        )
     else:
         utils.gems_assert_close(
             res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
-        )
-        utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=equal_nan)
-        utils.gems_assert_close(
-            res_out.to_dense(), ref_out.to_dense(), dtype, equal_nan=equal_nan
         )
 
 

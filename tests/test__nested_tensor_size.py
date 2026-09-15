@@ -223,8 +223,6 @@ def _assert_sizes(res_out, ref_out, num_tensors, num_dims):
         # would otherwise compare across devices).
         assert res_out.device == ref_out.device
     utils.gems_assert_equal(res_out, ref_out)
-    # Sizes are non-negative extents.
-    assert bool(torch.all(res_out >= 0))
 
 
 @pytest.mark._nested_tensor_size

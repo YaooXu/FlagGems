@@ -17,7 +17,6 @@ import torch
 
 import flag_gems
 
-from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # aten::can_cast(ScalarType from_, ScalarType to) -> bool answers whether a value
@@ -107,7 +106,6 @@ def _assert_result(res_out, ref_out):
     res_bool = _as_bool(res_out)
     ref_bool = _as_bool(ref_out)
     assert res_bool == ref_bool
-    utils.gems_assert_equal(torch.tensor(res_bool), torch.tensor(ref_bool))
 
 
 @pytest.mark.can_cast

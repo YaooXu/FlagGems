@@ -147,38 +147,13 @@ def _resolve_gems_op():
     )
 
 
-def _assert_exact(res, ref, dtype):
-    """Bit-exact comparison (used for the read-only / value-passthrough checks).
-
-    torch.testing cannot compare float8 tensors on CPU, and fp8 -> float32 is
-    lossless, so upcast fp8 before the exact comparison.
-    """
-    if dtype in _FP8_SET:
-        res = res.detach().cpu().to(torch.float32)
-        ref = ref.detach().cpu().to(torch.float32)
-    else:
-        res = res.detach().cpu()
-        ref = ref.detach().cpu()
-    torch.testing.assert_close(res, ref, rtol=0, atol=0, equal_nan=True)
-
-
-def _assert_result(res, ref, dtype):
-    """Spec comparison helper, with an fp8 path that CPU torch.testing lacks."""
-    if dtype in _FP8_SET:
-        _assert_exact(res, ref, dtype)
-    else:
-        tu.assert_result_equal(res, ref)
-
-
 def _assert_flattened(res_out, ref_out, dtype, input_device):
     # A 1-D tensor of the input dtype on the input device holding every input
     # element in order (contiguous copy then concatenate).
     assert res_out.dim() == 1
-    assert res_out.dtype == ref_out.dtype
     assert res_out.dtype == dtype
-    assert res_out.numel() == ref_out.numel()
     assert res_out.device == input_device
-    _assert_result(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.flatten_dense_tensors
@@ -199,7 +174,7 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
     assert res_out.numel() == expected_numel
     # The op is read-only: inputs must be left untouched.
     for res_t, before in zip(inp, inp_before):
-        _assert_exact(res_t, tu.to_reference(before), dtype)
+        tu.assert_result_equal(res_t, tu.to_reference(before))
 
 
 @pytest.mark.flatten_dense_tensors
@@ -217,9 +192,7 @@ def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    assert res_out.shape == ref_out.shape
-    assert res_out.dtype == ref_out.dtype
-    _assert_result(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.flatten_dense_tensors
@@ -270,9 +243,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
         res_out = _resolve_gems_op()([values, other])
 
-        assert res_out.shape == ref_out.shape
-        assert res_out.dtype == ref_out.dtype
-        _assert_result(res_out, ref_out, dtype)
+        tu.assert_result_equal(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:

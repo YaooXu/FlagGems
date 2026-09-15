@@ -139,11 +139,7 @@ def _combinations_op():
 
 def _assert_match(res_out, ref_out, dtype):
     assert res_out.dtype == ref_out.dtype == dtype
-    if dtype in _FLOAT_CLOSE_DTYPES:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        # bool / integer / float8: the gather is exact, so equality is exact.
-        utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 def _expected_combination_grad(n, r, with_replacement, grad_output):

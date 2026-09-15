@@ -50,11 +50,6 @@ from . import test_utils as tu
 #     gradient adjoint(dy) (broadcast does not apply to a unary view op);
 #   * negative: 1-D inputs and non-tensor inputs raise on both the aten
 #     reference and the candidate.
-_FP8_DTYPES = [torch.float8_e4m3fn, torch.float8_e5m2]
-
-
-def _is_fp8(dtype):
-    return dtype in _FP8_DTYPES
 
 
 def _candidate_dtypes():
@@ -135,21 +130,9 @@ def _transposed_shape(shape):
     return shape
 
 
-def _assert_values_close(res_out, ref_out, dtype):
-    # fp8 has no direct torch.testing.assert_close support on this stack and
-    # the op is an exact view, so fp8/int/bool are compared bit-exactly while
-    # float/complex use the tolerance-aware helper.
-    if _is_fp8(dtype) or not (dtype.is_floating_point or dtype.is_complex):
-        utils.gems_assert_equal(res_out, ref_out)
-    else:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-
-
 def _assert_view_semantics(res_out, ref_out, inp):
     # adjoint returns an aliasing view (Tensor(a)): shape, strides, storage
     # offset, conjugation state and the shared storage must match aten exactly.
-    assert res_out.dtype == ref_out.dtype
-    assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()
     assert res_out._is_view() == ref_out._is_view()
@@ -169,7 +152,7 @@ def test_adjoint(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_values_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -187,7 +170,7 @@ def test_adjoint_value_ranges(shape, value_range, dtype):
     res_out = _resolve_gems_op()(inp)
 
     _assert_view_semantics(res_out, ref_out, inp)
-    _assert_values_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.adjoint
@@ -206,7 +189,7 @@ def test_adjoint_non_contiguous(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_values_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
 
@@ -227,7 +210,7 @@ def test_adjoint_toggle(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_values_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, base)
     assert not res_out.is_conj()
     assert not ref_out.is_conj()
@@ -284,7 +267,7 @@ def test_adjoint_mutation(shape, dtype):
     res_out.fill_(2.5)
     ref_out.fill_(2.5)
 
-    _assert_values_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     assert res_out.data_ptr() == inp.data_ptr()
     tu.assert_result_equal(inp, ref_inp)
 
@@ -312,7 +295,7 @@ if not tu.QUICK_MODE:
 
         # The candidate forward output must match the reference...
         res_out = _resolve_gems_op()(inp)
-        _assert_values_close(res_out, ref_out, dtype)
+        tu.assert_result_equal(res_out, ref_out)
         _assert_view_semantics(res_out, ref_out, inp)
 
         # ...and, if the candidate advertises autograd support, its gradient must
@@ -336,8 +319,7 @@ def test_adjoint_0d(dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_values_close(res_out, ref_out, dtype)
-    assert res_out.shape == ref_out.shape
+    tu.assert_result_equal(res_out, ref_out)
     assert res_out.is_conj() == ref_out.is_conj()
 
 

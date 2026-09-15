@@ -66,8 +66,6 @@ setattr(
 # (there is nothing to broadcast against) and forward-mode AD does not define a
 # backward.
 
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
 
 def _plain_dtype_supported(dtype):
     """Probe the tangent-None path for ``dtype`` on the active device."""
@@ -153,18 +151,6 @@ def _resolve_gems_op():
     )
 
 
-def _assert_close(res_out, ref_out, dtype):
-    if dtype in _FP8_DTYPES:
-        # torch.testing.assert_close cannot compare fp8 tensors directly on
-        # every torch build ("Comparing" raises). The op is a pure alias, so an
-        # exact fp32-cast comparison is bit-faithful.
-        utils.gems_assert_equal(res_out.to(torch.float32), ref_out.to(torch.float32))
-    elif dtype.is_floating_point or dtype.is_complex:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
-
-
 def _assert_primal_view(res_primal, ref_primal, dual):
     # _unpack_dual returns the primal as an aliasing view (Tensor(a)): the
     # observable layout must match aten exactly and the result must share
@@ -199,8 +185,8 @@ def test__unpack_dual_dual_tensor(shape, dtype):
         # A dual tensor created with a tangent must yield a tensor tangent, not
         # None.
         assert isinstance(res_tangent_out, torch.Tensor)
-        _assert_close(res_primal_out, ref_primal_out, dtype)
-        _assert_close(res_tangent_out, ref_tangent_out, dtype)
+        tu.assert_result_equal(res_primal_out, ref_primal_out)
+        tu.assert_result_equal(res_tangent_out, ref_tangent_out)
         _assert_primal_view(res_primal_out, ref_primal_out, dual)
 
 
@@ -246,7 +232,7 @@ def test__unpack_dual_plain_tensor(shape, level, dtype):
 
     assert ref_tangent_out is None
     assert res_tangent_out is None
-    _assert_close(res_primal_out, ref_primal_out, dtype)
+    tu.assert_result_equal(res_primal_out, ref_primal_out)
     _assert_primal_view(res_primal_out, ref_primal_out, inp)
 
 
@@ -297,8 +283,8 @@ def test__unpack_dual_non_contiguous(shape, dtype):
         assert res_primal_out.stride() == ref_primal_out.stride()
         assert res_primal_out.storage_offset() == ref_primal_out.storage_offset()
         assert res_primal_out.data_ptr() == primal.data_ptr()
-        _assert_close(res_primal_out, ref_primal_out, dtype)
-        _assert_close(res_tangent_out, ref_tangent_out, dtype)
+        tu.assert_result_equal(res_primal_out, ref_primal_out)
+        tu.assert_result_equal(res_tangent_out, ref_tangent_out)
 
 
 @pytest.mark._unpack_dual
@@ -326,7 +312,7 @@ def test__unpack_dual_mutation(shape, dtype):
         res_primal_out.fill_(2.5)
 
         assert res_primal_out.data_ptr() == dual.data_ptr()
-        _assert_close(res_primal_out, ref_primal_out, dtype)
+        tu.assert_result_equal(res_primal_out, ref_primal_out)
         utils.gems_assert_equal(primal, ref_primal)
 
 
@@ -387,8 +373,8 @@ def test__unpack_dual_empty(shape, dtype):
         dual = torch.ops.aten._make_dual(primal, tangent, level)
         res_primal_out, res_tangent_out = _resolve_gems_op()(dual, level)
 
-        _assert_close(res_primal_out, ref_primal_out, dtype)
-        _assert_close(res_tangent_out, ref_tangent_out, dtype)
+        tu.assert_result_equal(res_primal_out, ref_primal_out)
+        tu.assert_result_equal(res_tangent_out, ref_tangent_out)
         _assert_primal_view(res_primal_out, ref_primal_out, dual)
 
 

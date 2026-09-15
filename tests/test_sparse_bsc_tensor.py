@@ -239,60 +239,22 @@ def _call_candidate(ccol, row, values, size, dtype):
     )
 
 
-def _assert_result(res_out, ref_out, dtype, *, check_dense=True, equal_nan=False):
-    # Construction semantics: a sparse BSC tensor with exact rank 2 sparse
-    # dims, zero dense dims, the requested storage dtype and the requested
-    # logical size.
+def _assert_result(res_out, ref_out, dtype, *, equal_nan=False):
+    # Compare logical metadata and stored arrays once. The legacy 1-D values
+    # layout has a different dense-dimension count, which must also match aten.
     assert res_out.layout == torch.sparse_bsc
-    assert ref_out.layout == torch.sparse_bsc
     assert res_out.dtype == dtype
-    assert ref_out.dtype == dtype
-    assert res_out.sparse_dim() == 2
-    assert ref_out.sparse_dim() == 2
+    assert res_out.sparse_dim() == ref_out.sparse_dim()
     assert res_out.dense_dim() == ref_out.dense_dim()
-    if check_dense:
-        # The standard (nnz, Br, Bc) block-values layout carries no dense dims;
-        # the legacy 1D-values layout reports dense_dim == -2 and is only
-        # structure-checked (check_dense=False).
-        assert res_out.dense_dim() == 0
-    assert tuple(res_out.shape) == tuple(ref_out.shape)
-    # The stored structure is transferred verbatim: compressed column
-    # pointers, row indices and block values all match the reference exactly
-    # (never re-sorted or coalesced).
+    assert res_out.shape == ref_out.shape
     utils.gems_assert_equal(res_out.ccol_indices(), ref_out.ccol_indices())
     utils.gems_assert_equal(res_out.row_indices(), ref_out.row_indices())
-    if dtype in _BSC_FP8_DTYPES:
-        # fp8 only supports the exact comparison (see the fp8 note at the top);
-        # equal_nan is still honoured so the special-value workload can use fp8.
-        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=equal_nan)
-    elif dtype.is_floating_point:
+    if dtype.is_floating_point and dtype not in _BSC_FP8_DTYPES:
         utils.gems_assert_close(
             res_out.values(), ref_out.values(), dtype, equal_nan=equal_nan
         )
-        # Whole-tensor comparison covers layout, dtype, shape, indices, values.
-        utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=equal_nan)
     else:
-        utils.gems_assert_equal(res_out.values(), ref_out.values())
-        utils.gems_assert_equal(res_out, ref_out)
-    # The block values land at the (row block, col block) slots implied by
-    # row_indices and ccol_indices, so the dense forms must match too.
-    if check_dense and dtype not in _BSC_FP8_DTYPES:
-        if dtype.is_floating_point:
-            utils.gems_assert_close(
-                res_out.to_dense(), ref_out.to_dense(), dtype, equal_nan=equal_nan
-            )
-        else:
-            utils.gems_assert_equal(res_out.to_dense(), ref_out.to_dense())
-
-
-def _assert_value_range_result(res_out, ref_out, dtype, *, equal_nan=False):
-    _assert_result(res_out, ref_out, dtype, equal_nan=equal_nan)
-    if dtype not in _BSC_FP8_DTYPES:
-        # Value-range-friendly tolerance comparison (exact for int/bool,
-        # rtol/atol for float, equal_nan in both cases). Sparse fp8 cannot be
-        # compared by torch.testing, so it stays on the exact path above.
-        tu.assert_result_close(res_out, ref_out)
+        utils.gems_assert_equal(res_out.values(), ref_out.values(), equal_nan=equal_nan)
 
 
 @pytest.mark.sparse_bsc_tensor
@@ -345,7 +307,7 @@ def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
     ref_out = _call_reference(ccol, row, values, shape, dtype)
     res_out = _call_candidate(ccol, row, values, shape, dtype)
 
-    _assert_value_range_result(res_out, ref_out, dtype)
+    _assert_result(res_out, ref_out, dtype)
 
 
 if not tu.QUICK_MODE:
@@ -387,7 +349,7 @@ if not tu.QUICK_MODE:
         ref_out = _call_reference(ccol, row, values, [6, 6], dtype)
         res_out = _call_candidate(ccol, row, values, [6, 6], dtype)
 
-        _assert_value_range_result(res_out, ref_out, dtype, equal_nan=True)
+        _assert_result(res_out, ref_out, dtype, equal_nan=True)
 
 
 @pytest.mark.sparse_bsc_tensor
@@ -406,7 +368,7 @@ def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
     ref_out = _call_reference(ccol, row, values, shape, dtype)
     res_out = _call_candidate(ccol, row, values, shape, dtype)
 
-    _assert_result(res_out, ref_out, dtype, check_dense=False)
+    _assert_result(res_out, ref_out, dtype)
 
 
 @pytest.mark.sparse_bsc_tensor

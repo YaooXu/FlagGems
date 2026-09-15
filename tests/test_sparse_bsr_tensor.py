@@ -162,15 +162,6 @@ if not _VALUE_DTYPES:
     # fp8 dtypes.
     _VALUE_DTYPES = list(_REQUIRED_VALUE_DTYPES + _EXTRA_VALUE_DTYPES)
 
-# Exact-copy dtypes (integer/bool and the fp8 formats) are asserted bit-exactly
-# with gems_assert_equal; true float dtypes use the tolerance-based helper. The
-# fp8 formats live here because torch.testing.assert_close has no fp8
-# comparison kernel, while the values are copied verbatim anyway.
-_EXACT_VALUE_DTYPES = frozenset(
-    dtype
-    for dtype in _VALUE_DTYPES
-    if (not dtype.is_floating_point) or dtype in _FP8_DTYPES
-)
 _FLOAT_VALUE_DTYPES = [
     dtype
     for dtype in _VALUE_DTYPES
@@ -293,14 +284,6 @@ def _assert_bsr_structure(out, size, block, nnz, dtype, batch=None):
     assert (out.col_indices() >= 0).all()
 
 
-def _assert_sparse(res, ref, dtype, equal_nan=False):
-    if dtype in _EXACT_VALUE_DTYPES:
-        utils.gems_assert_equal(res, ref, equal_nan=equal_nan)
-    else:
-        utils.gems_assert_close(res, ref, dtype, equal_nan=equal_nan)
-    utils.gems_assert_equal(res.values(), ref.values(), equal_nan=equal_nan)
-
-
 def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op(
         "sparse_bsr_tensor", getattr(flag_gems, "sparse_bsr_tensor", None)
@@ -334,7 +317,7 @@ def test_sparse_bsr_tensor_crow_col_value_size(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
     # The constructor reads its inputs; it must not mutate them.
@@ -366,7 +349,7 @@ def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range)
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype, batch=batch)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
@@ -393,7 +376,7 @@ def test_sparse_bsr_tensor_crow_col_value_size_empty(case, dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, 0, dtype, batch=batch)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
@@ -423,7 +406,7 @@ def test_sparse_bsr_tensor_crow_col_value(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
@@ -454,7 +437,7 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype, batch=batch)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
     utils.gems_assert_equal(res_out.crow_indices(), ref_out.crow_indices())
     utils.gems_assert_equal(res_out.col_indices(), ref_out.col_indices())
 
@@ -498,7 +481,7 @@ if not tu.QUICK_MODE:
         )
 
         _assert_bsr_structure(res_out, size, block, nnz, dtype)
-        _assert_sparse(res_out, ref_out, dtype, equal_nan=True)
+        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
 
 
 @pytest.mark.sparse_bsr_tensor
@@ -543,7 +526,7 @@ def test_sparse_bsr_tensor_boundary_values(dtype):
     )
 
     _assert_bsr_structure(res_out, size, block, nnz, dtype)
-    _assert_sparse(res_out, ref_out, dtype)
+    utils.gems_assert_equal(res_out, ref_out)
 
 
 # ---------------------------------------------------------------------------

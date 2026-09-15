@@ -65,11 +65,6 @@ _DATA_DTYPES = tu.supported_dtypes("data", candidates=_DATA_DTYPE_CANDIDATES) or
     _DATA_DTYPE_CANDIDATES
 )
 
-# fp8 cannot go through torch.testing.assert_close directly (its isclose path
-# calls mul, which has no fp8 CUDA kernel); widening to float32 first is exact
-# and lets the shared comparison helper run.
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
 # Representative non-contiguous layouts: strided slice (::2), offset slice
 # (1:) and transpose. Each one aliases the input storage but has a layout the
 # element-wise path can no longer assume contiguous.
@@ -87,20 +82,10 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("data", getattr(flag_gems, "data", None))
 
 
-def _assert_close(res_out, ref_out, dtype):
-    if dtype in _FP8_DTYPES:
-        utils.gems_assert_equal(res_out.float(), ref_out.float(), equal_nan=True)
-    elif dtype.is_floating_point or dtype.is_complex:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
-
-
-def _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype):
+def _assert_alias_semantics(res_out, ref_out, inp, ref_inp):
     # The observable result must match aten exactly: same shape/dtype on the
     # same device as the input, aliasing the input storage with the identical
     # layout, and detached from autograd.
-    assert res_out.shape == ref_out.shape
     assert res_out.dtype == ref_out.dtype == inp.dtype
     assert res_out.device == inp.device
     assert res_out.data_ptr() == inp.data_ptr()
@@ -110,7 +95,7 @@ def _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype):
     assert not res_out.requires_grad
     assert res_out.is_leaf
     assert res_out.grad_fn is None
-    _assert_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.data
@@ -125,7 +110,7 @@ def test_data(shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.data
@@ -142,7 +127,7 @@ def test_data_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.data
@@ -164,7 +149,7 @@ def test_data_non_contiguous(layout, shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
 
 
 if not tu.QUICK_MODE:
@@ -205,9 +190,9 @@ def test_data_mutation(shape, dtype):
     res_out.add_(1.0)
     ref_out.add_(1.0)
 
-    _assert_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
     assert res_out.data_ptr() == inp.data_ptr()
-    _assert_close(inp, ref_inp, dtype)
+    tu.assert_result_equal(inp, ref_inp)
 
 
 @pytest.mark.data
@@ -226,7 +211,7 @@ def test_data_autograd_detach(shape, dtype):
     ref_out = torch.ops.aten.data(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_alias_semantics(res_out, ref_out, inp, ref_inp, dtype)
+    _assert_alias_semantics(res_out, ref_out, inp, ref_inp)
 
 
 @pytest.mark.data

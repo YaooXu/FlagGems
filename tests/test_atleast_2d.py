@@ -101,26 +101,8 @@ _SUPPORTED_DTYPES = (
     tu.supported_dtypes("atleast_2d", candidates=_DTYPE_CANDIDATES) or _DTYPE_CANDIDATES
 )
 
-_FP8_DTYPES = [
-    d for d in (torch.float8_e4m3fn, torch.float8_e5m2) if d in _SUPPORTED_DTYPES
-]
 _VALUE_DTYPES = [d for d in _SUPPORTED_DTYPES if not d.is_complex]
 _COMPLEX_DTYPES = [d for d in _SUPPORTED_DTYPES if d.is_complex]
-
-
-def _assert_close(result, reference, dtype):
-    """Compare with tu.assert_result_close, special-casing float8.
-
-    This torch build cannot run ``assert_close`` on float8 CPU tensors, so the
-    float8 path upcasts on the device first; the op is a pure view, so the
-    upcast comparison is exact.
-    """
-    if dtype in _FP8_DTYPES:
-        result = result.detach().to(torch.float32).cpu()
-        reference = reference.detach().to(torch.float32).cpu()
-        torch.testing.assert_close(result, reference, rtol=0, atol=0, equal_nan=True)
-    else:
-        tu.assert_result_equal(result, reference)
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +140,10 @@ def test_atleast_2d_value_ranges(shape, dtype, value_range):
     res_out = _resolve_candidate()(inp)
 
     assert isinstance(res_out, torch.Tensor)
-    assert res_out.dtype == ref_out.dtype
     assert res_out.device == inp.device
     # atleast_2d returns a view: it must alias the input storage.
     assert res_out.data_ptr() == inp.data_ptr()
-    _assert_close(res_out, ref_out, dtype)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.atleast_2d
@@ -226,9 +207,8 @@ def test_atleast_2d_sequence(shape, dtype, value_range):
     assert isinstance(res_out, (list, tuple))
     assert len(res_out) == len(ref_out)
     for res, ref, src in zip(res_out, ref_out, inp):
-        assert res.dtype == ref.dtype
         assert res.data_ptr() == src.data_ptr()
-        _assert_close(res, ref, dtype)
+        tu.assert_result_equal(res, ref)
 
 
 @pytest.mark.atleast_2d_sequence

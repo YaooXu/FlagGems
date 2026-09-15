@@ -155,14 +155,6 @@ def _to_ref(matrices):
     return [tu.to_reference(m) for m in matrices]
 
 
-def _assert_chain_close(res_out, ref_out, shapes, dtype):
-    del shapes
-    assert res_out.dtype == dtype
-    assert res_out.shape == ref_out.shape
-    ref = ref_out if ref_out.dtype == dtype else ref_out.to(dtype)
-    tu.assert_result_close(res_out, ref)
-
-
 # ---------------------------------------------------------------------------
 # default overload
 # ---------------------------------------------------------------------------
@@ -180,7 +172,7 @@ def test_chain_matmul(shapes, value_range, dtype):
     res_out = _resolve_gems_op()(inp)
 
     assert res_out.is_contiguous()
-    _assert_chain_close(res_out, ref_out, shapes, dtype)
+    tu.assert_result_close(res_out, ref_out.to(dtype))
 
 
 @pytest.mark.chain_matmul
@@ -196,7 +188,7 @@ def test_chain_matmul_non_contiguous(shapes, dtype):
     ref_out = torch.ops.aten.chain_matmul(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_chain_close(res_out, ref_out, shapes, dtype)
+    tu.assert_result_close(res_out, ref_out.to(dtype))
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +217,7 @@ def test_chain_matmul_out(shapes, value_range, dtype):
     # The .out overload must write into and return the caller's buffer.
     assert ref_ret is ref_out
     assert res_ret is out
-    _assert_chain_close(out, ref_out, shapes, dtype)
+    tu.assert_result_close(out, ref_out.to(dtype))
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +281,7 @@ if not tu.QUICK_MODE:
 
         # The candidate forward must match the native-dtype reference...
         res_out = _resolve_gems_op()(inp)
-        _assert_chain_close(res_out, ref_out, shapes, dtype)
+        tu.assert_result_close(res_out, ref_out.to(dtype))
 
         assert res_out.requires_grad
         res_grads = torch.autograd.grad(res_out, inp, grad_outputs=grad)

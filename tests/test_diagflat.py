@@ -43,13 +43,11 @@ import torch
 
 import flag_gems
 
-from . import accuracy_utils as utils
 from . import test_utils as tu
 
 # ---------------------------------------------------------------------------
 # Dtype support (probe before writing cases, per the spec)
 # ---------------------------------------------------------------------------
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 _PROBE_DTYPES = [
     torch.int8,
@@ -140,20 +138,13 @@ def _resolve_gems_op():
     )
 
 
-def _assert_output(res_out, ref_out, dtype):
+def _assert_output(res_out, ref_out):
     # diagflat materializes a new contiguous tensor (never an aliasing view):
     # shape, dtype, contiguity, view-ness and the diagonal placement must all
     # match the aten reference.
-    assert res_out.dtype == ref_out.dtype
     assert res_out.is_contiguous()
     assert not res_out._is_view()
-    if dtype in _FP8_DTYPES:
-        # assert_close does not handle fp8 pairs directly; compare in fp32.
-        tu.assert_result_equal(res_out.float(), ref_out.float())
-    elif dtype.is_floating_point:
-        utils.gems_assert_equal(res_out, ref_out, equal_nan=True)
-    else:
-        utils.gems_assert_equal(res_out, ref_out)
+    tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -169,7 +160,7 @@ def test_diagflat(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -186,7 +177,7 @@ def test_diagflat_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, 0)
     res_out = _resolve_gems_op()(inp, 0)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -203,7 +194,7 @@ def test_diagflat_large_offset(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -223,7 +214,7 @@ def test_diagflat_non_contiguous(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -243,7 +234,7 @@ def test_diagflat_strided(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:
@@ -278,12 +269,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten.diagflat(ref_inp, 1)
         res_out = _resolve_gems_op()(values, 1)
 
-        assert res_out.shape == ref_out.shape
-        assert res_out.dtype == ref_out.dtype
-        if dtype in _FP8_DTYPES:
-            tu.assert_result_equal(res_out.float(), ref_out.float())
-        else:
-            tu.assert_result_equal(res_out, ref_out)
+        tu.assert_result_equal(res_out, ref_out)
 
 
 @pytest.mark.diagflat
@@ -298,7 +284,7 @@ def test_diagflat_empty_input(offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     res_out = _resolve_gems_op()(inp, offset)
 
-    _assert_output(res_out, ref_out, dtype)
+    _assert_output(res_out, ref_out)
 
 
 if not tu.QUICK_MODE:

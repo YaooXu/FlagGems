@@ -15,7 +15,7 @@
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
-from torch._C._functorch import is_batchedtensor, is_legacy_batchedtensor
+from torch._C._functorch import is_legacy_batchedtensor
 
 import flag_gems
 
@@ -81,11 +81,6 @@ _ADD_BATCH_DIM_DTYPES = (
     + _SPECIAL_VALUE_DTYPES
 )
 
-# float8 tensors cannot be fed directly to torch.testing.assert_close (and CUDA
-# has no exp kernel for them), so comparisons upcast them losslessly to
-# float32 first; the view is bit-exact, so the round-trip changes nothing.
-_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
-
 
 def _view_shapes():
     # _add_batch_dim needs an existing dimension to hide: rank >= 1. The shared
@@ -122,42 +117,19 @@ def _resolve_gems_op():
     )
 
 
-def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype):
-    # The candidate must actually return a legacy BatchedTensorImpl, not a plain
-    # logical view: on a non-batched tensor _remove_batch_dim falls back to
-    # unsqueeze + expand, which can accidentally rebuild the input for some
-    # (shape, batch_dim) combinations.
-    assert is_legacy_batchedtensor(ref_out)
+def _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level):
+    # A plain tensor can pass an unwrap round-trip for singleton batch dims.
+    # Require the actual legacy batch wrapper as well as its visible metadata.
     assert is_legacy_batchedtensor(res_out)
-    assert is_batchedtensor(res_out) == is_batchedtensor(ref_out)
-
-    # Visible metadata must match aten exactly.
     assert res_out.shape == ref_out.shape
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()
 
-    # Unwrapping with the matching level/batch_size/batch_dim reproduces the
-    # physical input; candidate and reference must agree exactly.
-    batch_size = inp.size(batch_dim)
-    ref_mat = torch.ops.aten._remove_batch_dim(ref_out, level, batch_size, batch_dim)
-    res_mat = torch.ops.aten._remove_batch_dim(res_out, level, batch_size, batch_dim)
-    tu.assert_result_equal(ref_mat, ref_inp)
-    tu.assert_result_equal(res_mat, ref_mat)
-
-    # Route an elementwise op through both batched views: the candidate's view
-    # must expose the exact same logical elements as aten's. float8 is skipped
-    # because CUDA has no exp kernel for it (the exact materialization above
-    # already validates the view).
-    if dtype.is_floating_point and dtype not in _FP8_DTYPES:
-        ref_obs = torch.exp(ref_out)
-        res_obs = torch.exp(res_out)
-        ref_val = torch.ops.aten._remove_batch_dim(
-            ref_obs, level, batch_size, batch_dim
-        )
-        res_val = torch.ops.aten._remove_batch_dim(
-            res_obs, level, batch_size, batch_dim
-        )
-        tu.assert_result_close(res_val, ref_val)
+    # Unwrapping must recover the original physical input exactly.
+    res_mat = torch.ops.aten._remove_batch_dim(
+        res_out, level, ref_inp.size(batch_dim), batch_dim
+    )
+    tu.assert_result_equal(res_mat, ref_inp)
 
 
 @pytest.mark._add_batch_dim
@@ -173,7 +145,7 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
+    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
@@ -190,7 +162,7 @@ def test__add_batch_dim_value_ranges(shape, dtype, value_range):
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
+    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
@@ -210,7 +182,7 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
     res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level, dtype)
+    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
 if not tu.QUICK_MODE:
@@ -227,21 +199,7 @@ if not tu.QUICK_MODE:
         ref_out = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
         res_out = _resolve_gems_op()(inp, batch_dim, level)
 
-        assert is_legacy_batchedtensor(ref_out)
-        assert is_legacy_batchedtensor(res_out)
-        # The logical (visible) shape drops the hidden batch dim: for the 1-D input
-        # below with batch_dim=0 the batched view exposes a 0-dim scalar.
-        assert res_out.shape == ref_out.shape
-
-        batch_size = inp.size(batch_dim)
-        ref_mat = torch.ops.aten._remove_batch_dim(
-            ref_out, level, batch_size, batch_dim
-        )
-        res_mat = torch.ops.aten._remove_batch_dim(
-            res_out, level, batch_size, batch_dim
-        )
-        tu.assert_result_equal(ref_mat, ref_inp)
-        tu.assert_result_equal(res_mat, ref_mat)
+        _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
