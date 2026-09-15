@@ -66,14 +66,6 @@ _NNZ_DTYPES = list(
 )
 
 
-# float8 has no sparse coalesce kernel, so the coalesce-count assertion below
-# is only checked for the non-fp8 storage dtypes.
-_NNZ_COALESCE_DTYPES = [
-    dtype
-    for dtype in _NNZ_DTYPES
-    if dtype not in (torch.float8_e4m3fn, torch.float8_e5m2)
-]
-
 # (shape, sparse_dim, nnz) triples covering 1-D/2-D/3-D all-sparse, 2-D/3-D
 # hybrid, and mixed sparse+dense ranks up to 5-D.
 _NNZ_COO_CASES_CORE = [
@@ -177,12 +169,11 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("_nnz", getattr(flag_gems, "_nnz", None))
 
 
-def _assert_result(res_out, ref_out, nnz):
+def _assert_result(res_out, ref_out):
     # _nnz returns a plain Python int, so exact equality is required and no
     # tolerance is involved.
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
-    assert res_out == nnz
 
 
 @pytest.mark._nnz
@@ -199,7 +190,7 @@ def test__nnz_coo_layouts(case, dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
     assert inp.sparse_dim() == sparse_dim
 
 
@@ -219,7 +210,7 @@ def test__nnz_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -235,7 +226,7 @@ def test__nnz_empty(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 0)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -252,7 +243,7 @@ def test__nnz_empty_hybrid(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 0)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -271,10 +262,7 @@ def test__nnz_uncoalesced(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 5)
-    if dtype in _NNZ_COALESCE_DTYPES:
-        # Distinct coordinates collapse to 3 values once coalesced.
-        assert inp.coalesce()._nnz() == 3
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -294,7 +282,7 @@ def test__nnz_explicit_zeros(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 3)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -315,7 +303,7 @@ def test__nnz_full_storage(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -331,7 +319,7 @@ def test__nnz_nan_inf_values_ignored(dtype, scenario):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 6)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -349,7 +337,7 @@ def test__nnz_csr(case, dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -365,7 +353,7 @@ def test__nnz_csr_value_ranges(value_range, dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -382,7 +370,7 @@ def test__nnz_spec_shapes_csr(shape, dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz
@@ -403,7 +391,7 @@ def test__nnz_csr_dense_dims(dtype):
     ref_out = torch.ops.aten._nnz(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, nnz)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._nnz

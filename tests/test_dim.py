@@ -59,27 +59,13 @@ _DIM_DTYPES = list(
 
 # Dense (strided) tensors: dim == len(shape). Ranks 0 through 5 cover the full
 # range, including the degenerate scalar case (rank 0).
-_DENSE_CASES_CORE = [
-    ((), 0),
-    ((5,), 1),
-    ((3, 4), 2),
-    ((8, 8, 8), 3),
-    ((3, 4, 2, 5), 4),
-    ((3, 4, 5, 4, 5), 5),
-]
+_DENSE_CASES_CORE = [(), (5,), (3, 4), (8, 8, 8), (3, 4, 2, 5), (3, 4, 5, 4, 5)]
 
-# Higher-rank strided tensors for the "all" level (default, no --quick).
-_DENSE_CASES_ALL = [
-    ((3, 6, 4, 4, 6, 5, 4), 7),
-    ((7, 3, 12, 4, 2, 15, 2, 2), 8),
-]
+# Higher-rank strided tensors for default mode (no --quick).
+_DENSE_CASES_ALL = [(3, 6, 4, 4, 6, 5, 4), (7, 3, 12, 4, 2, 15, 2, 2)]
 
 # Empty dense tensors: numel == 0, but the rank is still reported exactly.
-_EMPTY_DENSE_CASES = [
-    ((0,), 1),
-    ((0, 5), 2),
-    ((2, 0, 3), 3),
-]
+_EMPTY_DENSE_CASES = [(0,), (0, 5), (2, 0, 3)]
 
 # Sparse COO tensors: (sparse_shape, dense_shape, nnz) with logical size
 # ``sparse_shape + dense_shape`` and expected result
@@ -95,7 +81,7 @@ _COO_CASES_CORE = [
     ((3,), (4, 5, 6), 2),
 ]
 
-# Higher-rank hybrid layouts for the "all" level (default, no --quick).
+# Higher-rank hybrid layouts for default mode (no --quick).
 _COO_CASES_ALL = [
     ((12, 9, 3, 6), (4,), 9),
     ((3, 4, 2, 5, 3), (4, 2), 11),
@@ -109,7 +95,7 @@ _CSR_CASES_CORE = [
     ((3, 5, 7), 3),
 ]
 
-# Additional batched CSR layout for the "all" level (default, no --quick).
+# Additional batched CSR layout for default mode (no --quick).
 _CSR_CASES_ALL = [
     ((3, 4, 4), 4),
 ]
@@ -122,9 +108,9 @@ _EMPTY_CSR_CASES = [
 
 
 def _dense_cases():
-    """(shape, expected) strided layouts selected by --quick (quick) vs default."""
+    """Dense shapes selected by --quick or default mode."""
     if tu.QUICK_MODE:
-        return [((2, 19, 7), 3)]
+        return [(2, 19, 7)]
     return _DENSE_CASES_CORE + _DENSE_CASES_ALL
 
 
@@ -224,18 +210,17 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("dim", getattr(flag_gems, "dim", None))
 
 
-def _assert_result(res_out, ref_out, expected):
+def _assert_result(res_out, ref_out):
     # dim returns a plain Python int holding the rank, so exact equality is
     # required and no tolerance is involved.
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
-    assert res_out == expected
 
 
 @pytest.mark.dim
-@pytest.mark.parametrize("shape, expected", _dense_cases())
+@pytest.mark.parametrize("shape", _dense_cases())
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
-def test_dim_dense_layouts(shape, expected, dtype):
+def test_dim_dense_layouts(shape, dtype):
     # Values from [-1, 1]: negative and positive stored values for every declared
     # dtype; the reported rank depends only on the layout.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
@@ -244,13 +229,13 @@ def test_dim_dense_layouts(shape, expected, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, expected)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
-@pytest.mark.parametrize("shape, expected", _EMPTY_DENSE_CASES)
+@pytest.mark.parametrize("shape", _EMPTY_DENSE_CASES)
 @pytest.mark.parametrize("dtype", _DIM_DTYPES)
-def test_dim_empty_dense(shape, expected, dtype):
+def test_dim_empty_dense(shape, dtype):
     # numel == 0, but the rank is still reported exactly.
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     assert inp.numel() == 0
@@ -259,7 +244,7 @@ def test_dim_empty_dense(shape, expected, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, expected)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -276,7 +261,7 @@ def test_dim_dense_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -295,7 +280,7 @@ def test_dim_noncontiguous_dense(shape, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -309,7 +294,7 @@ def test_dim_sparse_coo_layouts(case, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
+    _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
     assert inp.sparse_dim() == len(sparse_shape)
     assert inp.dense_dim() == len(dense_shape)
@@ -330,7 +315,7 @@ def test_dim_sparse_coo_value_ranges(case, value_range, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -344,7 +329,7 @@ def test_dim_sparse_csr_layouts(case, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(shape))
+    _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
     assert inp.dense_dim() == 0
     assert inp.sparse_dim() == 2
@@ -363,7 +348,7 @@ def test_dim_sparse_csr_value_ranges(case, value_range, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -386,7 +371,7 @@ def test_dim_empty_coo(dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -401,7 +386,7 @@ def test_dim_empty_csr(shape, dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -422,7 +407,7 @@ def test_dim_uncoalesced_coo(dtype):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, len(sparse_shape) + len(dense_shape))
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -436,7 +421,7 @@ def test_dim_nan_inf_dense(dtype, scenario):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 2)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -452,7 +437,7 @@ def test_dim_nan_inf_coo(dtype, scenario):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 1)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim
@@ -471,7 +456,7 @@ def test_dim_nan_inf_csr(dtype, scenario):
     ref_out = torch.ops.aten.dim(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 2)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark.dim

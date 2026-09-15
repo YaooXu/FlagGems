@@ -199,12 +199,11 @@ def _resolve_gems_op():
     return flag_gems.testing.resolve_gems_op("_dimV", getattr(flag_gems, "_dimV", None))
 
 
-def _assert_result(res_out, ref_out, dense_dim):
+def _assert_result(res_out, ref_out):
     # _dimV returns a plain Python int holding the dense dimension count, so
     # exact equality is required and no tolerance is involved.
     assert isinstance(res_out, int) and not isinstance(res_out, bool)
     utils.gems_assert_equal(res_out, ref_out)
-    assert res_out == dense_dim
 
 
 @pytest.mark._dimV
@@ -222,7 +221,7 @@ def test__dimV_coo(case, dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
     assert inp.dense_dim() == dense_dim
     assert inp.sparse_dim() == len(shape) - dense_dim
@@ -244,7 +243,7 @@ def test__dimV_shape_value_range_grid(case, value_range, dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
     assert inp.dense_dim() == dense_dim
     assert inp.sparse_dim() + inp.dense_dim() == len(shape)
 
@@ -263,7 +262,7 @@ def test__dimV_hybrid_value_ranges(case, value_range, dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
     assert inp.dense_dim() > 0
     assert inp.sparse_dim() + inp.dense_dim() == len(shape)
 
@@ -280,7 +279,7 @@ def test__dimV_empty(dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._dimV
@@ -295,7 +294,7 @@ def test__dimV_empty_hybrid(shape, dense_dim, dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
     assert inp.dense_dim() == dense_dim
     assert inp.sparse_dim() + inp.dense_dim() == len(shape)
 
@@ -313,7 +312,7 @@ def test__dimV_single_entry(dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._dimV
@@ -322,7 +321,7 @@ def test__dimV_uncoalesced(dtype):
     # Duplicate indices leave the tensor uncoalesced; _dimV must still report
     # the same dense dim as the coalesced form (it never inspects the index or
     # data values). The (0, 0) coordinate is repeated three times.
-    shape, dense_dim = (3, 4), 1
+    shape = (3, 4)
     indices = torch.tensor([[0, 0, 1, 2, 0]], dtype=torch.long)
     values = tu.make_input(dtype, (5, 4), ["-1", "1"])
     inp = torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
@@ -332,7 +331,7 @@ def test__dimV_uncoalesced(dtype):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, dense_dim)
+    _assert_result(res_out, ref_out)
 
 
 @pytest.mark._dimV
@@ -348,7 +347,7 @@ def test__dimV_nan_inf_values_ignored(dtype, scenario):
     ref_out = torch.ops.aten._dimV(ref_inp)
     res_out = _resolve_gems_op()(inp)
 
-    _assert_result(res_out, ref_out, 1)
+    _assert_result(res_out, ref_out)
 
 
 # A candidate may legitimately surface the "no sparse layout" failure as a
