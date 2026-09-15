@@ -248,15 +248,13 @@ def test__choose_qparams_per_tensor_constant(value, dtype, reduce_range):
 @pytest.mark._choose_qparams_per_tensor
 @pytest.mark.parametrize("reduce_range", _CQPT_REDUCE_RANGE)
 def test__choose_qparams_per_tensor_inf(reduce_range):
-    """inf / -inf are accepted: scale = inf, zero_point = INT32_MIN."""
+    """Match reference qparams for inputs containing inf / -inf."""
     inp = torch.tensor(_CQPT_INF_INPUT, dtype=torch.float32, device=flag_gems.device)
     ref_inp = tu.to_reference(inp)
 
     ref_pair = torch.ops.aten._choose_qparams_per_tensor(ref_inp, reduce_range)
     res_pair = _resolve_gems_op()(inp, reduce_range)
 
-    assert ref_pair[0] == float("inf")
-    assert ref_pair[1] == torch.iinfo(torch.int32).min
     _assert_pair(res_pair, ref_pair)
 
 
