@@ -20,48 +20,18 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# aten::sparse_bsc_tensor.ccol_row_value_size(Tensor ccol_indices,
-#     Tensor row_indices, Tensor values, int[] size, *, ScalarType? dtype=None,
-#     Layout? layout=None, Device? device=None, bool? pin_memory=False) -> Tensor
-# constructs a sparse BSC tensor with the given compressed column pointers
-# (length n_col_blocks + 1), stored row indices (length nnz) and block values
-# (shape (nnz, Br, Bc)), laid out over a logical 2-D matrix of size ``size``.
-# There is no .default overload (the size-less sibling
-# ``aten::sparse_bsc_tensor.ccol_row_value`` infers the same shape whenever
-# ``size`` equals the block-grid extent), so the reference always calls the
-# schema above; the candidate is resolved by the same public operator name and
-# invoked with exactly the same arguments (rule 6: torch_op and gems_op share
-# call semantics).
-#
-# Construction copies the raw stored entries and index arrays verbatim (never
-# coalescing duplicates or re-sorting rows), so the value comparisons below are
-# bit-for-bit for every storage dtype. The op is a pure sparse factory: it
-# performs no arithmetic on the values (nan/inf/-0.0 survive unchanged) and it
-# is neither differentiable nor broadcastable, so the backward and broadcast
-# dimensions of the regular-operator spec do not apply; the value-range, shape,
-# nan/inf and negative dimensions are covered here instead.
-#
-# Dtype coverage (regular-operator spec): the required int8 / uint8 /
-# float8_e4m3fn / float8_e5m2 / fp32 / bf16 / fp16 / int32 / int64 set, plus
-# the shared fp64 / int16 sets and bool.
-# Both supported index dtypes (int32, int64) are exercised for the structure.
-_BSC_DTYPES = list(
-    dict.fromkeys(
-        [
-            *tu.REQUIRED_DTYPES,  # int8, uint8, fp8_e4m3fn/e5m2, fp32, bf16, fp16, int32, int64
-            *utils.ALL_FLOAT_DTYPES,  # + float64 where supported
-            *utils.ALL_INT_DTYPES,  # + int16 where supported
-            *utils.BOOL_TYPES,
-        ]
-    )
+# Build compressed sparse storage from index and value tensors.
+# Pass dtype explicitly: these ATen factories default to float32.
+# Accelerator inputs also need an explicit device.
+_BSC_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool]
 )
-
 _INDEX_DTYPES = [torch.int32, torch.int64]
 
-# (logical matrix shape, block size, nnz) structural cases: 2x2 row/col blocks
-# with partial and full fill, larger blocks, a non-square matrix, 3x3 blocks,
-# a single row block and the empty (nnz == 0) tensor. Every matrix dimension is
-# an exact multiple of its block dimension.
+# (matrix_shape, block_shape, nnz).
 _BSC_CASES = [
     ((4, 4), (2, 2), 3),  # 2x2 row/col blocks, partial fill
     ((8, 8), (2, 2), 16),  # full 4x4 block grid
@@ -72,16 +42,12 @@ _BSC_CASES = [
     ((4, 4), (2, 2), 0),  # empty (nnz == 0)
 ]
 
-# Value-range sweep subset: small enough to keep the parametrization count
-# bounded while covering a partial block-grid fill and a non-square matrix.
 _BSC_VALUE_CASES = [
     ((4, 4), (2, 2), 3),
     ((6, 8), (2, 2), 6),
 ]
 
-# Legacy storage: values of shape (nnz,) are 1x1 blocks. The reference accepts
-# this layout but cannot densify it (to_dense() fails), so these workloads
-# assert the constructed structure only.
+# Legacy 1-D values cannot be densified; compare the stored structure.
 _LEGACY_CASES = [
     ((4, 5), 3),
     ((4, 5), 0),
@@ -89,15 +55,7 @@ _LEGACY_CASES = [
 
 
 def _bsc_shape_level_cases():
-    """The shared tu.selected_shapes() levels mapped onto BSC layouts.
-
-    A BSC tensor stores a 2-D logical matrix; any leading dimensions of the
-    shared shapes are batch dims that this construction path (values of shape
-    (nnz, Br, Bc), 2 sparse dims) does not carry, so only the trailing two dims
-    are used. The block size is chosen as the largest power of two (up to 2)
-    dividing each dimension, and nnz is capped so the large shared shapes stay
-    cheap.
-    """
+    # Use trailing matrix dimensions and blocks that divide each extent.
     cases = []
     for shape in tu.selected_shapes():
         shape = tuple(shape)
@@ -114,11 +72,7 @@ def _bsc_shape_level_cases():
 
 
 def _make_bsc_structure(shape, block, nnz, seed=0, index_dtype=torch.int64):
-    # Deterministic CPU-side generation of ccol_indices and row_indices: the
-    # nnz entries are spread across the n_col_blocks column blocks by random
-    # cut points, and the row indices are drawn with replacement (duplicates
-    # and unsorted rows are legal BSC structure that the construction must
-    # keep verbatim).
+    # Seeded column splits permit duplicate and unsorted row indices.
     gen = torch.Generator("cpu").manual_seed(seed)
     M, N = shape
     Br, Bc = block
@@ -148,9 +102,6 @@ def _make_bsc_structure(shape, block, nnz, seed=0, index_dtype=torch.int64):
 def _make_bsc_inputs(
     shape, block, nnz, dtype, value_range, seed=0, index_dtype=torch.int64
 ):
-    # Block values come from the shared value-range framework (tu.make_input):
-    # range-bound symbols resolve per-dtype, so every storage dtype gets valid
-    # inputs within the requested numeric range.
     ccol, row = _make_bsc_structure(
         shape, block, nnz, seed=seed, index_dtype=index_dtype
     )
@@ -194,8 +145,6 @@ def _call_candidate(ccol, row, values, size, dtype):
 
 
 def _assert_result(res_out, ref_out, dtype):
-    # Compare logical metadata and stored arrays once. The legacy 1-D values
-    # layout has a different dense-dimension count, which must also match aten.
     assert res_out.layout == torch.sparse_bsc
     assert res_out.dtype == dtype
     assert res_out.sparse_dim() == ref_out.sparse_dim()
@@ -227,9 +176,6 @@ def test_sparse_bsc_tensor(case, dtype, index_dtype):
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
 def test_sparse_bsc_tensor_shape_levels(case, dtype, index_dtype):
-    # The shared shape levels from the spec, mapped onto (nrows, ncols) BSC
-    # layouts: the constructed tensor's logical size must equal the requested
-    # shape and its (nnz, Br, Bc) values must round-trip verbatim.
     shape, block, nnz = case
     ccol, row, values = _make_bsc_inputs(
         shape, block, nnz, dtype, ["-1", "1"], index_dtype=index_dtype
@@ -247,9 +193,6 @@ def test_sparse_bsc_tensor_shape_levels(case, dtype, index_dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
 def test_sparse_bsc_tensor_value_ranges(case, value_range, dtype):
-    # Value-range sweep: construction copies the block values verbatim, so
-    # every range (including the dtype-extreme [0, max] / [min, 0] ranges) must
-    # round-trip exactly for every declared storage dtype.
     shape, block, nnz = case
     ccol, row, values = _make_bsc_inputs(shape, block, nnz, dtype, value_range)
 
@@ -279,10 +222,6 @@ def test_sparse_bsc_tensor_nan_inf(dtype, scenario):
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
 def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
-    # Legacy storage: values has shape (nnz,) instead of (nnz, Br, Bc). The
-    # reference cannot densify such tensors, so the workload asserts the
-    # constructed structure only (layout, logical size, dtype, and verbatim
-    # ccol/row/values).
     shape, nnz = case
     ccol, row = _make_bsc_structure(shape, (1, 1), nnz, index_dtype=index_dtype)
     values = tu.make_input(dtype, (nnz,), ["-1", "1"]).to(flag_gems.device)
@@ -297,10 +236,6 @@ def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
 def test_sparse_bsc_tensor_uncoalesced(dtype, index_dtype):
-    # The (row block 0, col block 0) slot is stored twice (row_indices[0] ==
-    # row_indices[1] inside column block 0), so the source is uncoalesced; the
-    # construction must transfer the duplicate entries verbatim into the
-    # tensor (never coalesce them) and the dense form accumulates both blocks.
     ccol = torch.tensor([0, 2, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=index_dtype, device=flag_gems.device)
     values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
@@ -315,9 +250,6 @@ def test_sparse_bsc_tensor_uncoalesced(dtype, index_dtype):
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
 def test_sparse_bsc_tensor_unsorted_rows(dtype, index_dtype):
-    # Row indices inside a column block are deliberately not sorted
-    # (1, 0, 1 in column block 0); the construction must preserve the stored
-    # order instead of re-sorting the entries.
     ccol = torch.tensor([0, 3, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([1, 0, 1], dtype=index_dtype, device=flag_gems.device)
     values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
@@ -330,8 +262,6 @@ def test_sparse_bsc_tensor_unsorted_rows(dtype, index_dtype):
 
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_dtype_mismatch():
-    # The values tensor dtype must match the requested sparse tensor dtype;
-    # the reference raises RuntimeError and the candidate must fail too.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float64, (3, 2, 2), ["-1", "1"])
@@ -344,7 +274,6 @@ def test_sparse_bsc_tensor_negative_dtype_mismatch():
 
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_layout():
-    # Only the sparse_bsc layout is accepted; any other layout raises.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
@@ -376,8 +305,6 @@ def test_sparse_bsc_tensor_negative_layout():
 
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_size():
-    # A negative logical size is rejected (numel overflow); the candidate must
-    # fail too rather than accept a nonsensical shape.
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
@@ -409,8 +336,6 @@ def test_sparse_bsc_tensor_negative_size():
 
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_non_tensor():
-    # The aten schema requires a Tensor for ccol_indices; a Python scalar hits
-    # the invalid-argument path and raises. The candidate must reject it too.
     row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
 
