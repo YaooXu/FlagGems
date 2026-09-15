@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -21,11 +23,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_new_zeros_with_same_feature_meta`` starts with an underscore, and
-# ``pytest.mark`` refuses to generate a marker via attribute access for such
-# names. Register the markers directly on the MarkGenerator so
-# ``@pytest.mark._new_zeros_with_same_feature_meta`` and ``-m
-# _new_zeros_with_same_feature_meta`` both work.
+# Register underscore-prefixed pytest markers explicitly.
 setattr(
     pytest.mark,
     "_new_zeros_with_same_feature_meta",
@@ -43,35 +41,8 @@ setattr(
     ),
 )
 
-# aten::_new_zeros_with_same_feature_meta(Tensor self, Tensor other, *, int
-# self_num_batch_dims=0) -> Tensor is a pure allocation helper (used by
-# torch.distributions.Independent.expand): it returns a zero tensor whose shape
-# is ``self.shape[:self_num_batch_dims] + other.shape`` (N == self.dim()
-# concatenates the whole self shape; N is keyword-only) and whose dtype/device/
-# layout come from ``other`` (the "feature meta"). The op never reads the
-# payload values, so the output is always an exact zero fill and the
-# value-range / nan-inf dimensions below only exercise input construction.
-#
-# Regular-operator spec mapping:
-#   * Value ranges -- all five spec ranges ([-1,1], [0,1], [-1,0], [0,max],
-#     [min,0]) over every declared storage dtype;
-#     the op ignores values, so the output is identical for every range.
-#   * Shape levels -- ``tu.selected_shapes()`` (quick/default via ``--quick``) are
-#     placed in both the self and other position, with N = 0, 1 and 2 where
-#     valid; the main grid also covers full-rank shape concatenation.
-#   * Broadcast -- N/A: the op concatenates shapes, it does not compute on
-#     values, so there is nothing to broadcast.
-#   * Backward -- the result has no autograd graph, even when either input
-#     requires gradients.
-#   * nan/inf -- the payloads are ignored; a nan/inf/-inf filled input still
-#     yields an exact zero output.
-#   * Negative cases -- N < 0, non-tensor arguments and a wrong-dtype .out
-#     tensor all raise on the reference and must raise on the candidate too.
-
-# N ranges over 0, interior batch sizes and N == self.dim() (full concat), and
-# ranks 0-4 with 0-D/1-D tensors on both sides are covered, including
-# zero-sized dims. The output element count stays small because the op only
-# inspects metadata and allocates zeros.
+# Allocate zeros with shape self.shape[:N] + other.shape and other's dtype/device.
+# Cases are (self_shape, other_shape, N), where N is self_num_batch_dims.
 _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES = [
     pytest.param((2, 3, 4, 5), (7, 8, 9), 0, id="N0"),
     pytest.param((2, 3, 4, 5), (7, 8, 9), 1, id="N1"),
@@ -89,22 +60,14 @@ _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES = [
     pytest.param((2, 3), (0, 5), 1, id="other_zero_dim"),
 ]
 
-# The op performs no arithmetic: it only reads shapes/options and allocates a
-# zero-filled tensor, so every storage dtype family the runtime supports is
-# exercised. The required spec dtypes (int8 / uint8 / float8_e4m3fn /
-# float8_e5m2 / float32 / bfloat16 / float16 / int32 / int64) are all present.
-_NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES = list(
-    dict.fromkeys(
-        tu.REQUIRED_DTYPES
-        + utils.ALL_FLOAT_DTYPES
-        + utils.ALL_INT_DTYPES
-        + utils.BOOL_TYPES
-        + utils.COMPLEX_DTYPES
-    )
+_NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool]
+    + utils.COMPLEX_DTYPES
 )
 
-# Pairs pinning down the "output options follow other" contract: the output
-# dtype must be other.dtype even when self and other disagree.
 _NEW_ZEROS_WITH_SAME_FEATURE_META_MIXED_DTYPES = [
     pytest.param(torch.int16, torch.float16, id="self_int16_other_f16"),
     pytest.param(torch.float32, torch.bool, id="self_f32_other_bool"),
@@ -112,7 +75,6 @@ _NEW_ZEROS_WITH_SAME_FEATURE_META_MIXED_DTYPES = [
     pytest.param(torch.int8, torch.float8_e4m3fn, id="self_int8_other_fp8"),
 ]
 
-# Representative shape pairs for the value-range sweep.
 _VALUE_RANGE_CASES = [
     pytest.param((2, 3, 4), (5, 6), 1, id="self_3d_other_2d"),
     pytest.param((3,), (4, 5), 0, id="self_1d_N0"),
@@ -120,32 +82,21 @@ _VALUE_RANGE_CASES = [
 
 _MAIN_RANGE = ["-1", "1"]
 
+_SHAPE_LEVEL_CASES = []
+for shape in tu.selected_shapes():
+    _SHAPE_LEVEL_CASES.append((shape, (4, 5), 0))
+    if len(shape) >= 1:
+        _SHAPE_LEVEL_CASES.append((shape, (4, 5), 1))
+    if len(shape) >= 2:
+        _SHAPE_LEVEL_CASES.append((shape, (2,), 2))
+    _SHAPE_LEVEL_CASES.append(((2,), shape, 1))
+
 
 def _special_tensor(shape, dtype, scenario):
-    numel = 1
-    for dim in shape:
-        numel *= dim
+    numel = math.prod(shape)
     values = tu.make_special_input(dtype, scenario)
     repeats = (numel + values.numel() - 1) // values.numel()
     return values.repeat(repeats)[:numel].reshape(shape)
-
-
-def _shape_level_cases():
-    """Build (self_shape, other_shape, N) triples from tu.selected_shapes().
-
-    Every level shape appears in the self position (N = 0 and, when the rank
-    allows, N = 1 or N = 2) and in the other position; N never exceeds
-    self.dim().
-    """
-    cases = []
-    for shape in tu.selected_shapes():
-        cases.append((shape, (4, 5), 0))
-        if len(shape) >= 1:
-            cases.append((shape, (4, 5), 1))
-        if len(shape) >= 2:
-            cases.append((shape, (2,), 2))
-        cases.append(((2,), shape, 1))
-    return cases
 
 
 def _resolve_gems_op():
@@ -180,7 +131,6 @@ def _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other):
 def test__new_zeros_with_same_feature_meta(
     self_shape, other_shape, self_num_batch_dims, dtype
 ):
-    # The [-1, 1] range covers negative and positive values in every dtype.
     self_t = tu.make_input(dtype, self_shape, _MAIN_RANGE)
     other_t = tu.make_input(dtype, other_shape, _MAIN_RANGE)
     ref_self = tu.to_reference(self_t)
@@ -230,7 +180,7 @@ def test__new_zeros_with_same_feature_meta_out(
 
 @pytest.mark._new_zeros_with_same_feature_meta
 @pytest.mark.parametrize(
-    "self_shape, other_shape, self_num_batch_dims", _shape_level_cases()
+    "self_shape, other_shape, self_num_batch_dims", _SHAPE_LEVEL_CASES
 )
 @pytest.mark.parametrize("dtype", _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES)
 def test__new_zeros_with_same_feature_meta_shapes(
@@ -373,9 +323,6 @@ def test__new_zeros_with_same_feature_meta_no_autograd(self_grad, other_grad, dt
 def test__new_zeros_with_same_feature_meta_value_ranges(
     self_shape, other_shape, self_num_batch_dims, value_range, dtype
 ):
-    # The values sweep the full spec range set (positive, negative, extreme and
-    # degenerate); the zero output never changes because the op reads only
-    # shapes and options.
     self_t = tu.make_input(dtype, self_shape, value_range)
     other_t = tu.make_input(dtype, other_shape, value_range)
     ref_self = tu.to_reference(self_t)
@@ -412,8 +359,6 @@ def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dt
 @pytest.mark._new_zeros_with_same_feature_meta
 @pytest.mark.parametrize("dtype", _NEW_ZEROS_WITH_SAME_FEATURE_META_DTYPES)
 def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
-    # self is other: the general shape formula still holds and the result is a
-    # fresh zero allocation, not an alias of the shared input.
     self_t = tu.make_input(dtype, (2, 3, 4), _MAIN_RANGE)
     other_t = self_t
     ref_self = tu.to_reference(self_t)
@@ -450,9 +395,6 @@ def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype, scenario
 @pytest.mark._new_zeros_with_same_feature_meta
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int32])
 def test__new_zeros_with_same_feature_meta_negative_batch_dims_raises(dtype):
-    # self_num_batch_dims is the count of batch dims taken from self; a
-    # negative count is invalid and the reference raises. A candidate must fail
-    # loudly instead of silently slicing with a negative index.
     self_t = tu.make_input(dtype, (2, 3), _MAIN_RANGE)
     other_t = tu.make_input(dtype, (4, 5), _MAIN_RANGE)
 
@@ -466,9 +408,6 @@ def test__new_zeros_with_same_feature_meta_negative_batch_dims_raises(dtype):
 
 @pytest.mark._new_zeros_with_same_feature_meta_out
 def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
-    # The .out tensor must match the output options (which follow other); a
-    # wrong-dtype out tensor is rejected by the reference and a candidate must
-    # reject it too.
     self_t = tu.make_input(torch.float32, (2, 3), _MAIN_RANGE)
     other_t = tu.make_input(torch.float32, (4, 5), _MAIN_RANGE)
     out_t = torch.full((2, 4, 5), 1, dtype=torch.int64, device=flag_gems.device)
@@ -493,9 +432,6 @@ def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
     ],
 )
 def test__new_zeros_with_same_feature_meta_rejects_non_tensor(self_arg, other_arg):
-    # The aten schema requires two Tensors; Python scalars/None hit the invalid
-    # argument-combination path and raise. A candidate must fail too rather than
-    # silently return a bogus allocation.
     with pytest.raises(RuntimeError):
         torch.ops.aten._new_zeros_with_same_feature_meta(self_arg, other_arg)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):

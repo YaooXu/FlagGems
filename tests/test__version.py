@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -21,10 +23,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_version`` starts with an underscore and ``pytest.mark`` refuses to
-# generate a marker through attribute access for such names, so register it
-# directly on the MarkGenerator to keep both ``@pytest.mark._version`` and
-# ``-m _version`` working.
+# Register underscore-prefixed pytest markers explicitly.
 try:
     pytest.mark._version
 except AttributeError:
@@ -34,88 +33,28 @@ except AttributeError:
         MarkDecorator(Mark("_version", (), {}, _ispytest=True), _ispytest=True),
     )
 
-# aten::_version(Tensor self) -> int returns the version counter of a tensor:
-# the number of in-place mutations applied to its TensorImpl so far. The
-# counter is shared between a tensor and its aliases (views, detach), while
-# unrelated tensors count independently.
-#
-# It is a pure O(1) metadata query: the result never depends on the shape,
-# layout, storage dtype or payload values, so the sweeps below exercise all of
-# those while always comparing against the reference produced by
-# torch.ops.aten._version.
-#
-# Coverage map (regular-operator spec):
-#   * dtypes: the 9 required dtypes (int8 /
-#     uint8 / float8_e4m3fn / float8_e5m2 / fp32 / bf16 / fp16 / int32 /
-#     int64) plus the shared float / int / bool / complex families where the
-#     active backend supports them (the counter ignores the storage dtype);
-#   * shapes: tu.selected_shapes() -- the shared 7 levels (0-D scalar to 5-D),
-#     driven by the pytest --quick flag;
-#   * value ranges: the shared tu.selected_ranges() grid over every shape and
-#     the 9 required dtypes (5 ranges x 7 shapes x 9 dtypes);
-#   * nan / inf / -inf payloads are ignored by the metadata query;
-#   * in-place mutations bump the counter by exactly one each (1/2/3/5 bumps);
-#   * read-only semantics: the query neither bumps the counter nor writes;
-#   * alias semantics: views and detach() share the counter with the base, and
-#     a mutation applied through a view bumps the base counter;
-#   * independence: unrelated tensors keep separate counters;
-#   * negative cases: non-tensor arguments, a missing argument and an extra
-#     argument are rejected.
-#
-# No broadcast dimension applies (the operator is unary) and no backward
-# dimension applies (it returns a plain int and has no autograd formula).
-
-# Small ranks used by the mutation / alias workloads (kept lightweight because
-# every bump is an element-wise op over the whole tensor).
-_VERSION_SHAPES = (
-    [(2, 19, 7)]
-    if utils.QUICK_MODE
-    else [(), (1,), (3, 4), (8, 16, 4), (2, 3, 4, 5), (4, 7, 5, 3, 2)]
+# Read the mutation counter shared by a tensor and its views.
+_VERSION_SHAPES = tu.selected_cases(
+    [(), (1,), (3, 4), (8, 16, 4), (2, 3, 4, 5), (4, 7, 5, 3, 2)], quick=[(2, 19, 7)]
 )
 
-_FP8_DTYPES = {
-    dtype
-    for dtype in (
-        getattr(torch, "float8_e4m3fn", None),
-        getattr(torch, "float8_e5m2", None),
-    )
-    if dtype is not None
-}
+_FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
-
-def _dedup(dtypes):
-    seen = set()
-    ordered = []
-    for dtype in dtypes:
-        if dtype not in seen:
-            seen.add(dtype)
-            ordered.append(dtype)
-    return ordered
-
-
-# The five-range / seven-shape grid runs on the required dtype set.
-_GRID_DTYPES = list(tu.REQUIRED_DTYPES)
-
-# Additional dtype families from the shared selector.
-_EXTRA_DTYPE_CANDIDATES = _dedup(
-    list(utils.ALL_FLOAT_DTYPES)
-    + list(utils.ALL_INT_DTYPES)
-    + list(utils.BOOL_TYPES)
-    + list(utils.COMPLEX_DTYPES)
+_VERSION_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool]
+    + utils.COMPLEX_DTYPES
 )
-_VERSION_DTYPES = _dedup(_GRID_DTYPES + _EXTRA_DTYPE_CANDIDATES)
 
-
-# Dtypes that accept an in-place ``add_`` bump (bool and fp8 reject it on the
-# CUDA backend), used by the mutation / alias workloads.
 _MUTABLE_DTYPES = [
     dtype
     for dtype in _VERSION_DTYPES
     if dtype != torch.bool and dtype not in _FP8_DTYPES
 ]
 
-# Non-tensor arguments. ``None`` is deliberately excluded because the
-# dispatcher silently returns a default-constructed 0 for it.
+# ATen accepts None and returns 0, so it is not an invalid-argument case.
 _INVALID_ARG_CASES = [
     pytest.param(1, id="int"),
     pytest.param(3.14, id="float"),
@@ -125,13 +64,7 @@ _INVALID_ARG_CASES = [
 
 
 def _make_value_tensor(dtype, shape, value_range, device):
-    """Value-range helper mirroring ``tu.make_input`` with an explicit device.
-
-    The reference must be built by the *same* construction path on its own
-    device: ``Tensor.to("cpu")`` resets the version counter, so a device copy
-    would not be comparable. ``torch.testing.make_tensor`` produces the same
-    counter on CPU and on the device for every dtype/range used below.
-    """
+    # Build both sides the same way on their own devices; copying can reset the counter.
     low = tu.resolve_bound(value_range[0], dtype)
     high = tu.resolve_bound(value_range[1], dtype)
 
@@ -156,29 +89,21 @@ def _make_value_tensor(dtype, shape, value_range, device):
 
 
 def _special_tensor(shape, dtype, scenario, device):
-    numel = 1
-    for dim in shape:
-        numel *= dim
+    numel = math.prod(shape)
     values = tu.make_special_input(dtype, scenario).to(device)
     repeats = (numel + values.numel() - 1) // values.numel()
     return values.repeat(repeats)[:numel].reshape(shape)
 
 
-def _default_gems_op():
-    # ``flag_gems._version`` is the package version string (package metadata),
-    # not an operator callable; treat any non-callable attribute as "no
-    # default" so resolution falls through to the KernelGen override.
-    candidate = getattr(flag_gems, "_version", None)
-    return candidate if callable(candidate) else None
-
-
 def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("_version", _default_gems_op())
+    # flag_gems._version may be the package version string.
+    candidate = getattr(flag_gems, "_version", None)
+    default = candidate if callable(candidate) else None
+    return flag_gems.testing.resolve_gems_op("_version", default)
 
 
 def _as_int(value):
-    # The reference returns a plain Python int; a candidate may equivalently
-    # return a 0-dim / single-element integral tensor. Normalize both.
+    # Normalize a Python scalar or a one-element tensor.
     if isinstance(value, torch.Tensor):
         assert value.numel() == 1, "candidate returned a non-scalar tensor"
         return value.item()
@@ -186,7 +111,6 @@ def _as_int(value):
 
 
 def _assert_result(res_out, ref_out):
-    # Exact equality: the op reports a mutation count, so no tolerance applies.
     res_int = _as_int(res_out)
     ref_int = _as_int(ref_out)
     assert isinstance(res_int, int) and not isinstance(res_int, bool)
@@ -197,8 +121,6 @@ def _assert_result(res_out, ref_out):
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _VERSION_DTYPES)
 def test__version_fresh(shape, dtype):
-    # A freshly created tensor starts at version 0 at every shape level and for
-    # every storage dtype the backend supports.
     inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
 
@@ -211,13 +133,8 @@ def test__version_fresh(shape, dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
-@pytest.mark.parametrize("dtype", _GRID_DTYPES)
+@pytest.mark.parametrize("dtype", tu.REQUIRED_DTYPES)
 def test__version_value_ranges(shape, value_range, dtype):
-    # The shared value-range grid ([-1,1], [0,1], [-1,0], [0,max], [min,0]) over
-    # the shared shape levels and the required dtypes: the payload never affects
-    # the metadata query. Construction itself may bump the counter (make_tensor
-    # fills floats in place), so both sides go through the identical
-    # construction path and stay comparable.
     inp = _make_value_tensor(dtype, shape, value_range, flag_gems.device)
     ref_device = "cpu" if utils.TO_CPU else flag_gems.device
     ref_inp = _make_value_tensor(dtype, shape, value_range, ref_device)
@@ -249,9 +166,6 @@ def test__version_nan_inf(shape, dtype, scenario):
 @pytest.mark.parametrize("bumps", [1, 2, 3, 5])
 @pytest.mark.parametrize("dtype", _MUTABLE_DTYPES)
 def test__version_after_inplace(shape, bumps, dtype):
-    # Every in-place mutation increments the counter by exactly one; the op must
-    # report the exact number of bumps applied. The reference tensor is created
-    # before the loop (version 0 on both devices) and bumped identically.
     inp = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     for _ in range(bumps):
@@ -269,8 +183,6 @@ def test__version_after_inplace(shape, bumps, dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("dtype", _VERSION_DTYPES)
 def test__version_readonly(dtype):
-    # _version is a read-only query: it must neither bump the counter nor write
-    # to the tensor.
     inp = torch.zeros((8, 16), dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     data_before = inp.clone()
@@ -286,8 +198,6 @@ def test__version_readonly(dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("dtype", _VERSION_DTYPES)
 def test__version_view(dtype):
-    # Views share the version counter with their base, so a view reports the
-    # same value as the base tensor.
     inp = torch.zeros((4, 6), dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     view = inp.view(3, 8)
@@ -302,8 +212,6 @@ def test__version_view(dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("dtype", _MUTABLE_DTYPES)
 def test__version_view_inplace(dtype):
-    # An in-place mutation applied through a view bumps the shared counter, so
-    # the base tensor must report the same bumped value as the view.
     inp = torch.zeros((4, 6), dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     view = inp.view(3, 8)
@@ -322,8 +230,6 @@ def test__version_view_inplace(dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("dtype", _MUTABLE_DTYPES)
 def test__version_detach_shares_counter(dtype):
-    # detach() keeps the same TensorImpl version counter as the source, so a
-    # mutation of either side is visible through both.
     inp = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
     detached = inp.detach()
@@ -342,8 +248,6 @@ def test__version_detach_shares_counter(dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("dtype", _MUTABLE_DTYPES)
 def test__version_independent_counters(dtype):
-    # Unrelated tensors have independent counters: bumping one must not affect
-    # the version reported for the other.
     first = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
     second = torch.zeros((4,), dtype=dtype, device=flag_gems.device)
     ref_first = utils.to_reference(first)
@@ -364,9 +268,6 @@ def test__version_independent_counters(dtype):
 @pytest.mark._version
 @pytest.mark.parametrize("bad_arg", _INVALID_ARG_CASES)
 def test__version_rejects_non_tensor(bad_arg):
-    # The aten schema requires a single Tensor; Python scalars and sequences hit
-    # the invalid argument-combination path and raise. A candidate must fail
-    # loudly too instead of returning a bogus version.
     with pytest.raises(RuntimeError):
         torch.ops.aten._version(bad_arg)
 
@@ -379,7 +280,6 @@ def test__version_rejects_non_tensor(bad_arg):
 
 @pytest.mark._version
 def test__version_rejects_wrong_arity():
-    # Missing and extra positional arguments are rejected by the schema.
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten._version()
 

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 import torch
 from _pytest.mark.structures import Mark, MarkDecorator
@@ -21,10 +23,7 @@ import flag_gems
 from . import accuracy_utils as utils
 from . import test_utils as tu
 
-# ``_has_same_storage_numel`` starts with an underscore, and ``pytest.mark``
-# refuses to generate a marker via attribute access for such names. Register it
-# directly on the MarkGenerator so ``@pytest.mark._has_same_storage_numel`` and
-# ``-m _has_same_storage_numel`` both work.
+# Register underscore-prefixed pytest markers explicitly.
 setattr(
     pytest.mark,
     "_has_same_storage_numel",
@@ -33,58 +32,15 @@ setattr(
     ),
 )
 
-# aten::_has_same_storage_numel(Tensor self, Tensor other) -> bool compares the
-# *storage* element counts of the two tensors
-# (self.storage().numel() == other.storage().numel()), not their logical numel.
-# Views keep the full storage of their base, so a (4, 4) row slice still has a
-# 16-element storage while an expanded (4, 4) tensor built from a (4, 1) base
-# only has 4. The storage dtype does not affect the element count, so two
-# tensors of different dtypes with the same storage length compare equal.
-#
-# It is a pure metadata query: the payload values (including nan/inf), the
-# strides and the requires_grad flag never influence the result; the operator
-# allocates nothing and returns a Python bool.
-#
-# Regular-operator-spec adaptation notes:
-# - Broadcast: N/A -- the operator compares two independent storages; there is
-#   nothing to broadcast against. Layout pairs (view/expand/transpose) are
-#   covered instead because they are the meaningful "shape mismatch" dimension.
-# - Backward: N/A -- the output is a plain bool with no autograd support, so
-#   there is no gradient to compare.
-# - Value ranges: the query never reads the element values, so the
-#   tu.selected_ranges() grid verifies the same deterministic answer for every
-#   storage range (positive, negative, extreme, degenerate).
-# - nan/inf: covered by a dedicated case; non-finite payloads are ignored.
-# - Negative: non-tensor / missing arguments are rejected at binding time.
-#
-# Shape coverage follows the regular-operator-spec level selection (quick/default
-# via the pytest ``--quick`` flag): tu.selected_shapes() (0-D through 5-D).
-
-# ---------------------------------------------------------------------------
-# Dtype coverage
-# ---------------------------------------------------------------------------
-# The comparison ignores the storage values and dtype, so every storage dtype
-# the runtime can allocate must be accepted. The spec's 9 required dtypes
-# (int8/uint8/fp8_e4m3fn/fp8_e5m2/fp32/bf16/fp16/int32/int64) and the shared
-# dtype families are included.
-_EXTRA_DTYPES = (
-    utils.ALL_FLOAT_DTYPES
-    + utils.ALL_INT_DTYPES
-    + [torch.int8, torch.uint8]
-    + utils.BOOL_TYPES
-)
-_HAS_SAME_STORAGE_NUMEL_DTYPES = list(
-    dict.fromkeys(list(tu.REQUIRED_DTYPES) + _EXTRA_DTYPES)
+# Compare storage element counts, which may differ from logical tensor sizes.
+_HAS_SAME_STORAGE_NUMEL_DTYPES = (
+    tu.REQUIRED_DTYPES
+    + ([torch.float64] if utils.fp64_is_supported else [])
+    + tu.selected_cases([torch.int16])
+    + [torch.bool]
 )
 
-
-# ---------------------------------------------------------------------------
-# Layout cases -- the semantic core of the operator
-# ---------------------------------------------------------------------------
-# Each case is a pair of storage-layout specs. ``plain`` tensors carry a storage
-# whose element count equals their logical numel; the other kinds deliberately
-# decouple logical shape from storage length so a candidate that reads
-# ``tensor.numel()`` instead of the storage length is caught.
+# (kind, shape) pairs separate logical sizes from backing storage sizes.
 _HAS_SAME_STORAGE_NUMEL_CASES = [
     pytest.param(("plain", (4, 4)), ("plain", (4, 4)), id="same_shape_true"),
     pytest.param(("plain", (4, 4)), ("plain", (16,)), id="reshaped_same_storage_true"),
@@ -115,8 +71,6 @@ _HAS_SAME_STORAGE_NUMEL_CASES = [
     pytest.param(("plain", (0,)), ("plain", (3,)), id="empty_vs_nonempty_false"),
 ]
 
-# Different storage dtypes still share an element count, so the answer is
-# ``True`` whenever the storage lengths agree.
 _CROSS_DTYPE_CASES = [
     pytest.param(torch.float32, torch.int64, id="fp32_vs_int64"),
     pytest.param(torch.float16, torch.float32, id="fp16_vs_fp32"),
@@ -125,8 +79,6 @@ _CROSS_DTYPE_CASES = [
     pytest.param(torch.bool, torch.int32, id="bool_vs_int32"),
 ]
 
-# Non-tensor arguments: the aten schema requires (Tensor, Tensor); Python
-# scalars / None / sequences hit the invalid argument-combination path.
 _INVALID_ARG_CASES = [
     pytest.param((1, 2), None, id="tuple_self"),
     pytest.param(1, None, id="int_self"),
@@ -138,7 +90,6 @@ _INVALID_ARG_CASES = [
 
 
 def _make_tensor(spec, dtype, device):
-    """Build a tensor with the requested storage-layout spec on ``device``."""
     kind, shape = spec
     if kind == "plain":
         return torch.zeros(shape, dtype=dtype, device=device)
@@ -156,9 +107,7 @@ def _make_tensor(spec, dtype, device):
 
 
 def _special_tensor(shape, dtype, scenario):
-    numel = 1
-    for dim in shape:
-        numel *= dim
+    numel = math.prod(shape)
     values = tu.make_special_input(dtype, scenario)
     repeats = (numel + values.numel() - 1) // values.numel()
     return values.repeat(repeats)[:numel].reshape(shape)
@@ -171,7 +120,6 @@ def _resolve_gems_op():
 
 
 def _assert_result(res_out, ref_out):
-    # Accept a Python bool or an equivalent 0-dim bool tensor.
     if isinstance(res_out, torch.Tensor):
         assert res_out.ndim == 0
         assert res_out.dtype == torch.bool
@@ -203,8 +151,6 @@ def test__has_same_storage_numel_layouts(self_spec, other_spec, dtype):
 @pytest.mark._has_same_storage_numel
 @pytest.mark.parametrize("self_dtype,other_dtype", _CROSS_DTYPE_CASES)
 def test__has_same_storage_numel_cross_dtype(self_dtype, other_dtype):
-    # The storage *dtype* is irrelevant to the element count: identical storage
-    # lengths must compare equal even across dtype families.
     self_t = torch.zeros((4, 4), dtype=self_dtype, device=flag_gems.device)
     other_t = torch.zeros((16,), dtype=other_dtype, device=flag_gems.device)
     ref_self = self_t.to("cpu") if utils.TO_CPU else self_t
@@ -220,9 +166,6 @@ def test__has_same_storage_numel_cross_dtype(self_dtype, other_dtype):
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("dtype", _HAS_SAME_STORAGE_NUMEL_DTYPES)
 def test__has_same_storage_numel_shapes(shape, dtype):
-    # Shape-level coverage from the shared selector: plain tensors of the same
-    # logical shape share a storage of the same numel, so the answer is True at
-    # every level (0-D scalar through 5-D).
     self_t = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     other_t = torch.zeros(shape, dtype=dtype, device=flag_gems.device)
     ref_self = tu.to_reference(self_t)
@@ -239,9 +182,6 @@ def test__has_same_storage_numel_shapes(shape, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _HAS_SAME_STORAGE_NUMEL_DTYPES)
 def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
-    # The values sweep the full spec range set (positive, negative, extreme and
-    # degenerate); the reported comparison never changes because the query reads
-    # only storage metadata. Same-shape inputs always answer True.
     self_t = tu.make_input(dtype, shape, value_range)
     other_t = tu.make_input(dtype, shape, value_range)
     ref_self = tu.to_reference(self_t)
@@ -273,8 +213,6 @@ def test__has_same_storage_numel_nan_inf(shape, dtype, scenario):
 
 @pytest.mark._has_same_storage_numel
 def test__has_same_storage_numel_ignores_autograd():
-    # The query has no autograd support: a requires_grad input must neither
-    # change the answer nor produce a differentiable output.
     self_t = torch.zeros((4, 4), device=flag_gems.device).requires_grad_()
     other_t = torch.zeros((4, 4), device=flag_gems.device).requires_grad_()
     ref_self = self_t.detach()
@@ -290,9 +228,6 @@ def test__has_same_storage_numel_ignores_autograd():
 @pytest.mark._has_same_storage_numel
 @pytest.mark.parametrize("self_arg,other_arg", _INVALID_ARG_CASES)
 def test__has_same_storage_numel_rejects_non_tensor(self_arg, other_arg):
-    # The aten schema requires two Tensors; Python scalars/None hit the invalid
-    # argument-combination path and raise. A candidate must fail too rather than
-    # silently return a bogus comparison.
     with pytest.raises(RuntimeError):
         torch.ops.aten._has_same_storage_numel(self_arg, other_arg)
     # The reference raises RuntimeError at the dispatcher level; a
@@ -305,7 +240,6 @@ def test__has_same_storage_numel_rejects_non_tensor(self_arg, other_arg):
 
 @pytest.mark._has_same_storage_numel
 def test__has_same_storage_numel_rejects_missing_argument():
-    # Wrong arity must be rejected as well.
     inp = torch.zeros((4,), device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten._has_same_storage_numel(inp)
