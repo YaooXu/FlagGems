@@ -330,7 +330,7 @@ def test_combinations_missing_candidate_cannot_pass_against_reference(monkeypatc
     from . import test_combinations as cases
 
     missing = Mock(side_effect=LookupError("candidate missing"))
-    monkeypatch.setattr(cases, "_resolve_gems_op", missing)
+    monkeypatch.setattr(testing, "resolve_gems_op", missing)
     with pytest.raises(LookupError, match="candidate missing"):
         cases.test_combinations_spec_shapes_value_ranges(
             (4,), ["0", "1"], torch.float32
@@ -786,7 +786,7 @@ def test_diagflat_rejects_small_gradient_errors():
 def test_negative_cases_require_a_candidate(monkeypatch, operator, case_name, args):
     cases = importlib.import_module(f".test_{operator}", package=__package__)
     missing = Mock(side_effect=LookupError("candidate missing"))
-    monkeypatch.setattr(cases, "_resolve_gems_op", missing)
+    monkeypatch.setattr(testing, "resolve_gems_op", missing)
     with pytest.raises(LookupError, match="candidate missing"):
         getattr(cases, case_name)(*args)
     missing.assert_called_once()

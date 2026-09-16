@@ -39,10 +39,6 @@ _MUTATION_SHAPES = [(16, 32), (4, 8, 16)]
 _AUTOGRAD_SHAPES = [(16, 64), (7, 13, 29)]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("data", getattr(flag_gems, "data", None))
-
-
 def _assert_alias_semantics(res_out, ref_out, inp):
     assert res_out.device == inp.device
     assert res_out.data_ptr() == inp.data_ptr()
@@ -62,7 +58,8 @@ def test_data(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
 
     _assert_alias_semantics(res_out, ref_out, inp)
 
@@ -76,7 +73,8 @@ def test_data_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
 
     _assert_alias_semantics(res_out, ref_out, inp)
 
@@ -94,7 +92,8 @@ def test_data_non_contiguous(layout, shape, dtype):
     assert not inp.is_contiguous()
 
     ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
 
     _assert_alias_semantics(res_out, ref_out, inp)
 
@@ -110,7 +109,8 @@ def test_data_special_values(dtype):
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(values)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(values)
 
     assert res_out.data_ptr() == values.data_ptr()
     # nan must compare equal to nan (the op must not sanitize it).
@@ -124,7 +124,8 @@ def test_data_mutation(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
     ref_out = torch.ops.aten.data(ref_inp)
 
     res_out.add_(1.0)
@@ -145,7 +146,8 @@ def test_data_autograd_detach(shape, dtype):
         ref_inp.requires_grad_(True)
 
     ref_out = torch.ops.aten.data(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
 
     _assert_alias_semantics(res_out, ref_out, inp)
 
@@ -154,13 +156,14 @@ def test_data_autograd_detach(shape, dtype):
 def test_data_rejects_non_tensor():
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.data(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
 
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.data("not-a-tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()("not-a-tensor")
+        gems_op("not-a-tensor")
 
 
 @pytest.mark.data
@@ -169,8 +172,9 @@ def test_data_rejects_extra_arguments():
     ref_inp = tu.to_reference(inp)
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.data(ref_inp, ref_inp)
+    gems_op = flag_gems.testing.resolve_gems_op("data")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, inp)
+        gems_op(inp, inp)
 
 
 @pytest.mark.data

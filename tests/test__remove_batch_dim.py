@@ -82,12 +82,6 @@ _DTYPE_RANGE_PAIRS = [
 ]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_remove_batch_dim", getattr(flag_gems, "_remove_batch_dim", None)
-    )
-
-
 @pytest.mark._remove_batch_dim
 @pytest.mark.parametrize("shape, out_dim, batch_size", _REMOVE_BATCH_DIM_CASES)
 @pytest.mark.parametrize("level", [0, 1, 3])
@@ -97,7 +91,8 @@ def test__remove_batch_dim(shape, out_dim, batch_size, level, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, level, batch_size, out_dim)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -111,7 +106,8 @@ def test__remove_batch_dim_value_ranges(shape, dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, 0, batch_size, out_dim)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -124,7 +120,8 @@ def test__remove_batch_dim_value_ranges_broadcast(dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, 0, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, 0, batch_size, out_dim)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -141,7 +138,8 @@ def test__remove_batch_dim_non_contiguous(shape, out_dim, batch_size, level, dty
     assert not inp.is_contiguous()
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, level, batch_size, out_dim)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -164,7 +162,8 @@ def test__remove_batch_dim_nan_inf(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, 0, 4, 0)
-    res_out = _resolve_gems_op()(inp, 0, 4, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, 0, 4, 0)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -186,7 +185,8 @@ def test__remove_batch_dim_backward(shape, out_dim, batch_size, dtype):
     ref_inp.requires_grad_(True)
 
     ref_out = torch.ops.aten._remove_batch_dim(ref_inp, level, batch_size, out_dim)
-    res_out = _resolve_gems_op()(inp, level, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(inp, level, batch_size, out_dim)
     tu.assert_result_equal(res_out, ref_out)
 
     res_grad = torch.autograd.grad(res_out, inp, grad_out)[0]
@@ -200,8 +200,9 @@ def test__remove_batch_dim_rejects_non_broadcastable_batch_size():
     inp = tu.make_input(torch.float32, (2, 19, 7), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._remove_batch_dim(inp, 0, 3, 1)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
     with pytest.raises(RuntimeError):
-        _resolve_gems_op()(inp, 0, 3, 1)
+        gems_op(inp, 0, 3, 1)
 
 
 @pytest.mark._remove_batch_dim
@@ -209,16 +210,18 @@ def test__remove_batch_dim_rejects_negative_batch_size():
     inp = tu.make_input(torch.float32, (2, 19, 7), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten._remove_batch_dim(inp, 0, -1, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
     with pytest.raises(RuntimeError):
-        _resolve_gems_op()(inp, 0, -1, 0)
+        gems_op(inp, 0, -1, 0)
 
 
 @pytest.mark._remove_batch_dim
 def test__remove_batch_dim_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._remove_batch_dim(3.14, 0, 1, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
     with pytest.raises((RuntimeError, TypeError, ValueError, AttributeError)):
-        _resolve_gems_op()(3.14, 0, 1, 0)
+        gems_op(3.14, 0, 1, 0)
 
 
 @pytest.mark._remove_batch_dim

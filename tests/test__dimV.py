@@ -122,10 +122,6 @@ def _make_empty_coo(shape, dense_dim, dtype):
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("_dimV", getattr(flag_gems, "_dimV", None))
-
-
 def _assert_result(res_out, ref_out):
     assert isinstance(res_out, int) and not isinstance(res_out, bool)
     utils.gems_assert_equal(res_out, ref_out)
@@ -140,7 +136,8 @@ def test__dimV_coo(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
@@ -159,7 +156,8 @@ def test__dimV_shape_value_range_grid(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     assert inp.dense_dim() == dense_dim
@@ -176,7 +174,8 @@ def test__dimV_hybrid_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     assert inp.dense_dim() > 0
@@ -191,7 +190,8 @@ def test__dimV_empty(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -204,7 +204,8 @@ def test__dimV_empty_hybrid(shape, dense_dim, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     assert inp.dense_dim() == dense_dim
@@ -220,7 +221,8 @@ def test__dimV_single_entry(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -236,7 +238,8 @@ def test__dimV_uncoalesced(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -252,7 +255,8 @@ def test__dimV_nan_inf_values_ignored(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._dimV(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -272,8 +276,9 @@ def test__dimV_dense_raises():
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
         torch.ops.aten._dimV(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._dimV
@@ -286,13 +291,15 @@ def test__dimV_csr_raises():
     )
     with pytest.raises(NotImplementedError):
         torch.ops.aten._dimV(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._dimV
 def test__dimV_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._dimV(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("_dimV")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

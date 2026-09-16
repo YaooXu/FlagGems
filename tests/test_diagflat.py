@@ -51,12 +51,6 @@ _DIAGFLAT_STRIDED_SHAPES = [(16, 32), (4, 8, 16)]
 _DIAGFLAT_BACKWARD_SHAPES = [(8,), (2, 3), (4, 5, 6)]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "diagflat", getattr(flag_gems, "diagflat", None)
-    )
-
-
 def _assert_output(res_out, ref_out):
     assert res_out.is_contiguous()
     assert not res_out._is_view()
@@ -74,7 +68,8 @@ def test_diagflat(shape, offset, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
 
     _assert_output(res_out, ref_out)
 
@@ -88,7 +83,8 @@ def test_diagflat_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 0)
-    res_out = _resolve_gems_op()(inp, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, 0)
 
     _assert_output(res_out, ref_out)
 
@@ -102,7 +98,8 @@ def test_diagflat_large_offset(shape, offset, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
 
     _assert_output(res_out, ref_out)
 
@@ -118,7 +115,8 @@ def test_diagflat_non_contiguous(shape, offset, dtype):
     ref_inp = ref_inp.transpose(-1, -2)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
 
     _assert_output(res_out, ref_out)
 
@@ -135,7 +133,8 @@ def test_diagflat_strided(shape, offset, dtype):
     assert not inp.is_contiguous()
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
 
     _assert_output(res_out, ref_out)
 
@@ -149,7 +148,8 @@ def test_diagflat_nan_inf(dtype, scenario):
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, 1)
-    res_out = _resolve_gems_op()(values, 1)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(values, 1)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -162,7 +162,8 @@ def test_diagflat_empty_input(offset, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
 
     _assert_output(res_out, ref_out)
 
@@ -182,7 +183,8 @@ def test_diagflat_backward(shape, offset, dtype):
     ref_out = torch.ops.aten.diagflat(ref_inp, offset)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    res_out = _resolve_gems_op()(inp, offset)
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
+    res_out = gems_op(inp, offset)
     tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -194,7 +196,7 @@ def test_diagflat_backward(shape, offset, dtype):
 def test_diagflat_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.diagflat(3.14)
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         gems_op(3.14)
 
@@ -206,6 +208,6 @@ def test_diagflat_rejects_non_int_offset():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.diagflat(ref_inp, 1.5)
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("diagflat")
     with pytest.raises((TypeError, RuntimeError)):
         gems_op(inp, 1.5)

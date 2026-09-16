@@ -103,10 +103,6 @@ def _make_csr_input(shape, nnz, dtype, value_range, seed=0):
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("_nnz", getattr(flag_gems, "_nnz", None))
-
-
 def _assert_result(res_out, ref_out):
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
@@ -121,7 +117,8 @@ def test__nnz_coo_layouts(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     assert inp.sparse_dim() == sparse_dim
@@ -139,7 +136,8 @@ def test__nnz_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -154,7 +152,8 @@ def test__nnz_empty(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -169,7 +168,8 @@ def test__nnz_empty_hybrid(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -185,7 +185,8 @@ def test__nnz_uncoalesced(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -203,7 +204,8 @@ def test__nnz_explicit_zeros(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -222,7 +224,8 @@ def test__nnz_full_storage(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -238,7 +241,8 @@ def test__nnz_nan_inf_values_ignored(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -253,7 +257,8 @@ def test__nnz_csr(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -267,7 +272,8 @@ def test__nnz_csr_value_ranges(value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -283,7 +289,8 @@ def test__nnz_spec_shapes_csr(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -302,7 +309,8 @@ def test__nnz_csr_dense_dims(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nnz(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -312,21 +320,23 @@ def test__nnz_dense_raises():
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
         torch.ops.aten._nnz(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
     with pytest.raises(
         (NotImplementedError, RuntimeError, TypeError, ValueError, AttributeError)
     ):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._nnz
 def test__nnz_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._nnz(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("_nnz")
     with pytest.raises(
         (TypeError, ValueError, RuntimeError, NotImplementedError, AttributeError)
     ):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
     with pytest.raises(
         (TypeError, ValueError, RuntimeError, NotImplementedError, AttributeError)
     ):
-        _resolve_gems_op()(None)
+        gems_op(None)

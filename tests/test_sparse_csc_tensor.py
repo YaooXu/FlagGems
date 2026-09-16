@@ -125,12 +125,6 @@ def _make_csc_inputs(
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_csc_tensor", getattr(flag_gems, "sparse_csc_tensor", None)
-    )
-
-
 def _assert_result(res_out, ref_out, dtype, index_dtype):
     assert res_out.layout == torch.sparse_csc
     assert res_out.dtype == dtype
@@ -169,7 +163,7 @@ def test_sparse_csc_tensor(shape, nnz, dtype, index_dtype, value_range):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -208,7 +202,7 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -248,7 +242,7 @@ def test_sparse_csc_tensor_no_size(
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -288,7 +282,7 @@ def test_sparse_csc_tensor_no_size_exact(
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -325,7 +319,7 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -363,7 +357,7 @@ def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -402,7 +396,7 @@ def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_ra
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -440,7 +434,7 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -478,7 +472,7 @@ def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
         layout=torch.sparse_csc,
         device=ref_ccol.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     res_out = gems_op(
         ccol,
         row,
@@ -515,7 +509,7 @@ def test_sparse_csc_tensor_rejects_dtype_mismatch():
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,
@@ -540,7 +534,7 @@ def test_sparse_csc_tensor_rejects_missing_dtype():
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,
@@ -565,7 +559,7 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
             layout=torch.sparse_coo,
             device=flag_gems.device,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,
@@ -591,7 +585,7 @@ def test_sparse_csc_tensor_rejects_negative_size():
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,
@@ -622,7 +616,7 @@ def test_sparse_csc_tensor_rejects_device_mismatch():
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,
@@ -651,7 +645,7 @@ def test_sparse_csc_tensor_rejects_missing_device():
             dtype=torch.float32,
             layout=torch.sparse_csc,
         )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
         gems_op(
             ccol,

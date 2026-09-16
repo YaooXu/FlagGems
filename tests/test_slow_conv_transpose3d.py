@@ -198,12 +198,6 @@ _BACKWARD_DTYPES = tu.selected_cases(
 )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose3d", getattr(flag_gems, "slow_conv_transpose3d", None)
-    )
-
-
 def _conv_transpose_output_shape(
     inp_shape, weight_shape, stride, padding, output_padding, dilation
 ):
@@ -294,7 +288,8 @@ def test_slow_conv_transpose3d(
         dilation,
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -337,7 +332,8 @@ def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
         dilation,
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -397,7 +393,8 @@ def test_slow_conv_transpose3d_out(
     )
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
+    res_ret = gems_op(
         inp,
         weight,
         kernel_size,
@@ -463,7 +460,8 @@ def test_slow_conv_transpose3d_backward(case, dtype):
     inp.requires_grad_()
     weight.requires_grad_()
     bias.requires_grad_()
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
     )
     _assert_close(res_out, ref_out.to(dtype), dtype)
@@ -510,7 +508,8 @@ def test_slow_conv_transpose3d_nan_inf(dtype, scenario, special_arg):
         (1, 1, 1),
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (0, 0, 0), (1, 1, 1)
     )
 
@@ -526,8 +525,9 @@ def test_slow_conv_transpose3d_rejects_output_padding_not_less_than_stride():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (2, 2, 2), (1, 1, 1), (2, 2, 2), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (2, 2, 2), (1, 1, 1), (2, 2, 2), (1, 1, 1)
         )
 
@@ -541,8 +541,9 @@ def test_slow_conv_transpose3d_rejects_negative_stride():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
 
@@ -556,8 +557,9 @@ def test_slow_conv_transpose3d_rejects_negative_dilation():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (-1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (-1, 1, 1)
         )
 
@@ -570,8 +572,9 @@ def test_slow_conv_transpose3d_rejects_int_dtype():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
 
@@ -584,8 +587,9 @@ def test_slow_conv_transpose3d_rejects_6d_input():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
 
@@ -598,8 +602,9 @@ def test_slow_conv_transpose3d_rejects_4d_weight():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
 
@@ -612,8 +617,9 @@ def test_slow_conv_transpose3d_rejects_channel_mismatch():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
 
@@ -627,7 +633,8 @@ def test_slow_conv_transpose3d_rejects_bias_size_mismatch():
         torch.ops.aten.slow_conv_transpose3d(
             inp, weight, (3, 3, 3), bias, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
+        gems_op(
             inp, weight, (3, 3, 3), bias, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )

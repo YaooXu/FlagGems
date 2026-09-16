@@ -83,12 +83,6 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_values", getattr(flag_gems, "_values", None)
-    )
-
-
 def _assert_result(res_out, ref_out, inp, ref_inp):
     # Check exact output, storage aliasing and unchanged input values.
     tu.assert_result_equal(res_out, ref_out)
@@ -105,7 +99,8 @@ def test__values_layouts(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -120,7 +115,8 @@ def test__values_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -136,7 +132,8 @@ def test__values_empty(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -152,7 +149,8 @@ def test__values_empty_hybrid(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -171,7 +169,8 @@ def test__values_full_storage(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -187,7 +186,8 @@ def test__values_uncoalesced(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -203,7 +203,8 @@ def test__values_nan_inf(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._values(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -213,8 +214,9 @@ def test__values_dense_raises():
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(NotImplementedError):
         torch.ops.aten._values(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._values
@@ -227,17 +229,19 @@ def test__values_csr_raises():
     )
     with pytest.raises(NotImplementedError):
         torch.ops.aten._values(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._values
 def test__values_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._values(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("_values")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
     with pytest.raises(RuntimeError):
         torch.ops.aten._values("not-a-tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()("not-a-tensor")
+        gems_op("not-a-tensor")

@@ -51,14 +51,6 @@ _ADD_SCALAR_SCALAR_CASES = [
 ]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("add", flag_gems.add)
-
-
-def _resolve_gems_op_inplace():
-    return flag_gems.testing.resolve_gems_op("add_", flag_gems.add_)
-
-
 @pytest.mark.add
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
@@ -70,7 +62,8 @@ def test_add_tensor_tensor_float_value_ranges(shape, value_range, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -87,7 +80,8 @@ def test_add_tensor_tensor_int_value_ranges(shape, value_range, dtype):
 
     # int add is exact and wraps identically on both paths (alpha stays 1).
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -103,7 +97,8 @@ def test_add_tensor_tensor_bool_value_ranges(shape, value_range):
 
     # bool add behaves as logical OR; make_input ignores the range for bool.
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -119,7 +114,8 @@ def test_add_tensor_tensor_alpha(shape, alpha, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other, alpha=alpha)
-    res_out = _resolve_gems_op()(inp, other, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other, alpha=alpha)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -137,7 +133,8 @@ def test_add_tensor_tensor_int_alpha(shape, alpha, dtype):
     # aten only accepts an integral alpha for integral inputs; the candidate
     # must reproduce the scaled values exactly.
     ref_out = torch.ops.aten.add(ref_inp, ref_other, alpha=alpha)
-    res_out = _resolve_gems_op()(inp, other, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other, alpha=alpha)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -152,7 +149,8 @@ def test_add_tensor_scalar(shape, scalar, alpha, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.add.Scalar(ref_inp, scalar, alpha=alpha)
-    res_out = _resolve_gems_op()(inp, scalar, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, scalar, alpha=alpha)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -171,7 +169,8 @@ def test_add_scalar_tensor(shape, scalar, alpha, dtype):
     # alpha != 1. Use the scalar-first form torch.ops.aten.add(scalar, tensor)
     # so the reference matches the candidate's scalar + other*alpha.
     ref_out = torch.ops.aten.add(scalar, ref_other, alpha=alpha)
-    res_out = _resolve_gems_op()(scalar, other, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(scalar, other, alpha=alpha)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -180,7 +179,8 @@ def test_add_scalar_tensor(shape, scalar, alpha, dtype):
 @pytest.mark.parametrize("a,b,alpha,dtype", tu.selected_cases(_ADD_SCALAR_SCALAR_CASES))
 def test_add_scalar_scalar(a, b, alpha, dtype):
     ref_out = torch.ops.aten.add(a, b, alpha=alpha)
-    res_out = _resolve_gems_op()(a, b, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(a, b, alpha=alpha)
 
     assert res_out.dtype == ref_out.dtype == dtype
     tu.assert_result_close(res_out, ref_out)
@@ -197,7 +197,8 @@ def test_add_broadcast(broadcast_pair, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -215,7 +216,8 @@ def test_add_nan_inf(dtype, scenario, shift):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -231,7 +233,8 @@ def test_add_complex_value_ranges(shape, value_range, complex_dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -256,7 +259,8 @@ def test_add_complex_mixed(shape, complex_dtype, other_type):
     ref_other = tu.to_reference(other) if isinstance(other, torch.Tensor) else other
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -298,7 +302,8 @@ def test_add_complex32(shape, complex_dtype, other_type):
     )
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     utils.gems_assert_close(res_out, ref_out, complex_dtype)
 
@@ -313,7 +318,8 @@ def test_add_empty(shape, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -328,7 +334,8 @@ def test_add_noncontiguous(shape, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add(ref_inp, ref_other)
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -349,7 +356,8 @@ def test_add_backward(shape, dtype):
         ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
     )
 
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
     tu.assert_result_close(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -376,7 +384,8 @@ def test_add_backward_broadcast(dtype):
         ref_out, (ref_inp, ref_other), grad_outputs=ref_grad
     )
 
-    res_out = _resolve_gems_op()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_out = gems_op(inp, other)
     tu.assert_result_close(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -398,7 +407,8 @@ def test_add__value_ranges(shape, value_range, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add_(ref_inp, ref_other)
-    res_out = _resolve_gems_op_inplace()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add_")
+    res_out = gems_op(inp, other)
 
     # In-place semantics: the call returns the mutated input tensor itself.
     assert res_out is inp
@@ -416,7 +426,8 @@ def test_add__tensor_scalar(shape, scalar, alpha, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.add_(ref_inp, scalar, alpha=alpha)
-    res_out = _resolve_gems_op_inplace()(inp, scalar, alpha=alpha)
+    gems_op = flag_gems.testing.resolve_gems_op("add_")
+    res_out = gems_op(inp, scalar, alpha=alpha)
 
     assert res_out is inp
     tu.assert_result_close(res_out, ref_out)
@@ -434,7 +445,8 @@ def test_add__broadcast(broadcast_pair, dtype):
     ref_other = tu.to_reference(other)
 
     ref_out = torch.ops.aten.add_(ref_inp, ref_other)
-    res_out = _resolve_gems_op_inplace()(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add_")
+    res_out = gems_op(inp, other)
 
     assert res_out is inp
     tu.assert_result_close(res_out, ref_out)
@@ -456,7 +468,8 @@ def test_add_out(shape, value_range, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.add.out(ref_inp, ref_other, out=ref_out)
-    res_ret = _resolve_gems_op()(inp, other, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_ret = gems_op(inp, other, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -477,7 +490,8 @@ def test_add_out_alpha(shape, alpha, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.add.out(ref_inp, ref_other, alpha=alpha, out=ref_out)
-    res_ret = _resolve_gems_op()(inp, other, alpha=alpha, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
+    res_ret = gems_op(inp, other, alpha=alpha, out=res_out)
 
     assert res_ret is res_out
     tu.assert_result_close(res_out, ref_out)
@@ -489,8 +503,9 @@ def test_add_rejects_non_broadcastable():
     other = tu.make_input(torch.float32, (4,), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten.add(inp, other)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(inp, other)
+        gems_op(inp, other)
 
 
 @pytest.mark.add_negative
@@ -498,13 +513,15 @@ def test_add_rejects_non_numeric_scalar():
     inp = tu.make_input(torch.float32, (4,), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten.add(inp, "not-a-number")
+    gems_op = flag_gems.testing.resolve_gems_op("add")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(inp, "not-a-number")
+        gems_op(inp, "not-a-number")
 
 
 @pytest.mark.add_negative
 def test_add_requires_two_operands():
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.add(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("add")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

@@ -40,12 +40,6 @@ _DETACH_COPY_NO_BACKWARD_SHAPES = [(16, 64), (7, 13, 29)]
 _DETACH_COPY_STORAGE_SHAPES = [(16, 32), (64, 128)]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "detach_copy", getattr(flag_gems, "detach_copy", None)
-    )
-
-
 def _assert_copy_semantics(res_out, ref_out, inp, ref_inp):
     assert res_out.device == inp.device
     assert res_out.is_contiguous()
@@ -68,7 +62,8 @@ def test_detach_copy(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
@@ -82,7 +77,8 @@ def test_detach_copy_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
@@ -108,7 +104,8 @@ def test_detach_copy_special_values(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     # -0.0 must copy with its sign bit intact (equal_nan-tolerant compares treat
@@ -128,7 +125,8 @@ def test_detach_copy_out(shape, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     ref_ret = torch.ops.aten.detach_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op()(inp, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_ret = gems_op(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -147,7 +145,8 @@ def test_detach_copy_out_value_ranges(shape, value_range, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     ref_ret = torch.ops.aten.detach_copy.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op()(inp, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_ret = gems_op(inp, out=res_out)
 
     assert res_ret is res_out
     _assert_copy_semantics(res_ret, ref_ret, inp, ref_inp)
@@ -164,7 +163,8 @@ def test_detach_copy_non_contiguous(shape, dtype):
     assert not inp.is_contiguous()
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
@@ -177,7 +177,8 @@ def test_detach_copy_empty(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     _assert_copy_semantics(res_out, ref_out, inp, ref_inp)
 
@@ -190,7 +191,8 @@ def test_detach_copy_independent_storage(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.detach_copy(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     res_out.fill_(3.25)
@@ -214,7 +216,8 @@ def test_detach_copy_no_backward(shape, dtype):
     with pytest.raises(RuntimeError):
         torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
+    res_out = gems_op(inp)
     tu.assert_result_equal(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
 
@@ -226,8 +229,9 @@ def test_detach_copy_no_backward(shape, dtype):
 def test_detach_copy_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.detach_copy(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
 
 
 @pytest.mark.detach_copy_out
@@ -239,8 +243,9 @@ def test_detach_copy_out_rejects_wrong_dtype():
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.detach_copy.out(ref_inp, out=ref_out_bad)
+    gems_op = flag_gems.testing.resolve_gems_op("detach_copy")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(inp, out=res_out_bad)
+        gems_op(inp, out=res_out_bad)
 
 
 @pytest.mark.detach_copy

@@ -91,12 +91,6 @@ def _make_sizes_from_range(num_tensors, num_dims, value_range, seed=0):
     return raw.cpu().remainder(_SIZE_MODULUS)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        _OP_NAME, getattr(flag_gems, _OP_NAME, None)
-    )
-
-
 @pytest.mark._nested_compute_contiguous_strides_offsets
 @pytest.mark.parametrize("pattern", _SIZE_PATTERNS)
 @pytest.mark.parametrize("num_dims", _NUM_DIMS)
@@ -109,7 +103,8 @@ def test__nested_compute_contiguous_strides_offsets(num_tensors, num_dims, patte
         ref_strides,
         ref_offsets,
     ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
-    res_strides, res_offsets = _resolve_gems_op()(sizes)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
+    res_strides, res_offsets = gems_op(sizes)
 
     utils.gems_assert_equal(res_strides, ref_strides)
     utils.gems_assert_equal(res_offsets, ref_offsets)
@@ -127,7 +122,8 @@ def test__nested_compute_contiguous_strides_offsets_value_ranges(layout, value_r
         ref_strides,
         ref_offsets,
     ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(ref_sizes)
-    res_strides, res_offsets = _resolve_gems_op()(sizes)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
+    res_strides, res_offsets = gems_op(sizes)
 
     utils.gems_assert_equal(res_strides, ref_strides)
     utils.gems_assert_equal(res_offsets, ref_offsets)
@@ -143,7 +139,8 @@ def test__nested_compute_contiguous_strides_offsets_known_layout():
     ) = torch.ops.aten._nested_compute_contiguous_strides_offsets(
         tu.to_reference(sizes)
     )
-    res_strides, res_offsets = _resolve_gems_op()(sizes)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
+    res_strides, res_offsets = gems_op(sizes)
 
     utils.gems_assert_equal(res_strides, ref_strides)
     utils.gems_assert_equal(res_offsets, ref_offsets)
@@ -154,8 +151,9 @@ def test__nested_compute_contiguous_strides_offsets_invalid_ndim():
     bad = torch.ones(4, dtype=torch.int64)
     with pytest.raises(IndexError):
         torch.ops.aten._nested_compute_contiguous_strides_offsets(bad)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
     with pytest.raises((IndexError, RuntimeError, ValueError)):
-        _resolve_gems_op()(bad)
+        gems_op(bad)
 
 
 @pytest.mark._nested_compute_contiguous_strides_offsets
@@ -164,13 +162,15 @@ def test__nested_compute_contiguous_strides_offsets_rejects_non_int64(dtype):
     bad = torch.zeros((4, 3), dtype=dtype)
     with pytest.raises(RuntimeError):
         torch.ops.aten._nested_compute_contiguous_strides_offsets(bad)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(bad)
+        gems_op(bad)
 
 
 @pytest.mark._nested_compute_contiguous_strides_offsets
 def test__nested_compute_contiguous_strides_offsets_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._nested_compute_contiguous_strides_offsets(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op(_OP_NAME)
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

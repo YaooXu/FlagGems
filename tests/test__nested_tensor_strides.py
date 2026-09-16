@@ -92,12 +92,6 @@ def _make_nested(
     return inp
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_nested_tensor_strides", getattr(flag_gems, "_nested_tensor_strides", None)
-    )
-
-
 def _assert_strides(res_out, ref_out):
     assert res_out.device == torch.device("cpu")
     tu.assert_result_equal(res_out, ref_out)
@@ -112,7 +106,8 @@ def test__nested_tensor_strides(num_tensors, num_dims, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     _assert_strides(res_out, ref_out)
 
@@ -132,7 +127,8 @@ def test__nested_tensor_strides_shape_levels(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     _assert_strides(res_out, ref_out)
 
@@ -147,7 +143,8 @@ def test__nested_tensor_strides_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     _assert_strides(res_out, ref_out)
 
@@ -164,7 +161,8 @@ def test__nested_tensor_strides_uniform(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     _assert_strides(res_out, ref_out)
 
@@ -182,7 +180,8 @@ def test__nested_tensor_strides_with_empty_components(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     # Every component is contiguous: the innermost stride is 1 regardless of the
     # dim-0 extent (including extent 0), and the outer stride is the trailing
@@ -205,7 +204,8 @@ def test__nested_tensor_strides_transposed(dtype):
     assert inp.is_nested
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     # The transposed view is non-contiguous: the innermost stride is the leading
     # component extent (4) rather than 1.
@@ -231,7 +231,8 @@ def test__nested_tensor_strides_nan_inf_values(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._nested_tensor_strides(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
+    res_out = gems_op(inp)
 
     _assert_strides(res_out, ref_out)
 
@@ -242,8 +243,9 @@ def test__nested_tensor_strides_dense_raises(dtype):
     inp = tu.make_input(dtype, (4, 4), _VALUE_RANGE)
     with pytest.raises(NotImplementedError):
         torch.ops.aten._nested_tensor_strides(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._nested_tensor_strides
@@ -259,13 +261,15 @@ def test__nested_tensor_strides_jagged_raises(dtype):
     assert inp.layout == torch.jagged
     with pytest.raises(NotImplementedError):
         torch.ops.aten._nested_tensor_strides(ref_inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark._nested_tensor_strides
 def test__nested_tensor_strides_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten._nested_tensor_strides(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("_nested_tensor_strides")
     with pytest.raises(_NEGATIVE_EXC):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

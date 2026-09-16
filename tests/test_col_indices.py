@@ -152,12 +152,6 @@ def _build_input(layout, shape, nnz, blocks, dtype, value_range=("-1", "1"), see
     raise ValueError(f"unknown layout {layout}")
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "col_indices", getattr(flag_gems, "col_indices", None)
-    )
-
-
 def _assert_result(res_out, ref_out, inp, ref_inp):
     # Check exact output, storage aliasing and unchanged input metadata/values.
     tu.assert_result_equal(res_out, ref_out)
@@ -191,7 +185,8 @@ def test_col_indices_index_layouts(case, batch_shape, dense_shape, dtype, index_
     )
     ref_inp = tu.to_reference(inp)
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
     _assert_result(res_out, ref_out, inp, ref_inp)
 
 
@@ -204,7 +199,8 @@ def test_col_indices_layouts(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -219,7 +215,8 @@ def test_col_indices_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -232,7 +229,8 @@ def test_col_indices_empty(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -244,7 +242,8 @@ def test_col_indices_empty_batched(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -256,7 +255,8 @@ def test_col_indices_empty_bsr(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -268,7 +268,8 @@ def test_col_indices_single_row(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -285,7 +286,8 @@ def test_col_indices_uncoalesced(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -302,7 +304,8 @@ def test_col_indices_full_storage(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -314,7 +317,8 @@ def test_col_indices_bsr_ragged_blocks(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -332,7 +336,8 @@ def test_col_indices_nan_inf_values_ignored(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp, ref_inp)
 
@@ -342,8 +347,9 @@ def test_col_indices_dense_raises():
     inp = tu.make_input(torch.float32, (4, 4), ["-1", "1"])
     with pytest.raises(RuntimeError):
         torch.ops.aten.col_indices(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark.col_indices
@@ -356,8 +362,9 @@ def test_col_indices_csc_raises():
     )
     with pytest.raises(RuntimeError):
         torch.ops.aten.col_indices(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark.col_indices
@@ -370,8 +377,9 @@ def test_col_indices_bsc_raises():
     )
     with pytest.raises(RuntimeError):
         torch.ops.aten.col_indices(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark.col_indices
@@ -379,13 +387,15 @@ def test_col_indices_coo_raises():
     inp = torch.randn(3, 4, device=flag_gems.device).to_sparse_coo()
     with pytest.raises(RuntimeError):
         torch.ops.aten.col_indices(tu.to_reference(inp))
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)
 
 
 @pytest.mark.col_indices
 def test_col_indices_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.col_indices(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("col_indices")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

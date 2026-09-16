@@ -128,12 +128,6 @@ def _split_for_shape(shape):
     return sparse_dim, ndim - sparse_dim
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_resize_and_clear_", getattr(flag_gems, "sparse_resize_and_clear_", None)
-    )
-
-
 def _assert_empty_resized(t, shape, sparse_dim, dense_dim, dtype):
     # Check the requested split and empty storage, including its coalesced flag.
     assert t.layout == torch.sparse_coo
@@ -158,7 +152,8 @@ def test_sparse_resize_and_clear_(case, dtype):
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(dst_shape), dst_spd, dst_dnd
     )
-    res_out = _resolve_gems_op()(inp, list(dst_shape), dst_spd, dst_dnd)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, list(dst_shape), dst_spd, dst_dnd)
 
     # In-place semantics: the op returns self and mutates the input in place.
     assert res_out is inp
@@ -177,7 +172,8 @@ def test_sparse_resize_and_clear_empty_source(dst_shape, dst_spd, dst_dnd, dtype
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(dst_shape), dst_spd, dst_dnd
     )
-    res_out = _resolve_gems_op()(inp, list(dst_shape), dst_spd, dst_dnd)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, list(dst_shape), dst_spd, dst_dnd)
 
     assert res_out is inp
     _assert_empty_resized(inp, dst_shape, dst_spd, dst_dnd, dtype)
@@ -196,7 +192,8 @@ def test_sparse_resize_and_clear_uncoalesced(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
-    res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, [6, 5], 2, 0)
 
     assert res_out is inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
@@ -211,7 +208,8 @@ def test_sparse_resize_and_clear_value_ranges(dtype, value_range):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
-    res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, [6, 5], 2, 0)
 
     assert res_out is inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
@@ -233,7 +231,8 @@ def test_sparse_resize_and_clear_nan_inf(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_resize_and_clear_(ref_inp, [6, 5], 2, 0)
-    res_out = _resolve_gems_op()(inp, [6, 5], 2, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, [6, 5], 2, 0)
 
     assert res_out is inp
     _assert_empty_resized(inp, (6, 5), 2, 0, dtype)
@@ -251,7 +250,8 @@ def test_sparse_resize_and_clear_shape_levels(shape, dtype):
     ref_out = torch.ops.aten.sparse_resize_and_clear_(
         ref_inp, list(shape), sparse_dim, dense_dim
     )
-    res_out = _resolve_gems_op()(inp, list(shape), sparse_dim, dense_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
+    res_out = gems_op(inp, list(shape), sparse_dim, dense_dim)
 
     assert res_out is inp
     _assert_empty_resized(inp, shape, sparse_dim, dense_dim, dtype)
@@ -270,8 +270,9 @@ def test_sparse_resize_and_clear_invalid_params(size, sparse_dim, dense_dim, dty
             sparse_dim,
             dense_dim,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, size, sparse_dim, dense_dim)
+        gems_op(inp, size, sparse_dim, dense_dim)
 
 
 @pytest.mark.sparse_resize_and_clear_
@@ -279,5 +280,6 @@ def test_sparse_resize_and_clear_non_sparse_input():
     inp = torch.randn((4, 5), dtype=torch.float32, device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_resize_and_clear_(tu.to_reference(inp), [4, 5], 2, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_resize_and_clear_")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, [4, 5], 2, 0)
+        gems_op(inp, [4, 5], 2, 0)

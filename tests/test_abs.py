@@ -27,14 +27,6 @@ _ABS_SIGNED_INT_DTYPES = [d for d in _ABS_INT_DTYPES if d.is_signed]
 _ABS_DTYPES = utils.ALL_FLOAT_DTYPES + _ABS_INT_DTYPES + utils.BOOL_TYPES
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op("abs", flag_gems.abs)
-
-
-def _resolve_gems_op_inplace():
-    return flag_gems.testing.resolve_gems_op("abs_", flag_gems.abs_)
-
-
 @pytest.mark.abs
 @pytest.mark.parametrize("shape", tu.selected_shapes())
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
@@ -44,7 +36,8 @@ def test_abs_float_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -58,7 +51,8 @@ def test_abs_int_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     # int/bool abs is exact: assert_result_close uses an atol=0/rtol=0 path.
     tu.assert_result_close(res_out, ref_out)
@@ -73,7 +67,8 @@ def test_abs_nan_inf(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -89,7 +84,8 @@ def test_abs_int_min_stays(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -102,7 +98,8 @@ def test_abs_empty(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -115,7 +112,8 @@ def test_abs_noncontiguous(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -132,7 +130,8 @@ def test_abs_backward(shape, dtype):
     ref_out = torch.ops.aten.abs(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_out = gems_op(inp)
     tu.assert_result_close(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -149,7 +148,8 @@ def test_abs__value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.abs_(ref_inp)
-    res_out = _resolve_gems_op_inplace()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("abs_")
+    res_out = gems_op(inp)
 
     # In-place semantics: the call returns the mutated input tensor itself.
     assert res_out is inp
@@ -170,7 +170,8 @@ def test_abs_out(shape, value_range, dtype):
     res_out = torch.full(shape, 7, dtype=dtype, device=flag_gems.device)
 
     torch.ops.aten.abs.out(ref_inp, out=ref_out)
-    res_ret = _resolve_gems_op()(inp, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
+    res_ret = gems_op(inp, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -181,13 +182,15 @@ def test_abs_out(shape, value_range, dtype):
 def test_abs_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.abs(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
 
 
 @pytest.mark.abs_negative
 def test_abs_rejects_string():
     with pytest.raises((TypeError, RuntimeError)):
         torch.ops.aten.abs("not-a-tensor")
+    gems_op = flag_gems.testing.resolve_gems_op("abs")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()("not-a-tensor")
+        gems_op("not-a-tensor")

@@ -59,12 +59,6 @@ _NON_FLOAT_PRIMAL_DTYPES = [
 _SPECIAL_DTYPES = utils.ALL_FLOAT_DTYPES + [torch.float8_e4m3fn, torch.float8_e5m2]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_make_dual", getattr(flag_gems, "_make_dual", None)
-    )
-
-
 def _assert_view_semantics(res_out, ref_out, inp):
     assert res_out.stride() == ref_out.stride()
     assert res_out.storage_offset() == ref_out.storage_offset()
@@ -88,9 +82,10 @@ def test__make_dual(shape, dtype):
     ref_inp = tu.to_reference(inp)
     ref_tangent = tu.to_reference(tangent)
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(inp, tangent, level)
+        res_out = gems_op(inp, tangent, level)
 
         _assert_view_semantics(res_out, ref_out, inp)
         _assert_dual_semantics(res_out, ref_out)
@@ -106,9 +101,10 @@ def test__make_dual_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
     ref_tangent = tu.to_reference(tangent)
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(inp, tangent, level)
+        res_out = gems_op(inp, tangent, level)
 
         _assert_view_semantics(res_out, ref_out, inp)
         res_primal, res_tangent = torch.autograd.forward_ad.unpack_dual(res_out)
@@ -129,9 +125,10 @@ def test__make_dual_non_contiguous(shape, dtype):
     ref_tangent = tu.to_reference(tangent)
     assert not inp.is_contiguous()
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(inp, tangent, level)
+        res_out = gems_op(inp, tangent, level)
 
         _assert_view_semantics(res_out, ref_out, inp)
         _assert_dual_semantics(res_out, ref_out)
@@ -146,9 +143,10 @@ def test__make_dual_empty(shape, dtype):
     ref_inp = tu.to_reference(inp)
     ref_tangent = tu.to_reference(tangent)
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(inp, tangent, level)
+        res_out = gems_op(inp, tangent, level)
 
         _assert_view_semantics(res_out, ref_out, inp)
         _assert_dual_semantics(res_out, ref_out)
@@ -163,9 +161,10 @@ def test__make_dual_mutation(shape, dtype):
     tangent = tu.make_input(dtype, shape, ["-1", "1"])
     ref_tangent = tu.to_reference(tangent)
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(inp, tangent, level)
+        res_out = gems_op(inp, tangent, level)
 
         ref_out.fill_(2.5)
         res_out.fill_(2.5)
@@ -188,9 +187,10 @@ def test__make_dual_special_values(dtype):
     tangent = torch.ones_like(values)
     ref_tangent = tu.to_reference(tangent)
 
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with dual_level() as level:
         ref_out = torch.ops.aten._make_dual(ref_inp, ref_tangent, level)
-        res_out = _resolve_gems_op()(values, tangent, level)
+        res_out = gems_op(values, tangent, level)
 
         tu.assert_result_equal(res_out, ref_out)
         # signbit has no fp8 kernel, so the sign check goes through float32.
@@ -216,8 +216,9 @@ def test__make_dual_rejects_non_float_primal(dtype):
         # (attribute lookup, triton input validation or a dispatcher cast), so
         # accept the plausible Python failure modes; the point is that it must
         # fail rather than silently accept the int/bool primal.
+        gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            _resolve_gems_op()(inp, tangent, level)
+            gems_op(inp, tangent, level)
 
 
 @pytest.mark._make_dual
@@ -226,8 +227,9 @@ def test__make_dual_rejects_non_tensor_primal():
         tangent = tu.make_input(torch.float32, (4, 5), ["-1", "1"])
         with pytest.raises(RuntimeError):
             torch.ops.aten._make_dual(3.14, tu.to_reference(tangent), level)
+        gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            _resolve_gems_op()(3.14, tangent, level)
+            gems_op(3.14, tangent, level)
 
 
 @pytest.mark._make_dual
@@ -242,8 +244,9 @@ def test__make_dual_rejects_tangent_size_mismatch(primal_shape, tangent_shape):
                 tu.to_reference(tangent),
                 level,
             )
+        gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            _resolve_gems_op()(inp, tangent, level)
+            gems_op(inp, tangent, level)
 
 
 @pytest.mark._make_dual
@@ -257,8 +260,9 @@ def test__make_dual_rejects_inactive_level(level):
             tu.to_reference(tangent),
             level,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, tangent, level)
+        gems_op(inp, tangent, level)
 
 
 @pytest.mark._make_dual
@@ -272,8 +276,9 @@ def test__make_dual_rejects_non_int_level():
                 tu.to_reference(tangent),
                 1.5,
             )
+        gems_op = flag_gems.testing.resolve_gems_op("_make_dual")
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            _resolve_gems_op()(inp, tangent, 1.5)
+            gems_op(inp, tangent, 1.5)
 
 
 @pytest.mark._make_dual

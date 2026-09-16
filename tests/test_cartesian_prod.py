@@ -65,12 +65,6 @@ _BACKWARD_SIZES = tu.selected_cases(
 )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "cartesian_prod", getattr(flag_gems, "cartesian_prod", None)
-    )
-
-
 @pytest.mark.cartesian_prod
 @pytest.mark.parametrize("sizes", _CARTESIAN_PROD_SIZES)
 @pytest.mark.parametrize("dtype,value_range", _RANGE_PAIRS)
@@ -79,7 +73,8 @@ def test_cartesian_prod(sizes, dtype, value_range):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
+    res_out = gems_op(inp)
 
     assert res_out.dtype == ref_out.dtype == dtype
     tu.assert_result_equal(res_out, ref_out)
@@ -105,7 +100,8 @@ def test_cartesian_prod_row_order(dtype):
     ]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _resolve_gems_op()([a, b])
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
+    res_out = gems_op([a, b])
 
     assert res_out.shape == ref_out.shape == (6, 2)
     utils.gems_assert_equal(res_out, tu.to_reference(expected))
@@ -123,7 +119,8 @@ def test_cartesian_prod_non_contiguous(dtype):
     assert not inp[0].is_contiguous()
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -141,7 +138,8 @@ def test_cartesian_prod_nan_inf(dtype, scenario):
     ]
 
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
-    res_out = _resolve_gems_op()([values, other])
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
+    res_out = gems_op([values, other])
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -172,7 +170,8 @@ def test_cartesian_prod_backward(sizes, dtype):
     ref_out = torch.ops.aten.cartesian_prod(ref_inp)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
+    res_out = gems_op(inp)
     tu.assert_result_equal(res_out, ref_out)
 
     # One input is a view; multiple inputs sum repeated appearances.
@@ -189,7 +188,7 @@ def test_cartesian_prod_backward(sizes, dtype):
 def test_cartesian_prod_rejects_empty_list():
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([])
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
     with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
         gems_op([])
 
@@ -202,7 +201,7 @@ def test_cartesian_prod_rejects_multidim_input(shape, dtype):
     ref_inp = tu.to_reference(inp)
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([ref_inp])
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
     with pytest.raises(RuntimeError):
         gems_op([inp])
 
@@ -217,7 +216,7 @@ def test_cartesian_prod_rejects_mixed_dtype():
     ]
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod(ref_inp)
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         gems_op([a, b])
 
@@ -228,6 +227,6 @@ def test_cartesian_prod_rejects_non_tensor():
     ref_inp = tu.to_reference(a)
     with pytest.raises(RuntimeError):
         torch.ops.aten.cartesian_prod([ref_inp, 3.14])
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("cartesian_prod")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         gems_op([a, 3.14])

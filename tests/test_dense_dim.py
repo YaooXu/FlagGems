@@ -155,12 +155,6 @@ def _make_empty_csr(shape, dtype):
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "dense_dim", getattr(flag_gems, "dense_dim", None)
-    )
-
-
 def _assert_result(res_out, ref_out):
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
@@ -174,7 +168,8 @@ def test_dense_dim_dense(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -188,7 +183,8 @@ def test_dense_dim_empty_dense(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -202,7 +198,8 @@ def test_dense_dim_dense_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -216,7 +213,8 @@ def test_dense_dim_noncontiguous_dense(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -230,7 +228,8 @@ def test_dense_dim_sparse_coo(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
@@ -249,7 +248,8 @@ def test_dense_dim_sparse_coo_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -263,7 +263,8 @@ def test_dense_dim_sparse_csr(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
@@ -281,7 +282,8 @@ def test_dense_dim_sparse_csr_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -302,7 +304,8 @@ def test_dense_dim_empty_coo(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -315,7 +318,8 @@ def test_dense_dim_empty_csr(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -333,7 +337,8 @@ def test_dense_dim_uncoalesced_coo(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -347,7 +352,8 @@ def test_dense_dim_nan_inf_dense(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -363,7 +369,8 @@ def test_dense_dim_nan_inf_coo(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -382,7 +389,8 @@ def test_dense_dim_nan_inf_csr(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.dense_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -391,5 +399,6 @@ def test_dense_dim_nan_inf_csr(dtype, scenario):
 def test_dense_dim_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.dense_dim(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("dense_dim")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)

@@ -95,13 +95,6 @@ def _special_tensor(shape, dtype, scenario, device):
     return values.repeat(repeats)[:numel].reshape(shape)
 
 
-def _resolve_gems_op():
-    # flag_gems._version may be the package version string.
-    candidate = getattr(flag_gems, "_version", None)
-    default = candidate if callable(candidate) else None
-    return flag_gems.testing.resolve_gems_op("_version", default)
-
-
 def _as_int(value):
     # Normalize a Python scalar or a one-element tensor.
     if isinstance(value, torch.Tensor):
@@ -125,7 +118,8 @@ def test__version_fresh(shape, dtype):
     ref_inp = utils.to_reference(inp)
 
     ref_out = torch.ops.aten._version(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -140,7 +134,8 @@ def test__version_value_ranges(shape, value_range, dtype):
     ref_inp = _make_value_tensor(dtype, shape, value_range, ref_device)
 
     ref_out = torch.ops.aten._version(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -156,7 +151,8 @@ def test__version_nan_inf(shape, dtype, scenario):
     ref_inp = _special_tensor(shape, dtype, scenario, ref_device)
 
     ref_out = torch.ops.aten._version(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -175,7 +171,8 @@ def test__version_after_inplace(shape, bumps, dtype):
             torch.ops.aten.add_.Tensor(ref_inp, 1)
 
     ref_out = torch.ops.aten._version(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -188,7 +185,8 @@ def test__version_readonly(dtype):
     data_before = inp.clone()
     version_before = torch.ops.aten._version(ref_inp)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, version_before)
     assert torch.ops.aten._version(inp) == version_before
@@ -204,7 +202,8 @@ def test__version_view(dtype):
     ref_view = ref_inp.view(3, 8)
 
     ref_out = torch.ops.aten._version(ref_view)
-    res_out = _resolve_gems_op()(view)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(view)
 
     _assert_result(res_out, ref_out)
 
@@ -222,7 +221,8 @@ def test__version_view_inplace(dtype):
         torch.ops.aten.add_.Tensor(ref_view, 1)
 
     ref_out = torch.ops.aten._version(ref_view)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -240,7 +240,8 @@ def test__version_detach_shares_counter(dtype):
         torch.ops.aten.add_.Tensor(ref_inp, 1)
 
     ref_out = torch.ops.aten._version(ref_detached)
-    res_out = _resolve_gems_op()(detached)
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    res_out = gems_op(detached)
 
     _assert_result(res_out, ref_out)
 
@@ -261,8 +262,9 @@ def test__version_independent_counters(dtype):
         torch.ops.aten.add_.Tensor(ref_first, 1)
         torch.ops.aten.add_.Tensor(ref_second, 1)
 
-    _assert_result(_resolve_gems_op()(first), torch.ops.aten._version(ref_first))
-    _assert_result(_resolve_gems_op()(second), torch.ops.aten._version(ref_second))
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
+    _assert_result(gems_op(first), torch.ops.aten._version(ref_first))
+    _assert_result(gems_op(second), torch.ops.aten._version(ref_second))
 
 
 @pytest.mark._version
@@ -274,8 +276,9 @@ def test__version_rejects_non_tensor(bad_arg):
     # The reference raises RuntimeError at the dispatcher level; a plain
     # Python candidate naturally raises AttributeError / TypeError /
     # ValueError for the same inputs, which is equally acceptable.
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(bad_arg)
+        gems_op(bad_arg)
 
 
 @pytest.mark._version
@@ -290,7 +293,7 @@ def test__version_rejects_wrong_arity():
     # The single Tensor argument may be passed by keyword.
     assert torch.ops.aten._version(self=extra) == 0
 
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("_version")
     # A candidate fails on a missing argument with whatever the runtime
     # raises for a wrong arity: the reference (packet / bound method) raises
     # RuntimeError, while a plain Python implementation raises TypeError.

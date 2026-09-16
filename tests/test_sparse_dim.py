@@ -161,12 +161,6 @@ def _make_empty_csr(shape, dtype):
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_dim", getattr(flag_gems, "sparse_dim", None)
-    )
-
-
 def _assert_result(res_out, ref_out):
     assert type(res_out) is int
     utils.gems_assert_equal(res_out, ref_out)
@@ -180,7 +174,8 @@ def test_sparse_dim_dense_layouts(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -194,7 +189,8 @@ def test_sparse_dim_empty_dense(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -208,7 +204,8 @@ def test_sparse_dim_dense_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -222,7 +219,8 @@ def test_sparse_dim_coo_layouts(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
@@ -242,7 +240,8 @@ def test_sparse_dim_coo_spec_shapes_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -257,7 +256,8 @@ def test_sparse_dim_coo_value_ranges(case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -278,7 +278,8 @@ def test_sparse_dim_empty_coo(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -296,7 +297,8 @@ def test_sparse_dim_uncoalesced_coo(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -310,7 +312,8 @@ def test_sparse_dim_csr_layouts(case, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
     # Pure metadata query: the input layout is untouched.
@@ -327,7 +330,8 @@ def test_sparse_dim_csr_value_ranges(value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -342,7 +346,8 @@ def test_sparse_dim_csr_dense_dims(value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -355,7 +360,8 @@ def test_sparse_dim_empty_csr(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -371,7 +377,8 @@ def test_sparse_dim_csr_spec_shapes(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -385,7 +392,8 @@ def test_sparse_dim_nan_inf_dense(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -401,7 +409,8 @@ def test_sparse_dim_nan_inf_coo(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -420,7 +429,8 @@ def test_sparse_dim_nan_inf_csr(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.sparse_dim(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out)
 
@@ -429,11 +439,12 @@ def test_sparse_dim_nan_inf_csr(dtype, scenario):
 def test_sparse_dim_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.sparse_dim(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_dim")
     with pytest.raises(
         (TypeError, ValueError, RuntimeError, NotImplementedError, AttributeError)
     ):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
     with pytest.raises(
         (TypeError, ValueError, RuntimeError, NotImplementedError, AttributeError)
     ):
-        _resolve_gems_op()(None)
+        gems_op(None)

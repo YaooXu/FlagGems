@@ -66,12 +66,6 @@ _BACKWARD_DTYPES = tu.selected_cases(
 )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_dilated3d", getattr(flag_gems, "slow_conv_dilated3d", None)
-    )
-
-
 def _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation):
     def _out_size(in_size, k, s, p, d):
         return (in_size + 2 * p - d * (k - 1) - 1) // s + 1
@@ -143,7 +137,7 @@ def test_slow_conv_dilated3d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
     ).to(dtype)
 
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding, dilation)
 
     _assert_close(res_out, ref_out, dtype)
@@ -169,9 +163,8 @@ def test_slow_conv_dilated3d_unbatched(
         ref_inp, ref_weight, kernel_size, None, stride, padding, dilation
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias_t, stride, padding, dilation
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding, dilation)
 
     # The output must also drop the batch dim, not silently keep a leading 1.
     assert tuple(res_out.shape) == _conv_output_shape(
@@ -201,9 +194,8 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, dilation
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias_t, stride, padding, dilation
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding, dilation)
 
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
@@ -243,7 +235,8 @@ def test_slow_conv_dilated3d_out(
     )
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
+    res_ret = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, dilation, out=out
     )
     assert res_ret is out
@@ -280,9 +273,8 @@ def test_slow_conv_dilated3d_backward(case, dtype):
     )
 
     # The candidate forward must match the fp64 reference...
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, stride, padding, dilation
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
+    res_out = gems_op(inp, weight, kernel_size, bias, stride, padding, dilation)
     _assert_close(res_out, ref_out.to(dtype), dtype)
 
     # ...and, if the candidate kernel is autograd-aware, its gradients must
@@ -321,9 +313,8 @@ def test_slow_conv_dilated3d_nan_inf(dtype, scenario, special_arg):
         ref_inp, ref_weight, kernel_size, ref_bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
-        inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (1, 1, 1)
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
+    res_out = gems_op(inp, weight, kernel_size, bias, (1, 1, 1), (0, 0, 0), (1, 1, 1))
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -337,10 +328,9 @@ def test_slow_conv_dilated3d_rejects_wrong_kernel_size():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (2, 2, 2), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (2, 2, 2), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
-        )
+        gems_op(inp, weight, (2, 2, 2), None, (1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -351,10 +341,9 @@ def test_slow_conv_dilated3d_rejects_channel_mismatch():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -366,10 +355,9 @@ def test_slow_conv_dilated3d_rejects_int_dtype():
             torch.ops.aten.slow_conv_dilated3d(
                 inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
             )
+        gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
         with pytest.raises((RuntimeError, TypeError, ValueError)):
-            _resolve_gems_op()(
-                inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
-            )
+            gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -380,10 +368,9 @@ def test_slow_conv_dilated3d_rejects_6d_input():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -394,10 +381,9 @@ def test_slow_conv_dilated3d_rejects_wrong_weight_rank():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -409,10 +395,9 @@ def test_slow_conv_dilated3d_rejects_negative_stride():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (-1, 1, 1), (1, 1, 1), (1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -424,10 +409,9 @@ def test_slow_conv_dilated3d_rejects_negative_dilation():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (-1, 1, 1))
 
 
 @pytest.mark.slow_conv_dilated3d_negative
@@ -439,7 +423,6 @@ def test_slow_conv_dilated3d_rejects_output_size_too_small():
         torch.ops.aten.slow_conv_dilated3d(
             inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1)
         )
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
-        _resolve_gems_op()(
-            inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1)
-        )
+        gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1))

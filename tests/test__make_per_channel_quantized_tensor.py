@@ -95,13 +95,6 @@ _AXIS_SHAPES = tu.selected_cases(
 )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_make_per_channel_quantized_tensor",
-        getattr(flag_gems, "_make_per_channel_quantized_tensor", None),
-    )
-
-
 def _ref_device():
     return "cpu" if cfg.TO_CPU else flag_gems.device
 
@@ -197,7 +190,8 @@ def test__make_per_channel_quantized_tensor_value_ranges(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -220,7 +214,8 @@ def test__make_per_channel_quantized_tensor(shape, axis, storage_dtype, scale_dt
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -245,7 +240,8 @@ def test__make_per_channel_quantized_tensor_axis(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -277,7 +273,8 @@ def test__make_per_channel_quantized_tensor_boundary_values(storage_dtype):
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -302,7 +299,8 @@ def test__make_per_channel_quantized_tensor_non_contiguous(storage_dtype, scale_
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -327,7 +325,8 @@ def test__make_per_channel_quantized_tensor_float_zero_points(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -356,7 +355,8 @@ def test__make_per_channel_quantized_tensor_non_finite_scales(storage_dtype, bad
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -387,7 +387,8 @@ def test__make_per_channel_quantized_tensor_non_finite_float_zero_points(
         ref_inp, ref_scales, ref_zero_points, axis
     )
 
-    res_out = _resolve_gems_op()(inp, scales, zero_points, axis)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_out = gems_op(inp, scales, zero_points, axis)
 
     _assert_per_channel_metadata(res_out, ref_out)
     tu.assert_result_equal(inp, ref_inp)
@@ -413,7 +414,8 @@ def test__make_per_channel_quantized_tensor_out(shape, axis, storage_dtype):
     )
 
     act_out_buf = _make_out_buffer(shape, axis, storage_dtype, flag_gems.device)
-    res_ret = _resolve_gems_op()(inp, scales, zero_points, axis, out=act_out_buf)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
+    res_ret = gems_op(inp, scales, zero_points, axis, out=act_out_buf)
     assert res_ret is act_out_buf
 
     _assert_per_channel_metadata(act_out_buf, ref_out_buf)
@@ -437,8 +439,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_storage_dtype(invalid_dt
             tu.to_reference(zero_points),
             1,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, 1)
+        gems_op(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -456,8 +459,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_float_scales(scale_dtype
             tu.to_reference(zero_points),
             1,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, 1)
+        gems_op(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -479,8 +483,9 @@ def test__make_per_channel_quantized_tensor_rejects_non_1d_metadata(bad_metadata
             tu.to_reference(zero_points),
             1,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, 1)
+        gems_op(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor
@@ -503,8 +508,9 @@ def test__make_per_channel_quantized_tensor_rejects_metadata_length_mismatch(
             tu.to_reference(zero_points),
             1,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, 1)
+        gems_op(inp, scales, zero_points, 1)
 
 
 @pytest.mark._make_per_channel_quantized_tensor_out
@@ -528,8 +534,9 @@ def test__make_per_channel_quantized_tensor_out_rejects_non_quantized_buffer(
         )
 
     act_buf = torch.empty(shape, dtype=torch.float32, device=flag_gems.device)
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, axis, out=act_buf)
+        gems_op(inp, scales, zero_points, axis, out=act_buf)
 
 
 @pytest.mark._make_per_channel_quantized_tensor_out
@@ -578,5 +585,6 @@ def test__make_per_channel_quantized_tensor_out_rejects_wrong_quantized_dtype(
         dtype=_WRONG_QUANT_DTYPE[storage_dtype],
         device=flag_gems.device,
     )
+    gems_op = flag_gems.testing.resolve_gems_op("_make_per_channel_quantized_tensor")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()(inp, scales, zero_points, axis, out=act_buf)
+        gems_op(inp, scales, zero_points, axis, out=act_buf)

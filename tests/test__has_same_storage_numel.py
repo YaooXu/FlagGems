@@ -113,12 +113,6 @@ def _special_tensor(shape, dtype, scenario):
     return values.repeat(repeats)[:numel].reshape(shape)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_has_same_storage_numel", getattr(flag_gems, "_has_same_storage_numel", None)
-    )
-
-
 def _assert_result(res_out, ref_out):
     if isinstance(res_out, torch.Tensor):
         assert res_out.ndim == 0
@@ -143,7 +137,8 @@ def test__has_same_storage_numel_layouts(self_spec, other_spec, dtype):
     ref_other = _make_tensor(other_spec, dtype, ref_device)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
 
@@ -157,7 +152,8 @@ def test__has_same_storage_numel_cross_dtype(self_dtype, other_dtype):
     ref_other = other_t.to("cpu") if utils.TO_CPU else other_t
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
 
@@ -172,7 +168,8 @@ def test__has_same_storage_numel_shapes(shape, dtype):
     ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
 
@@ -188,7 +185,8 @@ def test__has_same_storage_numel_value_ranges(shape, value_range, dtype):
     ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
 
@@ -206,7 +204,8 @@ def test__has_same_storage_numel_nan_inf(shape, dtype, scenario):
     ref_other = tu.to_reference(other_t)
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
 
@@ -219,7 +218,8 @@ def test__has_same_storage_numel_ignores_autograd():
     ref_other = other_t.detach()
 
     ref_out = torch.ops.aten._has_same_storage_numel(ref_self, ref_other)
-    res_out = _resolve_gems_op()(self_t, other_t)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
+    res_out = gems_op(self_t, other_t)
 
     _assert_result(res_out, ref_out)
     assert not isinstance(res_out, torch.Tensor) or not res_out.requires_grad
@@ -234,8 +234,9 @@ def test__has_same_storage_numel_rejects_non_tensor(self_arg, other_arg):
     # plain-Python candidate naturally raises AttributeError (or a
     # TypeError/ValueError) for the same inputs, which is equally
     # acceptable.
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(self_arg, other_arg)
+        gems_op(self_arg, other_arg)
 
 
 @pytest.mark._has_same_storage_numel
@@ -243,5 +244,6 @@ def test__has_same_storage_numel_rejects_missing_argument():
     inp = torch.zeros((4,), device=flag_gems.device)
     with pytest.raises(RuntimeError):
         torch.ops.aten._has_same_storage_numel(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_has_same_storage_numel")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp)
+        gems_op(inp)

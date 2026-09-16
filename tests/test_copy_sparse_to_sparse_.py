@@ -102,12 +102,6 @@ def _make_special_values(values_shape, dtype, scenario):
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "copy_sparse_to_sparse_", getattr(flag_gems, "copy_sparse_to_sparse_", None)
-    )
-
-
 def _assert_sparse_equal(res, ref):
     assert res.layout == ref.layout
     assert res.shape == ref.shape
@@ -131,7 +125,8 @@ def test_copy_sparse_to_sparse_(layout, dtype, non_blocking):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, non_blocking)
-    res_out = _resolve_gems_op()(dst, src, non_blocking)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, non_blocking)
 
     # In-place semantics: the op returns self and mutates dst in place.
     assert res_out is dst
@@ -152,7 +147,8 @@ def test_copy_sparse_to_sparse_value_ranges(layout, dtype, value_range):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert dst._nnz() == src._nnz()
@@ -181,7 +177,8 @@ def test_copy_sparse_to_sparse_nan_inf(layout, dtype, scenario):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert dst._nnz() == src._nnz()
@@ -200,7 +197,8 @@ def test_copy_sparse_to_sparse_resizes_self(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert tuple(dst.shape) == tuple(src.shape) == (6, 5)
@@ -219,7 +217,8 @@ def test_copy_sparse_to_sparse_resizes_nnz(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert tuple(dst.shape) == (4, 5)
@@ -238,7 +237,8 @@ def test_copy_sparse_to_sparse_grows_dense_dims(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert tuple(dst.shape) == tuple(src.shape) == (4, 5, 3)
@@ -262,7 +262,8 @@ def test_copy_sparse_to_sparse_empty_dst_adopts_sparse_dim(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert dst.sparse_dim() == src.sparse_dim() == 3
@@ -282,7 +283,8 @@ def test_copy_sparse_to_sparse_empty_src(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert tuple(dst.shape) == (4, 5)
@@ -305,7 +307,8 @@ def test_copy_sparse_to_sparse_uncoalesced(dtype):
     ref_dst = tu.to_reference(dst)
 
     ref_out = torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
-    res_out = _resolve_gems_op()(dst, src, False)
+    gems_op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
+    res_out = gems_op(dst, src, False)
 
     assert res_out is dst
     assert dst._nnz() == src._nnz() == 4
@@ -318,7 +321,7 @@ def test_copy_sparse_to_sparse_uncoalesced(dtype):
 def test_copy_sparse_to_sparse_rejects_dense_self():
     src = _make_sparse_input((4, 5), 2, 3, torch.float32)
     self_dense = torch.zeros((4, 5), dtype=torch.float32, device=flag_gems.device)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(self_dense, src, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -330,7 +333,7 @@ def test_copy_sparse_to_sparse_rejects_dense_src():
     src_dense = torch.randn((4, 5), dtype=torch.float32, device=flag_gems.device)
     ref_dst = _make_sparse_input((4, 5), 2, 3, torch.float32)
     res_dst = _make_sparse_input((4, 5), 2, 3, torch.float32, seed=1)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, src_dense, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -342,7 +345,7 @@ def test_copy_sparse_to_sparse_rejects_csr():
     csr = torch.randn(
         (4, 5), dtype=torch.float32, device=flag_gems.device
     ).to_sparse_csr()
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(csr.clone(), csr, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -355,7 +358,7 @@ def test_copy_sparse_to_sparse_rejects_sparse_dim_change():
     ref_dst = _make_sparse_input((2, 4, 5), 2, 3, torch.float32)
     res_src = _make_sparse_input((2, 4, 5), 3, 3, torch.float32, seed=1)
     res_dst = _make_sparse_input((2, 4, 5), 2, 3, torch.float32, seed=2)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -368,7 +371,7 @@ def test_copy_sparse_to_sparse_rejects_shrinking_sparse_dims():
     ref_dst = _make_sparse_input((6, 5), 2, 3, torch.float32)
     res_src = _make_sparse_input((4, 5), 2, 3, torch.float32, seed=1)
     res_dst = _make_sparse_input((6, 5), 2, 3, torch.float32, seed=2)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -381,7 +384,7 @@ def test_copy_sparse_to_sparse_rejects_shrinking_dense_dims():
     ref_dst = _make_sparse_input((4, 5, 3), 2, 3, torch.float32)
     res_src = _make_sparse_input((4, 5, 2), 2, 3, torch.float32, seed=1)
     res_dst = _make_sparse_input((4, 5, 3), 2, 3, torch.float32, seed=2)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         torch.ops.aten.copy_sparse_to_sparse_(ref_dst, ref_src, False)
     with pytest.raises((RuntimeError, TypeError)):
@@ -393,7 +396,7 @@ def test_copy_sparse_to_sparse_rejects_backward():
     src = _make_sparse_input((4, 5), 2, 3, torch.float32)
     src.requires_grad_(True)
     dst = torch.zeros_like(src)
-    op = _resolve_gems_op()
+    op = flag_gems.testing.resolve_gems_op("copy_sparse_to_sparse_")
     with pytest.raises((RuntimeError, TypeError)):
         out = torch.ops.aten.copy_sparse_to_sparse_(dst.clone(), src, False)
         torch.autograd.grad(out.to_dense().sum(), [src], allow_unused=True)

@@ -59,12 +59,6 @@ _UNSUPPORTED_DTYPES = [
 ]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "thnn_conv2d", getattr(flag_gems, "thnn_conv2d", None)
-    )
-
-
 def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
     n, _, h_in, w_in = inp_shape
     out_c, _, k_h, k_w = weight_shape
@@ -145,7 +139,7 @@ def test_thnn_conv2d(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     assert res_out.shape == ref_out.shape
@@ -175,7 +169,8 @@ def test_thnn_conv2d_value_ranges(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -221,7 +216,8 @@ def test_thnn_conv2d_backward(
             ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
         )
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     tu.assert_result_close(res_out, ref_out.to(dtype))
 
@@ -274,7 +270,8 @@ def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
+    res_out = gems_op(inp, weight, kernel_size, bias, stride, padding)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -307,9 +304,8 @@ def test_thnn_conv2d_out(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, out=ref_out
     )
 
-    res_ret = _resolve_gems_op()(
-        inp, weight, kernel_size, bias_t, stride, padding, out=res_out
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
+    res_ret = gems_op(inp, weight, kernel_size, bias_t, stride, padding, out=res_out)
 
     # The .out overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -323,8 +319,9 @@ def test_thnn_conv2d_rejects_kernel_size_mismatch():
     args = (inp, weight, (2, 2), None, (1, 1), (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -334,8 +331,9 @@ def test_thnn_conv2d_rejects_channel_mismatch():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -346,8 +344,9 @@ def test_thnn_conv2d_rejects_non_4d_input(bad_shape):
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -357,8 +356,9 @@ def test_thnn_conv2d_rejects_non_4d_weight():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -370,8 +370,9 @@ def test_thnn_conv2d_rejects_bias_length_mismatch():
         args = (inp, weight, (3, 3), bad_bias, (1, 1), (0, 0))
         with pytest.raises(RuntimeError):
             torch.ops.aten.thnn_conv2d(*args)
+        gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
         with pytest.raises(_GEMS_ERRORS):
-            _resolve_gems_op()(*args)
+            gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -382,8 +383,9 @@ def test_thnn_conv2d_rejects_nonpositive_stride(stride):
     args = (inp, weight, (3, 3), None, stride, (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -393,8 +395,9 @@ def test_thnn_conv2d_rejects_kernel_larger_than_input():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.thnn_conv2d
@@ -406,8 +409,9 @@ def test_thnn_conv2d_rejects_scalar_params(scalar_param):
     kwargs[scalar_param] = {"kernel_size": 3, "stride": 1, "padding": 0}[scalar_param]
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(inp, weight, **kwargs)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(inp, weight, **kwargs)
+        gems_op(inp, weight, **kwargs)
 
 
 @pytest.mark.thnn_conv2d
@@ -418,5 +422,6 @@ def test_thnn_conv2d_rejects_unsupported_dtype(dtype):
     args = (inp, weight, (3, 3), None, (1, 1), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.thnn_conv2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)

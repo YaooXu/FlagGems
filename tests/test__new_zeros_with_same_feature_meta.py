@@ -99,13 +99,6 @@ def _special_tensor(shape, dtype, scenario):
     return values.repeat(repeats)[:numel].reshape(shape)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_new_zeros_with_same_feature_meta",
-        getattr(flag_gems, "_new_zeros_with_same_feature_meta", None),
-    )
-
-
 def _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other):
     assert isinstance(res_out, torch.Tensor)
     assert res_out.device == other_t.device
@@ -139,9 +132,8 @@ def test__new_zeros_with_same_feature_meta(
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
     )
-    res_out = _resolve_gems_op()(
-        self_t, other_t, self_num_batch_dims=self_num_batch_dims
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=self_num_batch_dims)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -169,7 +161,8 @@ def test__new_zeros_with_same_feature_meta_out(
     torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims, out=ref_out
     )
-    res_ret = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_ret = gems_op(
         self_t, other_t, self_num_batch_dims=self_num_batch_dims, out=res_out
     )
 
@@ -194,9 +187,8 @@ def test__new_zeros_with_same_feature_meta_shapes(
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
     )
-    res_out = _resolve_gems_op()(
-        self_t, other_t, self_num_batch_dims=self_num_batch_dims
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=self_num_batch_dims)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -230,7 +222,8 @@ def test__new_zeros_with_same_feature_meta_out_layouts(
     torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=0, out=ref_out
     )
-    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_ret = gems_op(self_t, other_t, self_num_batch_dims=0, out=res_out)
 
     assert res_ret is res_out
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
@@ -256,7 +249,8 @@ def test__new_zeros_with_same_feature_meta_out_resize(out_shape, dtype):
     torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=1, out=ref_out
     )
-    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_ret = gems_op(self_t, other_t, self_num_batch_dims=1, out=res_out)
 
     assert res_ret is res_out
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
@@ -280,7 +274,8 @@ def test__new_zeros_with_same_feature_meta_out_alias(alias_self, dtype):
     torch.ops.aten._new_zeros_with_same_feature_meta.out(
         ref_self, ref_other, self_num_batch_dims=0, out=ref_out
     )
-    res_ret = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0, out=res_out)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_ret = gems_op(self_t, other_t, self_num_batch_dims=0, out=res_out)
 
     assert res_ret is res_out
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
@@ -309,7 +304,8 @@ def test__new_zeros_with_same_feature_meta_no_autograd(self_grad, other_grad, dt
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
     )
-    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=1)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -331,9 +327,8 @@ def test__new_zeros_with_same_feature_meta_value_ranges(
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=self_num_batch_dims
     )
-    res_out = _resolve_gems_op()(
-        self_t, other_t, self_num_batch_dims=self_num_batch_dims
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=self_num_batch_dims)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -351,7 +346,8 @@ def test__new_zeros_with_same_feature_meta_other_dtype_wins(self_dtype, other_dt
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
     )
-    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=1)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -367,7 +363,8 @@ def test__new_zeros_with_same_feature_meta_same_tensor(dtype):
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=1
     )
-    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=1)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -387,7 +384,8 @@ def test__new_zeros_with_same_feature_meta_nan_inf_values(shape, dtype, scenario
     ref_out = torch.ops.aten._new_zeros_with_same_feature_meta(
         ref_self, ref_other, self_num_batch_dims=0
     )
-    res_out = _resolve_gems_op()(self_t, other_t, self_num_batch_dims=0)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
+    res_out = gems_op(self_t, other_t, self_num_batch_dims=0)
 
     _assert_zero_output(res_out, ref_out, self_t, other_t, ref_self, ref_other)
 
@@ -402,8 +400,9 @@ def test__new_zeros_with_same_feature_meta_negative_batch_dims_raises(dtype):
         torch.ops.aten._new_zeros_with_same_feature_meta(
             self_t, other_t, self_num_batch_dims=-1
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(self_t, other_t, self_num_batch_dims=-1)
+        gems_op(self_t, other_t, self_num_batch_dims=-1)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta_out
@@ -416,8 +415,9 @@ def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
         torch.ops.aten._new_zeros_with_same_feature_meta.out(
             self_t, other_t, self_num_batch_dims=1, out=out_t
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(self_t, other_t, self_num_batch_dims=1, out=out_t)
+        gems_op(self_t, other_t, self_num_batch_dims=1, out=out_t)
 
 
 @pytest.mark._new_zeros_with_same_feature_meta
@@ -434,5 +434,6 @@ def test__new_zeros_with_same_feature_meta_out_wrong_dtype_raises():
 def test__new_zeros_with_same_feature_meta_rejects_non_tensor(self_arg, other_arg):
     with pytest.raises(RuntimeError):
         torch.ops.aten._new_zeros_with_same_feature_meta(self_arg, other_arg)
+    gems_op = flag_gems.testing.resolve_gems_op("_new_zeros_with_same_feature_meta")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(self_arg, other_arg)
+        gems_op(self_arg, other_arg)

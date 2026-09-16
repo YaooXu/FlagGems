@@ -47,12 +47,6 @@ _VIEW_CASES = [
 ]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_shape_as_tensor", getattr(flag_gems, "_shape_as_tensor", None)
-    )
-
-
 def _assert_result(res_out, ref_out, inp):
     assert res_out.device == torch.device("cpu")
     assert not res_out._is_view()
@@ -69,7 +63,8 @@ def test__shape_as_tensor_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp)
 
@@ -83,7 +78,8 @@ def test__shape_as_tensor_empty(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp)
 
@@ -101,7 +97,8 @@ def test__shape_as_tensor_non_contiguous(view_case, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp)
 
@@ -116,7 +113,8 @@ def test__shape_as_tensor_nan_inf(dtype, scenario):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
+    res_out = gems_op(inp)
 
     _assert_result(res_out, ref_out, inp)
 
@@ -128,7 +126,8 @@ def test__shape_as_tensor_ignores_autograd(shape):
     ref_inp = tu.to_reference(inp.detach())
 
     ref_out = torch.ops.aten._shape_as_tensor(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
+    res_out = gems_op(inp)
 
     assert not res_out.requires_grad
     _assert_result(res_out, ref_out, inp.detach())
@@ -139,5 +138,6 @@ def test__shape_as_tensor_rejects_non_tensor_input():
     for bad in (5, [1, 2, 3], "abc", 3.14):
         with pytest.raises(RuntimeError):
             torch.ops.aten._shape_as_tensor(bad)
+        gems_op = flag_gems.testing.resolve_gems_op("_shape_as_tensor")
         with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-            _resolve_gems_op()(bad)
+            gems_op(bad)

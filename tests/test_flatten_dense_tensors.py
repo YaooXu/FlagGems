@@ -68,12 +68,6 @@ if not tu.QUICK_MODE:
         _FLATTEN_SHAPE_CASES.append([shape, shape])
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "flatten_dense_tensors", getattr(flag_gems, "flatten_dense_tensors", None)
-    )
-
-
 @pytest.mark.flatten_dense_tensors
 @pytest.mark.parametrize("tensor_shapes", _FLATTEN_SHAPE_CASES)
 @pytest.mark.parametrize("dtype", _SUPPORTED_DTYPES)
@@ -82,7 +76,8 @@ def test_flatten_dense_tensors(tensor_shapes, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
+    res_out = gems_op(inp)
 
     assert res_out.device == inp[0].device
     tu.assert_result_equal(res_out, ref_out)
@@ -100,7 +95,8 @@ def test_flatten_dense_tensors_value_ranges(tensor_shapes, value_range, dtype):
     ref_inp = [tu.to_reference(t) for t in inp]
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -115,7 +111,8 @@ def test_flatten_dense_tensors_non_contiguous(dtype):
     assert all(not v.is_contiguous() for v in views)
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_views)
-    res_out = _resolve_gems_op()(views)
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
+    res_out = gems_op(views)
 
     assert res_out.device == views[0].device
     tu.assert_result_equal(res_out, ref_out)
@@ -134,7 +131,8 @@ def test_flatten_dense_tensors_nan_inf(dtype, scenario):
     ]
 
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
-    res_out = _resolve_gems_op()([values, other])
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
+    res_out = gems_op([values, other])
 
     tu.assert_result_equal(res_out, ref_out)
 
@@ -160,7 +158,8 @@ def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
     ref_out = torch.ops.aten.flatten_dense_tensors(ref_inp)
     ref_in_grads = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
+    res_out = gems_op(inp)
     tu.assert_result_equal(res_out, ref_out)
 
     assert res_out.requires_grad
@@ -173,7 +172,7 @@ def test_flatten_dense_tensors_backward(tensor_shapes, dtype):
 def test_flatten_dense_tensors_rejects_empty_list():
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([])
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
     with pytest.raises((TypeError, ValueError, RuntimeError, IndexError)):
         gems_op([])
 
@@ -184,6 +183,6 @@ def test_flatten_dense_tensors_rejects_non_tensor():
     ref_a = tu.to_reference(a)
     with pytest.raises(RuntimeError):
         torch.ops.aten.flatten_dense_tensors([ref_a, 3.14])
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("flatten_dense_tensors")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         gems_op([a, 3.14])

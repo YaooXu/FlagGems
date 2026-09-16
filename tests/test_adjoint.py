@@ -32,12 +32,6 @@ _ADJOINT_DTYPES = (
 _ADJOINT_SHAPES = [shape for shape in tu.selected_shapes() if len(shape) >= 2]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "adjoint", getattr(flag_gems, "adjoint", None)
-    )
-
-
 def _transposed_shape(shape):
     # Shape of adjoint(x): the last two dimensions are swapped.
     if len(shape) >= 2:
@@ -63,7 +57,8 @@ def test_adjoint(shape, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
@@ -78,7 +73,8 @@ def test_adjoint_value_ranges(shape, value_range, dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
 
     _assert_view_semantics(res_out, ref_out, inp)
     tu.assert_result_equal(res_out, ref_out)
@@ -95,7 +91,8 @@ def test_adjoint_non_contiguous(shape, dtype):
     assert not inp.is_contiguous()
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
@@ -114,7 +111,8 @@ def test_adjoint_toggle(shape, dtype):
     assert inp.is_conj() == ref_inp.is_conj()
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, base)
@@ -144,7 +142,8 @@ def test_adjoint_special_values(dtype):
     ref_inp = tu.to_reference(values)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(values)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(values)
 
     _assert_view_semantics(res_out, ref_out, values)
     tu.assert_result_equal(res_out, ref_out)
@@ -158,7 +157,8 @@ def test_adjoint_mutation(shape, dtype):
     inp = tu.make_input(dtype, shape, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
     ref_out = torch.ops.aten.adjoint(ref_inp)
 
     res_out.fill_(2.5)
@@ -186,7 +186,8 @@ def test_adjoint_backward(shape, dtype):
     ref_out = torch.ops.aten.adjoint(ref_inp)
     ref_in_grad = torch.autograd.grad(ref_out, ref_inp, grad_outputs=ref_grad)[0]
 
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
     tu.assert_result_equal(res_out, ref_out)
     _assert_view_semantics(res_out, ref_out, inp)
 
@@ -203,7 +204,8 @@ def test_adjoint_0d(dtype):
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
-    res_out = _resolve_gems_op()(inp)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
+    res_out = gems_op(inp)
 
     tu.assert_result_equal(res_out, ref_out)
     assert res_out.is_conj() == ref_out.is_conj()
@@ -217,7 +219,7 @@ def test_adjoint_1d_raises(dtype):
 
     with pytest.raises(RuntimeError):
         torch.ops.aten.adjoint(ref_inp)
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
     with pytest.raises(RuntimeError):
         gems_op(inp)
 
@@ -226,8 +228,9 @@ def test_adjoint_1d_raises(dtype):
 def test_adjoint_rejects_non_tensor():
     with pytest.raises(RuntimeError):
         torch.ops.aten.adjoint(3.14)
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(3.14)
+        gems_op(3.14)
 
 
 @pytest.mark.adjoint
@@ -238,7 +241,7 @@ def test_adjoint_special_scenarios(dtype, scenario):
     inp = tu.make_special_input(dtype, scenario)
     inp = inp.reshape(1, -1)
     ref_inp = tu.to_reference(inp)
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("adjoint")
 
     ref_out = torch.ops.aten.adjoint(ref_inp)
     res_out = gems_op(inp)

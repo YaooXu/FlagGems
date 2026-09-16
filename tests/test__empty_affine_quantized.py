@@ -52,12 +52,6 @@ CHANNELS_LAST_3D_SHAPES = [(2, 3, 8, 8, 8), (4, 7, 5, 5, 5)]
 EMPTY_SHAPES = [(0,), (0, 3)]
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_empty_affine_quantized", getattr(flag_gems, "_empty_affine_quantized", None)
-    )
-
-
 def _ref_device():
     return "cpu" if cfg.TO_CPU else flag_gems.device
 
@@ -90,7 +84,7 @@ def test__empty_affine_quantized(shape, dtype, scale, zero_point):
         shape, dtype=dtype, device=_ref_device(), scale=scale, zero_point=zero_point
     )
 
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     res_out = gems_op(
         shape, dtype=dtype, device=flag_gems.device, scale=scale, zero_point=zero_point
     )
@@ -114,7 +108,8 @@ def test__empty_affine_quantized_value_ranges(shape, value_range, dtype):
     ref_out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=_ref_device(), scale=scale, zero_point=zero_point
     )
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(
         shape, dtype=dtype, device=flag_gems.device, scale=scale, zero_point=zero_point
     )
 
@@ -129,7 +124,8 @@ def test__empty_affine_quantized_non_finite_scale(shape, dtype, scale):
     ref_out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=_ref_device(), scale=scale, zero_point=0
     )
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(
         shape, dtype=dtype, device=flag_gems.device, scale=scale, zero_point=0
     )
 
@@ -144,7 +140,8 @@ def test__empty_affine_quantized_wide_zero_point(shape, dtype, zero_point):
     ref_out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=_ref_device(), scale=1.0, zero_point=zero_point
     )
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(
         shape, dtype=dtype, device=flag_gems.device, scale=1.0, zero_point=zero_point
     )
 
@@ -158,7 +155,8 @@ def test__empty_affine_quantized_empty(shape, dtype):
     ref_out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=_ref_device()
     )
-    res_out = _resolve_gems_op()(shape, dtype=dtype, device=flag_gems.device)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(shape, dtype=dtype, device=flag_gems.device)
 
     assert res_out.numel() == ref_out.numel() == 0
     _assert_quant_metadata(res_out, ref_out)
@@ -171,7 +169,8 @@ def test__empty_affine_quantized_channels_last(shape, dtype):
     ref_out = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=_ref_device(), memory_format=torch.channels_last
     )
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(
         shape, dtype=dtype, device=flag_gems.device, memory_format=torch.channels_last
     )
 
@@ -189,7 +188,8 @@ def test__empty_affine_quantized_channels_last_3d(shape, dtype):
         device=_ref_device(),
         memory_format=torch.channels_last_3d,
     )
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(
         shape,
         dtype=dtype,
         device=flag_gems.device,
@@ -217,9 +217,8 @@ def test__empty_affine_quantized_out(shape, dtype, scale, zero_point):
     act_out_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=dtype, device=flag_gems.device, scale=2.5, zero_point=-5
     )
-    res_out = _resolve_gems_op()(
-        shape, scale=scale, zero_point=zero_point, out=act_out_buf
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(shape, scale=scale, zero_point=zero_point, out=act_out_buf)
     assert res_out is act_out_buf
 
     _assert_quant_metadata(res_out, ref_out)
@@ -242,7 +241,8 @@ def test__empty_affine_quantized_out_value_ranges(value_range, shape):
     act_buf = torch.ops.aten._empty_affine_quantized(
         shape, dtype=torch.quint8, device=flag_gems.device, scale=2.5, zero_point=-5
     )
-    res_out = _resolve_gems_op()(shape, scale=scale, zero_point=zero_point, out=act_buf)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op(shape, scale=scale, zero_point=zero_point, out=act_buf)
     assert res_out is act_buf
 
     _assert_quant_metadata(res_out, ref_out)
@@ -264,7 +264,8 @@ def test__empty_affine_quantized_out_non_contiguous_view():
         (16, 8), dtype=dtype, device=flag_gems.device, scale=1.0, zero_point=0
     )
     act_sliced = act_base[:, ::2]
-    res_out = _resolve_gems_op()((16, 4), scale=0.5, zero_point=3, out=act_sliced)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
+    res_out = gems_op((16, 4), scale=0.5, zero_point=3, out=act_sliced)
     assert res_out is act_sliced
 
     _assert_quant_metadata(res_out, ref_out)
@@ -277,8 +278,9 @@ def test__empty_affine_quantized_out_non_contiguous_view():
 def test__empty_affine_quantized_rejects_negative_size():
     with pytest.raises(RuntimeError):
         torch.ops.aten._empty_affine_quantized((-1,), dtype=torch.quint8)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()((-1,), dtype=torch.quint8)
+        gems_op((-1,), dtype=torch.quint8)
 
 
 @pytest.mark._empty_affine_quantized
@@ -286,8 +288,9 @@ def test__empty_affine_quantized_rejects_negative_size():
 def test__empty_affine_quantized_rejects_non_quantized_dtype(dtype):
     with pytest.raises((NotImplementedError, RuntimeError, TypeError)):
         torch.ops.aten._empty_affine_quantized((2, 3), dtype=dtype)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()((2, 3), dtype=dtype)
+        gems_op((2, 3), dtype=dtype)
 
 
 @pytest.mark._empty_affine_quantized
@@ -296,8 +299,9 @@ def test__empty_affine_quantized_rejects_sparse_layout():
         torch.ops.aten._empty_affine_quantized(
             (2, 3), dtype=torch.quint8, layout=torch.sparse_coo
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()((2, 3), dtype=torch.quint8, layout=torch.sparse_coo)
+        gems_op((2, 3), dtype=torch.quint8, layout=torch.sparse_coo)
 
 
 @pytest.mark._empty_affine_quantized
@@ -312,19 +316,17 @@ def test__empty_affine_quantized_rejects_invalid_memory_format(memory_format):
             torch.ops.aten._empty_affine_quantized(
                 (1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format
             )
+        gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
         with pytest.raises((TypeError, ValueError, RuntimeError)):
-            _resolve_gems_op()(
-                (1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format
-            )
+            gems_op((1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format)
     else:
         with pytest.raises((RuntimeError, TypeError, NotImplementedError)):
             torch.ops.aten._empty_affine_quantized(
                 (1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format
             )
+        gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
         with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-            _resolve_gems_op()(
-                (1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format
-            )
+            gems_op((1, 3, 8, 8), dtype=torch.quint8, memory_format=memory_format)
 
 
 @pytest.mark._empty_affine_quantized
@@ -339,8 +341,9 @@ def test__empty_affine_quantized_rejects_invalid_memory_format(memory_format):
 def test__empty_affine_quantized_rejects_invalid_scalar_qparams(kwargs):
     with pytest.raises((RuntimeError, TypeError, ValueError, OverflowError)):
         torch.ops.aten._empty_affine_quantized((2, 3), dtype=torch.quint8, **kwargs)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((RuntimeError, TypeError, ValueError, OverflowError)):
-        _resolve_gems_op()((2, 3), dtype=torch.quint8, **kwargs)
+        gems_op((2, 3), dtype=torch.quint8, **kwargs)
 
 
 @pytest.mark._empty_affine_quantized_out
@@ -350,8 +353,9 @@ def test__empty_affine_quantized_out_rejects_non_quantized_buffer():
         torch.ops.aten._empty_affine_quantized.out((2, 3), out=ref_buf)
 
     act_buf = torch.empty((2, 3), dtype=torch.float32, device=flag_gems.device)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()((2, 3), out=act_buf)
+        gems_op((2, 3), out=act_buf)
 
 
 @pytest.mark._empty_affine_quantized_out
@@ -367,5 +371,6 @@ def test__empty_affine_quantized_out_rejects_shape_mismatch():
     )
     with pytest.raises((NotImplementedError, RuntimeError)):
         torch.ops.aten._empty_affine_quantized.out((4, 6), out=buf)
+    gems_op = flag_gems.testing.resolve_gems_op("_empty_affine_quantized")
     with pytest.raises((TypeError, ValueError, NotImplementedError, RuntimeError)):
-        _resolve_gems_op()((4, 6), out=buf)
+        gems_op((4, 6), out=buf)

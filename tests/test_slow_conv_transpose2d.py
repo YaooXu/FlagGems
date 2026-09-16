@@ -157,13 +157,6 @@ _BACKWARD_CASES = SLOW_CONV_TRANSPOSE2D_CASES[:3]
 _GEMS_ERRORS = (TypeError, ValueError, RuntimeError, AttributeError)
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "slow_conv_transpose2d",
-        getattr(flag_gems, "slow_conv_transpose2d", None),
-    )
-
-
 def _conv_output_shape(
     inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation
 ):
@@ -258,7 +251,8 @@ def test_slow_conv_transpose2d(
 
     # Native CUDA adds a leading batch dimension to the unbatched input.
     # Independent reference storage keeps that change local to each call.
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -305,7 +299,8 @@ def test_slow_conv_transpose2d_value_ranges(
         dilation,
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
 
@@ -375,7 +370,8 @@ def test_slow_conv_transpose2d_backward(
             ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
         )
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias_t, stride, padding, output_padding, dilation
     )
     _assert_close(res_out, ref_out.to(dtype), dtype)
@@ -445,7 +441,8 @@ def test_slow_conv_transpose2d_nan_inf(dtype, scenario, special_arg):
         dilation,
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
+    res_out = gems_op(
         inp, weight, kernel_size, bias, stride, padding, output_padding, dilation
     )
 
@@ -505,7 +502,8 @@ def test_slow_conv_transpose2d_out(
     )
 
     out = torch.empty(ref_full.shape, dtype=dtype, device=flag_gems.device)
-    res_ret = _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
+    res_ret = gems_op(
         inp,
         weight,
         kernel_size,
@@ -527,8 +525,9 @@ def test_slow_conv_transpose2d_rejects_channel_mismatch():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -539,8 +538,9 @@ def test_slow_conv_transpose2d_rejects_invalid_input_rank(bad_shape):
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -550,8 +550,9 @@ def test_slow_conv_transpose2d_rejects_invalid_weight_rank():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -577,8 +578,9 @@ def test_slow_conv_transpose2d_rejects_invalid_output_padding(stride, output_pad
     )
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -589,8 +591,9 @@ def test_slow_conv_transpose2d_rejects_nonpositive_stride(stride):
     args = (inp, weight, (3, 3), None, stride, (0, 0), (0, 0), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -601,8 +604,9 @@ def test_slow_conv_transpose2d_rejects_nonpositive_dilation(dilation):
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), dilation)
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -630,8 +634,9 @@ def test_slow_conv_transpose2d_rejects_scalar_params(scalar_param, scalar_value)
     args[index] = scalar_value
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)
 
 
 @pytest.mark.slow_conv_transpose2d
@@ -641,5 +646,6 @@ def test_slow_conv_transpose2d_rejects_non_float_dtype():
     args = (inp, weight, (3, 3), None, (1, 1), (0, 0), (0, 0), (1, 1))
     with pytest.raises(RuntimeError):
         torch.ops.aten.slow_conv_transpose2d(*args)
+    gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
-        _resolve_gems_op()(*args)
+        gems_op(*args)

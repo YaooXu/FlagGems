@@ -111,12 +111,6 @@ def _make_bsc_inputs(
     return ccol, row, values
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_bsc_tensor", getattr(flag_gems, "sparse_bsc_tensor", None)
-    )
-
-
 def _call_reference(ccol, row, values, size, dtype):
     ref_ccol = tu.to_reference(ccol)
     ref_row = tu.to_reference(row)
@@ -133,7 +127,8 @@ def _call_reference(ccol, row, values, size, dtype):
 
 
 def _call_candidate(ccol, row, values, size, dtype):
-    return _resolve_gems_op()(
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_bsc_tensor")
+    return gems_op(
         ccol,
         row,
         values,
@@ -291,8 +286,9 @@ def test_sparse_bsc_tensor_negative_layout():
             layout=torch.sparse_coo,
             device=ref_ccol.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_bsc_tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(
+        gems_op(
             ccol,
             row,
             values,
@@ -322,8 +318,9 @@ def test_sparse_bsc_tensor_negative_size():
             layout=torch.sparse_bsc,
             device=ref_ccol.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_bsc_tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(
+        gems_op(
             ccol,
             row,
             values,
@@ -349,8 +346,9 @@ def test_sparse_bsc_tensor_negative_non_tensor():
             layout=torch.sparse_bsc,
             device=flag_gems.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_bsc_tensor")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
-        _resolve_gems_op()(
+        gems_op(
             3.14,
             row,
             values,

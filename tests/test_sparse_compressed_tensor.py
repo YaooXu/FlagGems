@@ -129,12 +129,6 @@ def _make_input(
     )
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "sparse_compressed_tensor", getattr(flag_gems, "sparse_compressed_tensor", None)
-    )
-
-
 def _assert_result(res_out, ref_out, dtype, layout, index_dtype):
     assert res_out.layout == layout
     assert res_out.shape == ref_out.shape
@@ -184,7 +178,7 @@ def test_sparse_compressed_tensor_shape_levels(shape, dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -218,7 +212,7 @@ def test_sparse_compressed_tensor(case, dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -250,7 +244,7 @@ def test_sparse_compressed_tensor_no_size(case, dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -282,7 +276,7 @@ def test_sparse_compressed_tensor_empty(case, dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -318,7 +312,7 @@ def test_sparse_compressed_tensor_value_ranges(case, value_range, dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -358,7 +352,7 @@ def test_sparse_compressed_tensor_nan_inf_values(dtype, scenario):
         layout=layout,
         device=ref_crow.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         crow_t,
         col_t,
@@ -397,7 +391,7 @@ def test_sparse_compressed_tensor_backward(dtype):
         layout=layout,
         device=ref_compressed.device,
     )
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     res_out = gems_op(
         compressed,
         plain,
@@ -441,8 +435,9 @@ def test_sparse_compressed_tensor_rejects_missing_layout():
             dtype=torch.float32,
             device=ref_compressed.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(
+        gems_op(
             compressed,
             plain,
             values,
@@ -469,8 +464,9 @@ def test_sparse_compressed_tensor_rejects_coo_layout():
             layout=torch.sparse_coo,
             device=ref_compressed.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(
+        gems_op(
             compressed,
             plain,
             values,
@@ -498,8 +494,9 @@ def test_sparse_compressed_tensor_rejects_dtype_mismatch():
             layout=torch.sparse_csr,
             device=ref_compressed.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(
+        gems_op(
             compressed,
             plain,
             values,
@@ -526,8 +523,9 @@ def test_sparse_compressed_tensor_rejects_non_float32_values_without_dtype():
             layout=torch.sparse_csr,
             device=ref_compressed.device,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("sparse_compressed_tensor")
     with pytest.raises((RuntimeError, TypeError)):
-        _resolve_gems_op()(
+        gems_op(
             compressed,
             plain,
             values,

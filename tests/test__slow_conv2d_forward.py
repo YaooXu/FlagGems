@@ -68,12 +68,6 @@ _BACKWARD_CASES = SLOW_CONV2D_CASES[:3]
 _INPUT_SCALE = 0.1
 
 
-def _resolve_gems_op():
-    return flag_gems.testing.resolve_gems_op(
-        "_slow_conv2d_forward", getattr(flag_gems, "_slow_conv2d_forward", None)
-    )
-
-
 def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
     n, _, h_in, w_in = inp_shape
     out_c, _, k_h, k_w = weight_shape
@@ -150,7 +144,7 @@ def test__slow_conv2d_forward(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    gems_op = _resolve_gems_op()
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     _assert_close(res_out, ref_out, dtype)
@@ -179,7 +173,8 @@ def test__slow_conv2d_forward_value_ranges(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     _assert_close(res_out, ref_out, dtype, equal_nan=True)
 
@@ -226,7 +221,8 @@ def test__slow_conv2d_forward_backward(
             ref_out, (ref_inp, ref_weight, ref_bias), ref_grad_out
         )
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias_t, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
+    res_out = gems_op(inp, weight, kernel_size, bias_t, stride, padding)
 
     tu.assert_result_close(res_out, ref_out.to(dtype))
 
@@ -279,7 +275,8 @@ def test__slow_conv2d_forward_nan_inf(dtype, scenario, special_arg):
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding
     ).to(dtype)
 
-    res_out = _resolve_gems_op()(inp, weight, kernel_size, bias, stride, padding)
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
+    res_out = gems_op(inp, weight, kernel_size, bias, stride, padding)
 
     tu.assert_result_close(res_out, ref_out)
 
@@ -312,9 +309,8 @@ def test__slow_conv2d_forward_out(
     torch.ops.aten._slow_conv2d_forward.output(
         ref_inp, ref_weight, kernel_size, ref_bias, stride, padding, output=ref_out
     )
-    res_ret = _resolve_gems_op()(
-        inp, weight, kernel_size, bias_t, stride, padding, output=res_out
-    )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
+    res_ret = gems_op(inp, weight, kernel_size, bias_t, stride, padding, output=res_out)
 
     # The .output overload must write into and return the caller's buffer.
     assert res_ret is res_out
@@ -334,8 +330,9 @@ def test__slow_conv2d_forward_rejects_kernel_size_mismatch():
             (1, 1),
             (0, 0),
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, (2, 2), None, (1, 1), (0, 0))
+        gems_op(inp, weight, (2, 2), None, (1, 1), (0, 0))
 
 
 @pytest.mark._slow_conv2d_forward
@@ -351,8 +348,9 @@ def test__slow_conv2d_forward_rejects_kernel_larger_than_input():
             (1, 1),
             (0, 0),
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, (3, 3), None, (1, 1), (0, 0))
+        gems_op(inp, weight, (3, 3), None, (1, 1), (0, 0))
 
 
 @pytest.mark._slow_conv2d_forward
@@ -368,8 +366,9 @@ def test__slow_conv2d_forward_rejects_channel_mismatch():
             (1, 1),
             (0, 0),
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, (3, 3), None, (1, 1), (0, 0))
+        gems_op(inp, weight, (3, 3), None, (1, 1), (0, 0))
 
 
 @pytest.mark._slow_conv2d_forward
@@ -385,8 +384,9 @@ def test__slow_conv2d_forward_rejects_non_4d_input():
             (1, 1),
             (0, 0),
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, (3, 3), None, (1, 1), (0, 0))
+        gems_op(inp, weight, (3, 3), None, (1, 1), (0, 0))
 
 
 @pytest.mark._slow_conv2d_forward
@@ -403,8 +403,9 @@ def test__slow_conv2d_forward_rejects_unsupported_dtype(dtype):
             (1, 1),
             (1, 1),
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, (3, 3), None, (1, 1), (1, 1))
+        gems_op(inp, weight, (3, 3), None, (1, 1), (1, 1))
 
 
 @pytest.mark._slow_conv2d_forward
@@ -424,8 +425,9 @@ def test__slow_conv2d_forward_rejects_scalar_params(scalar_param):
             tu.to_reference(weight),
             **bad_kwargs,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, **bad_kwargs)
+        gems_op(inp, weight, **bad_kwargs)
 
 
 @pytest.mark._slow_conv2d_forward
@@ -447,8 +449,9 @@ def test__slow_conv2d_forward_rejects_wrong_length_params(bad_kwargs):
             tu.to_reference(weight),
             **bad_kwargs,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, **bad_kwargs)
+        gems_op(inp, weight, **bad_kwargs)
 
 
 @pytest.mark._slow_conv2d_forward
@@ -469,5 +472,6 @@ def test__slow_conv2d_forward_rejects_invalid_params(bad_kwargs):
             tu.to_reference(weight),
             **bad_kwargs,
         )
+    gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
-        _resolve_gems_op()(inp, weight, **bad_kwargs)
+        gems_op(inp, weight, **bad_kwargs)
