@@ -14,11 +14,6 @@ def _shifted_chebyshev_polynomial_w(*args):
     return gems_op(*args)
 
 
-# TODO: Reference GitHub issue for multi-backend support
-@pytest.mark.skipif(
-    flag_gems.vendor_name not in ("nvidia", "thead"),
-    reason="Only nvidia and thead backends support this op",
-)
 @pytest.mark.special_shifted_chebyshev_polynomial_w
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 # PyTorch reference only supports float32 for this operator
@@ -39,10 +34,6 @@ def test_special_shifted_chebyshev_polynomial_w(shape, dtype):
     utils.gems_assert_close(res_out, ref_out, dtype)
 
 
-@pytest.mark.skipif(
-    flag_gems.vendor_name not in ("nvidia", "thead"),
-    reason="Only nvidia and thead backends support this op",
-)
 @pytest.mark.special_shifted_chebyshev_polynomial_w
 def test_special_shifted_chebyshev_polynomial_w_n_out_of_range():
     # Verify that n > 10 raises an error.
