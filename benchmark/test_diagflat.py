@@ -69,10 +69,10 @@ class DiagFlatBenchmark(base.GenericBenchmark):
     comprehensive shapes are disabled.
     """
 
+    DEFAULT_SHAPE_DESC = "input numel (output side = numel + |offset|)"
+
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = DIAGFLAT_SHAPES
-        self.shape_desc = "input numel (output side = numel + |offset|)"
+        super().set_shapes(shape_file_path, default_shapes=DIAGFLAT_SHAPES)
 
     def set_more_shapes(self):
         return []

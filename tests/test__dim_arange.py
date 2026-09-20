@@ -41,12 +41,12 @@ _DIM_ARANGE_INPUT_DTYPES = (
     tu.REQUIRED_DTYPES + tu.selected_cases([torch.int16]) + [torch.bool]
 )
 
-# (view_fn, logical_shape, dim, expected_length) for a (4, 8, 6) base.
+# (view_fn, logical_shape, dim) for a (4, 8, 6) base.
 _VIEW_CASES = [
-    (lambda b: b.transpose(0, 1), (8, 4, 6), 0, 8),
-    (lambda b: b.transpose(0, 1), (8, 4, 6), 1, 4),
-    (lambda b: b[0:3, 2:7, 1], (3, 5), 1, 5),
-    (lambda b: b.narrow(1, 1, 5), (4, 5, 6), 1, 5),
+    (lambda b: b.transpose(0, 1), (8, 4, 6), 0),
+    (lambda b: b.transpose(0, 1), (8, 4, 6), 1),
+    (lambda b: b[0:3, 2:7, 1], (3, 5), 1),
+    (lambda b: b.narrow(1, 1, 5), (4, 5, 6), 1),
 ]
 
 
@@ -77,7 +77,7 @@ def test__dim_arange_value_ranges(shape, dim, value_range, dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", _DIM_ARANGE_INPUT_DTYPES)
 def test__dim_arange_non_contiguous(view_case, value_range, dtype):
-    view_fn, expected_shape, dim, expected_len = view_case
+    view_fn, expected_shape, dim = view_case
     base = tu.make_input(dtype, (4, 8, 6), value_range)
     inp = view_fn(base)
     assert not inp.is_contiguous()

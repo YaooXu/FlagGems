@@ -45,22 +45,22 @@ _CSR_2D_CASES = [
     ((3, 6), [0, 1, 3, 5], [0, 2, 4, 0, 5]),
     ((1, 4), [0, 2], [0, 3]),
     ((6, 1), [0, 1, 1, 2, 2, 3, 3], [0, 0, 0]),
-    ((7, 5), [0, 1, 3, 4, 4, 6, 6, 6], [0, 4, 2, 1, 3]),
+    ((7, 5), [0, 1, 3, 4, 4, 6, 6, 6], [0, 2, 4, 1, 2, 3]),
     ((3, 3), [0, 3, 4, 6], [0, 1, 2, 0, 1, 2]),
 ]
 
 # Batched matrices with a separate index grid per batch.
 _CSR_3D_CASES = [
-    ((2, 3, 4), [[0, 2, 4, 5], [0, 1, 3, 4]], [[0, 1, 0, 2], [1, 0, 2, 3]]),
+    ((2, 3, 4), [[0, 2, 3, 4], [0, 1, 3, 4]], [[0, 1, 0, 2], [1, 0, 2, 3]]),
     (
         (3, 4, 5),
         [[0, 1, 3, 4, 5], [0, 2, 2, 3, 5], [0, 1, 2, 4, 5]],
-        [[0, 3, 1, 2, 4], [4, 0, 2, 3, 1], [1, 3, 0, 4, 2]],
+        [[0, 1, 3, 2, 4], [0, 4, 2, 1, 3], [1, 3, 0, 4, 2]],
     ),
     (
         (2, 5, 4),
-        [[0, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5]],
-        [[0, 1, 3, 0, 2, 1], [3, 2, 0, 1, 3, 0]],
+        [[0, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 6]],
+        [[0, 1, 3, 0, 2, 1], [3, 2, 0, 1, 0, 3]],
     ),
 ]
 
@@ -123,14 +123,14 @@ def _make_csr_values(nnz, dtype, batch=None, value_range=("-1", "1")):
     return tu.make_input(dtype, shape, _range_for_dtype(dtype, value_range))
 
 
-def _assert_csr_structure(out, size, nnz, dtype, batch=None, crow_len=None):
+def _assert_csr_structure(out, size, nnz, dtype, batch=None):
     assert out.layout == torch.sparse_csr
     assert tuple(out.shape) == tuple(size)
     assert out.dtype == dtype
     assert out.sparse_dim() == 2
     assert out.dense_dim() == 0
     assert out._nnz() == nnz
-    expected_crow_len = size[-2] + 1 if crow_len is None else crow_len
+    expected_crow_len = size[-2] + 1
     if batch is None:
         assert tuple(out.values().shape) == (nnz,)
         assert len(out.crow_indices()) == expected_crow_len
@@ -278,9 +278,9 @@ def test_sparse_csr_tensor_crow_col_value_size_index_dtypes(case, index_dtype, d
 @pytest.mark.sparse_csr_tensor
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
 def test_sparse_csr_tensor_crow_col_value_size_trailing_empty_rows(dtype):
-    # The stored crow array stays shorter than the explicitly requested row extent.
+    # The final three rows contain no stored entries.
     size = (5, 2)
-    crow = [0, 2, 4]
+    crow = [0, 2, 4, 4, 4, 4]
     col = [0, 1, 0, 1]
     nnz = len(col)
     crow_t = torch.tensor(crow, dtype=torch.long, device=flag_gems.device)
@@ -298,7 +298,7 @@ def test_sparse_csr_tensor_crow_col_value_size_trailing_empty_rows(dtype):
         crow_t, col_t, values, list(size), dtype=dtype, device=crow_t.device
     )
 
-    _assert_csr_structure(res_out, size, nnz, dtype, crow_len=len(crow))
+    _assert_csr_structure(res_out, size, nnz, dtype)
     _assert_csr_equal(res_out, ref_out)
 
 

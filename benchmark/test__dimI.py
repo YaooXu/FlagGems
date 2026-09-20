@@ -108,7 +108,7 @@ class DimIBenchmark(base.GenericBenchmark):
     all-sparse and hybrid sparse+dense layouts."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BENCH_CASES
+        super().set_shapes(shape_file_path, default_shapes=_BENCH_CASES)
 
 
 @pytest.mark._dimI

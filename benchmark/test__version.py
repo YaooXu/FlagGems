@@ -67,9 +67,7 @@ class VersionBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with shapes tuned for the O(1) _version query."""
 
     def set_shapes(self, shape_file_path=None):
-        # The op is not listed in core_shapes.yaml and the payload size has no
-        # effect on the measured call, so use the dedicated shape list.
-        self.shapes = _VERSION_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_VERSION_SHAPES)
 
 
 @pytest.mark._version

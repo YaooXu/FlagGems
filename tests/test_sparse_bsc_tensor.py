@@ -71,40 +71,21 @@ def _bsc_shape_level_cases():
     return cases
 
 
-def _make_bsc_structure(shape, block, nnz, seed=0, index_dtype=torch.int64):
-    # Seeded column splits permit duplicate and unsorted row indices.
-    gen = torch.Generator("cpu").manual_seed(seed)
+def _make_bsc_structure(shape, block, nnz, index_dtype=torch.int64):
     M, N = shape
     Br, Bc = block
-    n_row_blocks = M // Br
-    n_col_blocks = N // Bc
-    if n_col_blocks <= 1:
-        counts = torch.full((n_col_blocks,), nnz, dtype=torch.long)
-    else:
-        cuts = torch.sort(
-            torch.randint(0, nnz + 1, (n_col_blocks - 1,), generator=gen)
-        ).values
-        bounds = torch.cat(
-            [
-                torch.zeros(1, dtype=torch.long),
-                cuts,
-                torch.full((1,), nnz, dtype=torch.long),
-            ]
-        )
-        counts = bounds[1:] - bounds[:-1]
-    ccol = torch.cat([torch.zeros(1, dtype=torch.long), torch.cumsum(counts, 0)]).to(
-        index_dtype
-    )
-    row = torch.randint(0, n_row_blocks, (nnz,), generator=gen).to(index_dtype)
-    return ccol.to(flag_gems.device), row.to(flag_gems.device)
+    n_row_blocks, n_col_blocks = M // Br, N // Bc
+    assert M % Br == N % Bc == 0
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
+    counts = torch.full((n_col_blocks,), nnz // n_col_blocks, dtype=torch.long)
+    counts[: nnz % n_col_blocks] += 1
+    ccol = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    row = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], counts)
+    return ccol.to(flag_gems.device, index_dtype), row.to(flag_gems.device, index_dtype)
 
 
-def _make_bsc_inputs(
-    shape, block, nnz, dtype, value_range, seed=0, index_dtype=torch.int64
-):
-    ccol, row = _make_bsc_structure(
-        shape, block, nnz, seed=seed, index_dtype=index_dtype
-    )
+def _make_bsc_inputs(shape, block, nnz, dtype, value_range, index_dtype=torch.int64):
+    ccol, row = _make_bsc_structure(shape, block, nnz, index_dtype=index_dtype)
     values = tu.make_input(dtype, (nnz,) + tuple(block), value_range).to(
         flag_gems.device
     )
@@ -216,7 +197,7 @@ def test_sparse_bsc_tensor_nan_inf(dtype, scenario):
 @pytest.mark.parametrize("case", _LEGACY_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
-def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
+def test_sparse_bsc_tensor_unchecked_legacy(case, dtype, index_dtype):
     shape, nnz = case
     ccol, row = _make_bsc_structure(shape, (1, 1), nnz, index_dtype=index_dtype)
     values = tu.make_input(dtype, (nnz,), ["-1", "1"]).to(flag_gems.device)
@@ -230,7 +211,7 @@ def test_sparse_bsc_tensor_legacy(case, dtype, index_dtype):
 @pytest.mark.sparse_bsc_tensor
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
-def test_sparse_bsc_tensor_uncoalesced(dtype, index_dtype):
+def test_sparse_bsc_tensor_unchecked_uncoalesced(dtype, index_dtype):
     ccol = torch.tensor([0, 2, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([0, 0, 1], dtype=index_dtype, device=flag_gems.device)
     values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
@@ -244,7 +225,7 @@ def test_sparse_bsc_tensor_uncoalesced(dtype, index_dtype):
 @pytest.mark.sparse_bsc_tensor
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _BSC_DTYPES)
-def test_sparse_bsc_tensor_unsorted_rows(dtype, index_dtype):
+def test_sparse_bsc_tensor_unchecked_unsorted_rows(dtype, index_dtype):
     ccol = torch.tensor([0, 3, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([1, 0, 1], dtype=index_dtype, device=flag_gems.device)
     values = tu.make_input(dtype, (3, 2, 2), ["-1", "1"]).to(flag_gems.device)
@@ -258,7 +239,7 @@ def test_sparse_bsc_tensor_unsorted_rows(dtype, index_dtype):
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_dtype_mismatch():
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
-    row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float64, (3, 2, 2), ["-1", "1"])
 
     with pytest.raises(RuntimeError):
@@ -270,7 +251,7 @@ def test_sparse_bsc_tensor_negative_dtype_mismatch():
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_layout():
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
-    row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
     ref_ccol = tu.to_reference(ccol)
     ref_row = tu.to_reference(row)
@@ -302,7 +283,7 @@ def test_sparse_bsc_tensor_negative_layout():
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_size():
     ccol = torch.tensor([0, 2, 3], dtype=torch.int64, device=flag_gems.device)
-    row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
     ref_ccol = tu.to_reference(ccol)
     ref_row = tu.to_reference(row)
@@ -333,7 +314,7 @@ def test_sparse_bsc_tensor_negative_size():
 
 @pytest.mark.sparse_bsc_tensor_negative
 def test_sparse_bsc_tensor_negative_non_tensor():
-    row = torch.tensor([0, 0, 1], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 1], dtype=torch.int64, device=flag_gems.device)
     values = tu.make_input(torch.float32, (3, 2, 2), ["-1", "1"])
 
     with pytest.raises(RuntimeError):

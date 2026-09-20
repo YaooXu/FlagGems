@@ -103,6 +103,7 @@ def _assert_pair(res, ref):
     tu.assert_result_close(
         torch.tensor(res_scale, dtype=torch.float64),
         torch.tensor(ref_scale, dtype=torch.float64),
+        atol=0,
     )
     assert res_zp == ref_zp, f"zero_point {res_zp} != {ref_zp}"
 

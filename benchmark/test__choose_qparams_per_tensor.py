@@ -75,7 +75,7 @@ class ChooseQParamsPerTensorBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = CQPT_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=CQPT_SHAPES)
 
     def set_more_shapes(self):
         return []

@@ -88,7 +88,7 @@ class NestedTensorSizeBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _NESTED_SIZE_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_NESTED_SIZE_SHAPES)
 
     def set_more_shapes(self):
         return []

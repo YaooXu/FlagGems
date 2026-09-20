@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 
 import pytest
 import torch
@@ -46,12 +45,12 @@ _CSC_BATCHED_CASES = [
     ((3, 6, 5), 6),
 ]
 
-# (ccol_indices, row_indices, inferred_size).
+# (ccol_indices, row_indices); size is inferred by the factory.
 _CSC_NO_SIZE_CASES = [
-    ([0, 2, 3, 5], [0, 2, 1, 3, 2], (4, 3)),
-    ([0, 3, 3, 4], [0, 1, 2, 3], (4, 3)),
-    ([0, 0, 0], [], (0, 2)),
-    ([0, 2, 4], [0, 1, 1, 0], (2, 2)),
+    ([0, 2, 3, 5], [0, 2, 1, 2, 3]),
+    ([0, 3, 3, 4], [0, 1, 2, 3]),
+    ([0, 0, 0], []),
+    ([0, 2, 4], [0, 1, 0, 1]),
 ]
 
 # Skip scalars; map 1-D shapes to square matrices.
@@ -90,33 +89,17 @@ def _make_values(nnz, dtype, shape=None, value_range=("-1", "1")):
 
 
 def _make_csc_inputs(
-    shape, nnz, dtype, seed=0, index_dtype=torch.int64, value_range=("-1", "1")
+    shape, nnz, dtype, index_dtype=torch.int64, value_range=("-1", "1")
 ):
-    # Seeded column splits permit duplicate and unsorted row indices.
     device = flag_gems.device
-    gen = torch.Generator("cpu").manual_seed(seed)
     batch, (M, N) = shape[:-2], shape[-2:]
-    total_batch = math.prod(batch)
-    if N <= 1:
-        counts = torch.full((total_batch, 1), nnz, dtype=torch.long)
-    else:
-        cuts = torch.sort(
-            torch.randint(0, nnz + 1, (total_batch, N - 1), generator=gen)
-        ).values
-        bounds = torch.cat(
-            [
-                torch.zeros(total_batch, 1, dtype=torch.long),
-                cuts[:, : N - 1],
-                torch.full((total_batch, 1), nnz, dtype=torch.long),
-            ],
-            dim=-1,
-        )
-        counts = bounds[..., 1:] - bounds[..., :-1]
-    ccol = torch.cat(
-        [torch.zeros(total_batch, 1, dtype=torch.long), torch.cumsum(counts, -1)],
-        dim=-1,
-    ).view(batch + (N + 1,))
-    row = torch.randint(0, M, (total_batch, nnz), generator=gen).view(batch + (nnz,))
+    assert 0 <= nnz <= M * N
+    counts = torch.full((N,), nnz // N, dtype=torch.long)
+    counts[: nnz % N] += 1
+    ccol = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    row = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], counts)
+    ccol = ccol.expand(batch + (N + 1,)).contiguous()
+    row = row.expand(batch + (nnz,)).contiguous()
     values = _make_values(nnz, dtype, shape=batch + (nnz,), value_range=value_range)
     return (
         ccol.to(device=device, dtype=index_dtype),
@@ -187,7 +170,7 @@ def test_sparse_csc_tensor(shape, nnz, dtype, index_dtype, value_range):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
     ccol, row, values = _make_csc_inputs(
-        shape, nnz, dtype, seed=1, index_dtype=index_dtype, value_range=value_range
+        shape, nnz, dtype, index_dtype=index_dtype, value_range=value_range
     )
 
     ref_ccol = tu.to_reference(ccol)
@@ -220,52 +203,12 @@ def test_sparse_csc_tensor_batched(shape, nnz, dtype, index_dtype, value_range):
 
 
 @pytest.mark.sparse_csc_tensor
-@pytest.mark.parametrize("ccol_list, row_list, expected_shape", _CSC_NO_SIZE_CASES)
+@pytest.mark.parametrize("ccol_list, row_list", _CSC_NO_SIZE_CASES)
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _FLOAT_STORAGE_DTYPES)
+@pytest.mark.parametrize("dtype", _CSC_DTYPES)
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_no_size(
-    ccol_list, row_list, expected_shape, dtype, index_dtype, value_range
-):
-    ccol = torch.tensor(ccol_list, dtype=index_dtype, device=flag_gems.device)
-    row = torch.tensor(row_list, dtype=index_dtype, device=flag_gems.device)
-    values = _make_values(len(row_list), dtype, value_range=value_range)
-
-    ref_ccol = tu.to_reference(ccol)
-    ref_row = tu.to_reference(row)
-    ref_values = tu.to_reference(values)
-    ref_out = torch.ops.aten.sparse_csc_tensor(
-        ref_ccol,
-        ref_row,
-        ref_values,
-        dtype=dtype,
-        layout=torch.sparse_csc,
-        device=ref_ccol.device,
-    )
-    gems_op = flag_gems.testing.resolve_gems_op("sparse_csc_tensor")
-    res_out = gems_op(
-        ccol,
-        row,
-        values,
-        dtype=dtype,
-        layout=torch.sparse_csc,
-        device=flag_gems.device,
-    )
-
-    _assert_result(res_out, ref_out, dtype, index_dtype)
-    tu.assert_result_equal(ccol, ref_ccol)
-    tu.assert_result_equal(row, ref_row)
-    tu.assert_result_equal(values, ref_values)
-    assert tuple(res_out.shape) == tuple(ref_out.shape)
-
-
-@pytest.mark.sparse_csc_tensor
-@pytest.mark.parametrize("ccol_list, row_list, expected_shape", _CSC_NO_SIZE_CASES)
-@pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
-@pytest.mark.parametrize("dtype", _EXACT_CSC_DTYPES)
-@pytest.mark.parametrize("value_range", tu.selected_ranges())
-def test_sparse_csc_tensor_no_size_exact(
-    ccol_list, row_list, expected_shape, dtype, index_dtype, value_range
+    ccol_list, row_list, dtype, index_dtype, value_range
 ):
     ccol = torch.tensor(ccol_list, dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor(row_list, dtype=index_dtype, device=flag_gems.device)
@@ -302,7 +245,7 @@ def test_sparse_csc_tensor_no_size_exact(
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
-def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
+def test_sparse_csc_tensor_unchecked_uncoalesced(dtype, index_dtype):
     ccol = torch.tensor([0, 1, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([0, 0, 0], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
@@ -340,7 +283,7 @@ def test_sparse_csc_tensor_uncoalesced(dtype, index_dtype):
 @pytest.mark.sparse_csc_tensor
 @pytest.mark.parametrize("index_dtype", _INDEX_DTYPES)
 @pytest.mark.parametrize("dtype", _CSC_DTYPES)
-def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
+def test_sparse_csc_tensor_unchecked_unsorted_rows(dtype, index_dtype):
     ccol = torch.tensor([0, 3, 3], dtype=index_dtype, device=flag_gems.device)
     row = torch.tensor([1, 0, 2], dtype=index_dtype, device=flag_gems.device)
     values = _make_values(3, dtype, value_range=["-1", "1"])
@@ -381,7 +324,7 @@ def test_sparse_csc_tensor_unsorted_rows(dtype, index_dtype):
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 def test_sparse_csc_tensor_shape_levels(shape, nnz, dtype, index_dtype, value_range):
     ccol, row, values = _make_csc_inputs(
-        shape, nnz, dtype, seed=2, index_dtype=index_dtype, value_range=value_range
+        shape, nnz, dtype, index_dtype=index_dtype, value_range=value_range
     )
 
     ref_ccol = tu.to_reference(ccol)
@@ -458,7 +401,7 @@ def test_sparse_csc_tensor_boundary_values(dtype, value_range):
 def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
     values = tu.make_special_input(dtype, scenario)
     ccol = torch.tensor([0, 2, 5], dtype=torch.int64, device=flag_gems.device)
-    row = torch.tensor([0, 1, 0, 1, 0], dtype=torch.int64, device=flag_gems.device)
+    row = torch.tensor([0, 1, 0, 1, 2], dtype=torch.int64, device=flag_gems.device)
 
     ref_ccol = tu.to_reference(ccol)
     ref_row = tu.to_reference(row)
@@ -467,7 +410,7 @@ def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
         ref_ccol,
         ref_row,
         ref_values,
-        [2, 2],
+        [3, 2],
         dtype=dtype,
         layout=torch.sparse_csc,
         device=ref_ccol.device,
@@ -477,7 +420,7 @@ def test_sparse_csc_tensor_nan_inf_values(dtype, scenario):
         ccol,
         row,
         values,
-        [2, 2],
+        [3, 2],
         dtype=dtype,
         layout=torch.sparse_csc,
         device=flag_gems.device,
@@ -504,7 +447,7 @@ def test_sparse_csc_tensor_rejects_dtype_mismatch():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
             device=flag_gems.device,
@@ -515,7 +458,7 @@ def test_sparse_csc_tensor_rejects_dtype_mismatch():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
             device=flag_gems.device,
@@ -530,7 +473,7 @@ def test_sparse_csc_tensor_rejects_missing_dtype():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
@@ -540,7 +483,7 @@ def test_sparse_csc_tensor_rejects_missing_dtype():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             layout=torch.sparse_csc,
             device=flag_gems.device,
         )
@@ -554,7 +497,7 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_coo,
             device=flag_gems.device,
@@ -565,7 +508,7 @@ def test_sparse_csc_tensor_rejects_wrong_layout():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_coo,
             device=flag_gems.device,
@@ -611,7 +554,7 @@ def test_sparse_csc_tensor_rejects_device_mismatch():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
             device=flag_gems.device,
@@ -622,7 +565,7 @@ def test_sparse_csc_tensor_rejects_device_mismatch():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
             device=flag_gems.device,
@@ -641,7 +584,7 @@ def test_sparse_csc_tensor_rejects_missing_device():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
         )
@@ -651,7 +594,7 @@ def test_sparse_csc_tensor_rejects_missing_device():
             ccol,
             row,
             values,
-            [2, 1],
+            [2, 2],
             dtype=torch.float32,
             layout=torch.sparse_csc,
         )

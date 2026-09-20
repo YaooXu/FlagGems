@@ -89,12 +89,13 @@ class CopySparseToSparseBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with the dedicated sparse layout set.
 
     ``core_shapes.yaml`` has no entry for this op, so the shape list is supplied
-    directly instead of being read from the shared file.
+    as defaults; operator entries in a shape file can override them.
     """
 
+    DEFAULT_SHAPE_DESC = "sparse_coo(shape, sparse_dim, nnz)"
+
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _COPY_SPARSE_SHAPES
-        self.shape_desc = "sparse_coo(shape, sparse_dim, nnz)"
+        super().set_shapes(shape_file_path, default_shapes=_COPY_SPARSE_SHAPES)
 
 
 @pytest.mark.copy_sparse_to_sparse_

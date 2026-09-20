@@ -34,25 +34,25 @@ _CCOL_SHAPES = [
     ((1024, 1024), 1048576),
     ((4096, 4096), 1048576),
     ((16, 1024, 1024), 262144),
-    ((8, 256, 256), 1048576),
+    ((8, 256, 256), 16384),
     ((64, 1024, 1024), 131072),
-    ((4, 8, 256, 256), 262144),
+    ((4, 8, 256, 256), 16384),
 ]
 
 
 def _make_structure(logical_shape, nnz, device):
-    # Random (row, col) structure with a valid ccol pointer array, generated
-    # directly on the benchmark device. (row, col) pairs are drawn with
-    # replacement; the ccol array is built with a column-wise bincount so the
-    # result is always a valid CSC structure.
+    # Unique coordinates in compressed order.
     nrows, ncols = logical_shape[-2], logical_shape[-1]
     batch = logical_shape[:-2]
     entries_shape = batch + (nnz,)
-    rows = torch.randint(0, nrows, entries_shape, dtype=torch.long, device=device)
-    cols = torch.randint(0, ncols, entries_shape, dtype=torch.long, device=device)
-    order = torch.argsort(cols * nrows + rows, dim=-1)
-    rows = torch.gather(rows, -1, order)
-    cols = torch.gather(cols, -1, order)
+    assert 0 <= nnz <= nrows * ncols
+    positions = (
+        torch.arange(nnz, dtype=torch.long, device=device)
+        * (nrows * ncols)
+        // max(nnz, 1)
+    )
+    rows = (positions % nrows).expand(entries_shape).contiguous()
+    cols = (positions // nrows).expand(entries_shape).contiguous()
     counts = torch.stack(
         [
             torch.bincount(cols[idx], minlength=ncols)
@@ -88,7 +88,7 @@ class CcolIndicesBenchmark(base.GenericBenchmark):
     # shapes in core_shapes.yaml, so benchmark dedicated (logical_shape, nnz)
     # pairs instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _CCOL_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_CCOL_SHAPES)
 
 
 @pytest.mark.ccol_indices

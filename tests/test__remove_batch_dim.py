@@ -238,3 +238,42 @@ def test__remove_batch_dim_special_scenarios(dtype, scenario):
     expected = torch.ops.aten._remove_batch_dim(reference, 0, 4, 0)
     actual = candidate(inp, 0, 4, 0)
     tu.assert_result_equal(actual, expected)
+
+
+@pytest.mark._remove_batch_dim
+@pytest.mark.parametrize("batch_dim, out_dim", [(0, 0), (0, 2), (1, 0), (1, 2), (2, 1)])
+@pytest.mark.parametrize("level", [0, 3])
+@pytest.mark.parametrize("dtype", _REMOVE_BATCH_DIM_DTYPES)
+def test__remove_batch_dim_batched(batch_dim, out_dim, level, dtype):
+    inp = tu.make_input(dtype, (3, 5, 14), ["-1", "1"])[..., 1::2]
+    ref_inp = tu.to_reference(inp)
+    batched = torch.ops.aten._add_batch_dim(inp, batch_dim, level)
+    ref_batched = torch.ops.aten._add_batch_dim(ref_inp, batch_dim, level)
+    batch_size = inp.size(batch_dim)
+
+    ref_out = torch.ops.aten._remove_batch_dim(ref_batched, level, batch_size, out_dim)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    res_out = gems_op(batched, level, batch_size, out_dim)
+
+    tu.assert_result_equal(res_out, ref_out)
+    assert res_out.stride() == ref_out.stride()
+    assert res_out.storage_offset() == ref_out.storage_offset()
+    assert torch._C._is_alias_of(res_out, inp)
+
+
+@pytest.mark._remove_batch_dim
+@pytest.mark.parametrize("dtype", _REMOVE_BATCH_DIM_DTYPES)
+def test__remove_batch_dim_other_level(dtype):
+    inp = tu.make_input(dtype, (3, 5), ["-1", "1"])
+    ref_inp = tu.to_reference(inp)
+    batched = torch.ops.aten._add_batch_dim(inp, 0, 0)
+    ref_batched = torch.ops.aten._add_batch_dim(ref_inp, 0, 0)
+    gems_op = flag_gems.testing.resolve_gems_op("_remove_batch_dim")
+    ref_out = torch.ops.aten._remove_batch_dim(ref_batched, 1, 2, 0)
+    res_out = gems_op(batched, 1, 2, 0)
+
+    assert torch._C._functorch.is_legacy_batchedtensor(res_out)
+    ref_physical = torch.ops.aten._remove_batch_dim(ref_out, 0, 3, 0)
+    res_physical = torch.ops.aten._remove_batch_dim(res_out, 0, 3, 0)
+    tu.assert_result_equal(res_physical, ref_physical)
+    assert torch._C._is_alias_of(res_physical, inp)

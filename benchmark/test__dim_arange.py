@@ -66,9 +66,7 @@ class DimArangeBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with shapes tuned for _dim_arange."""
 
     def set_shapes(self, shape_file_path=None):
-        # _dim_arange is not listed in core_shapes.yaml; use the local list
-        # instead of resolving a shape file.
-        self.shapes = _DIM_ARANGE_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_DIM_ARANGE_SHAPES)
 
 
 @pytest.mark._dim_arange

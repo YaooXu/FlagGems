@@ -48,7 +48,7 @@ _CSR_CASES = tu.selected_cases(
         ((12, 9, 3, 6), 9),
         ((3, 6, 4, 4, 6, 5), 11),
         ((7, 3, 12, 4, 2, 15), 10),
-        ((3, 4, 2, 5, 3, 4, 2), 13),
+        ((3, 4, 2, 5, 3, 4, 2), 8),
     ],
     quick=[((2, 19, 7), 8)],
 )
@@ -86,17 +86,15 @@ _INDEX_CASES = tu.selected_cases(
 )
 
 
-def _make_input(shape, nnz, dtype, value_range, seed=0):
-    # Sort seeded coordinates, allowing duplicates, then count entries per batch.
-    gen = torch.Generator("cpu").manual_seed(seed)
+def _make_input(shape, nnz, dtype, value_range):
+    # Unique sorted coordinates, spread over the logical matrix.
     nrows, ncols = shape[-2], shape[-1]
     batch = shape[:-2]
     entries_shape = batch + (nnz,)
-    rows = torch.randint(0, nrows, entries_shape, dtype=torch.long, generator=gen)
-    cols = torch.randint(0, ncols, entries_shape, dtype=torch.long, generator=gen)
-    order = torch.argsort(rows * ncols + cols, dim=-1)
-    rows = torch.gather(rows, -1, order)
-    cols = torch.gather(cols, -1, order)
+    assert 0 <= nnz <= nrows * ncols
+    positions = torch.arange(nnz, dtype=torch.long) * (nrows * ncols) // max(nnz, 1)
+    rows = (positions // ncols).expand(entries_shape).contiguous()
+    cols = (positions % ncols).expand(entries_shape).contiguous()
     batch_numel = 1
     for dim in batch:
         batch_numel *= dim
@@ -236,7 +234,7 @@ def test_crow_indices_single_row(dtype):
 
 @pytest.mark.crow_indices
 @pytest.mark.parametrize("dtype", _CSR_DTYPES)
-def test_crow_indices_uncoalesced(dtype):
+def test_crow_indices_unchecked_uncoalesced(dtype):
     shape = (4, 3)
     crow = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)

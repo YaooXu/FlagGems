@@ -92,16 +92,11 @@ def _build_inputs_fn(plan, dtype, device):
         return inp, {}
     # "csr"
     _, shape, rows, cols, nnz = case
-    crow_indices = torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long, device=device),
-            torch.sort(
-                torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, device=device)
-            ).values,
-            torch.full((1,), nnz, dtype=torch.long, device=device),
-        ]
-    )
-    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, device=device)
+    assert 0 <= nnz <= rows * cols
+    counts = torch.full((rows,), nnz // rows, dtype=torch.long)
+    counts[: nnz % rows] += 1
+    crow_indices = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    col_indices = torch.arange(nnz) - torch.repeat_interleave(crow_indices[:-1], counts)
     values = torch.randn(nnz, dtype=dtype, device=device)
     if len(shape) == 3:
         crow_indices = crow_indices.expand(shape[0], -1).contiguous()
@@ -118,7 +113,7 @@ class DenseDimBenchmark(base.GenericBenchmark):
     CSR tensors."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BENCH_CASES
+        super().set_shapes(shape_file_path, default_shapes=_BENCH_CASES)
 
 
 @pytest.mark.dense_dim

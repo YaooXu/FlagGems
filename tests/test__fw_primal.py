@@ -242,3 +242,24 @@ def test__fw_primal_special_scenarios(dtype, scenario):
     expected = torch.ops.aten._fw_primal(reference, 0)
     actual = candidate(inp, 0)
     tu.assert_result_equal(actual, expected)
+
+
+@pytest.mark._fw_primal
+@pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
+@pytest.mark.parametrize("shape", [(), (7,), (3, 5)])
+def test__fw_primal_dual(shape, dtype):
+    primal = tu.make_input(dtype, shape, ["-1", "1"])
+    tangent = torch.ones_like(primal)
+    ref_primal = tu.to_reference(primal)
+    ref_tangent = tu.to_reference(tangent)
+    gems_op = flag_gems.testing.resolve_gems_op("_fw_primal")
+
+    with torch.autograd.forward_ad.dual_level() as level:
+        inp = torch.autograd.forward_ad.make_dual(primal, tangent)
+        ref_inp = torch.autograd.forward_ad.make_dual(ref_primal, ref_tangent)
+        ref_out = torch.ops.aten._fw_primal(ref_inp, level)
+        res_out = gems_op(inp, level)
+
+        tu.assert_result_equal(res_out, ref_out)
+        _assert_view_semantics(res_out, ref_out, inp)
+        assert torch.autograd.forward_ad.unpack_dual(res_out).tangent is None

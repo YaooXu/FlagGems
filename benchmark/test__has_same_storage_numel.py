@@ -70,7 +70,9 @@ class _HasSameStorageNumelBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _HAS_SAME_STORAGE_NUMEL_SHAPES
+        super().set_shapes(
+            shape_file_path, default_shapes=_HAS_SAME_STORAGE_NUMEL_SHAPES
+        )
 
 
 @pytest.mark._has_same_storage_numel

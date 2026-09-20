@@ -44,9 +44,9 @@ _CCOLS_CASES = tu.selected_cases(
         ("bsc", (6, 6), 6, (3, 2)),
         ("bsc", (4, 6), 0, (2, 2)),
         ("bsc_batch", (2, 4, 6), 6, (2, 2)),
-        ("csc_batch", (7, 3, 12, 4, 5), 48, None),
-        ("bsc", (10, 10), 12, (3, 4)),
-        ("bsc_batch", (2, 8, 12), 12, (4, 4)),
+        ("csc_batch", (7, 3, 12, 4, 5), 20, None),
+        ("bsc", (12, 12), 12, (3, 4)),
+        ("bsc_batch", (2, 8, 12), 6, (4, 4)),
     ],
     quick=[("csc_batch", (2, 19, 7), 20, None)],
 )
@@ -101,29 +101,14 @@ def _shape_to_csc_case(shape):
 _SHAPE_CASES = [_shape_to_csc_case(shape) for shape in tu.selected_shapes()]
 
 
-def _random_ccol(n_compressed, nnz, gen):
-    # Sorted split points start at zero and end at nnz; repeats leave empty segments.
-    if n_compressed == 1:
-        return torch.tensor([0, nnz], dtype=torch.long)
-    inner = torch.sort(
-        torch.randint(0, nnz + 1, (n_compressed - 1,), dtype=torch.long, generator=gen)
-    ).values
-    return torch.cat(
-        [torch.zeros(1, dtype=torch.long), inner, torch.tensor([nnz], dtype=torch.long)]
-    )
+def _make_ccol(n_compressed, nnz):
+    counts = torch.full((n_compressed,), nnz // n_compressed, dtype=torch.long)
+    counts[: nnz % n_compressed] += 1
+    return torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
 
 
-def _random_ccol_batch(n_batch, n_compressed, nnz, gen):
-    # Sorted split points start at zero and end at nnz; repeats leave empty segments.
-    col0 = torch.zeros(n_batch, 1, dtype=torch.long)
-    coln = torch.full((n_batch, 1), nnz, dtype=torch.long)
-    if n_compressed == 1:
-        return torch.cat([col0, coln], dim=1)
-    inner = torch.randint(
-        0, nnz + 1, (n_batch, n_compressed - 1), dtype=torch.long, generator=gen
-    )
-    inner, _ = torch.sort(inner, dim=1)
-    return torch.cat([col0, inner, coln], dim=1)
+def _make_ccol_batch(n_batch, n_compressed, nnz):
+    return _make_ccol(n_compressed, nnz).expand(n_batch, -1).contiguous()
 
 
 def _make_values(dtype, values_shape, value_range, gen):
@@ -146,17 +131,23 @@ def _make_values(dtype, values_shape, value_range, gen):
 
 def _make_csc(size, nnz, dtype, gen, device, value_range):
     n_rows, n_cols = size
-    ccol = _random_ccol(n_cols, nnz, gen)
-    rows = torch.randint(0, n_rows, (nnz,), dtype=torch.long, generator=gen)
+    assert 0 <= nnz <= n_rows * n_cols
+    ccol = _make_ccol(n_cols, nnz)
+    rows = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], ccol.diff())
     values = _make_values(dtype, (nnz,), value_range, gen)
     return torch.sparse_csc_tensor(ccol, rows, values, size=size, device=device)
 
 
 def _make_csc_batch(size, nnz, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
+    assert 0 <= nnz <= n_rows * n_cols
     n_batch = math.prod(batch_dims)
-    ccol = _random_ccol_batch(n_batch, n_cols, nnz, gen)
-    rows = torch.randint(0, n_rows, (n_batch, nnz), dtype=torch.long, generator=gen)
+    ccol = _make_ccol_batch(n_batch, n_cols, nnz)
+    rows = (
+        (torch.arange(nnz) - torch.repeat_interleave(ccol[0][:-1], ccol[0].diff()))
+        .expand(n_batch, -1)
+        .contiguous()
+    )
     values = _make_values(dtype, (n_batch, nnz), value_range, gen)
     return torch.sparse_csc_tensor(
         ccol.view(batch_dims + (n_cols + 1,)),
@@ -170,10 +161,12 @@ def _make_csc_batch(size, nnz, dtype, gen, device, value_range):
 def _make_bsc(size, nnz, blocks, dtype, gen, device, value_range):
     n_rows, n_cols = size
     block_rows, block_cols = blocks
-    n_col_blocks = int(math.ceil(n_cols / block_cols))
-    n_row_blocks = int(math.ceil(n_rows / block_rows))
-    ccol = _random_ccol(n_col_blocks, nnz, gen)
-    row = torch.randint(0, n_row_blocks, (nnz,), dtype=torch.long, generator=gen)
+    assert n_rows % block_rows == n_cols % block_cols == 0
+    n_col_blocks = n_cols // block_cols
+    n_row_blocks = n_rows // block_rows
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
+    ccol = _make_ccol(n_col_blocks, nnz)
+    row = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], ccol.diff())
     values = _make_values(dtype, (nnz, block_rows, block_cols), value_range, gen)
     # torch.sparse_bsc_tensor infers the block size from the trailing dims of
     # the values tensor (values_shape == (nnz, block_rows, block_cols)).
@@ -183,12 +176,16 @@ def _make_bsc(size, nnz, blocks, dtype, gen, device, value_range):
 def _make_bsc_batch(size, nnz, blocks, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
     block_rows, block_cols = blocks
+    assert n_rows % block_rows == n_cols % block_cols == 0
     n_batch = math.prod(batch_dims)
-    n_col_blocks = int(math.ceil(n_cols / block_cols))
-    n_row_blocks = int(math.ceil(n_rows / block_rows))
-    ccol = _random_ccol_batch(n_batch, n_col_blocks, nnz, gen)
-    row = torch.randint(
-        0, n_row_blocks, (n_batch, nnz), dtype=torch.long, generator=gen
+    n_col_blocks = n_cols // block_cols
+    n_row_blocks = n_rows // block_rows
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
+    ccol = _make_ccol_batch(n_batch, n_col_blocks, nnz)
+    row = (
+        (torch.arange(nnz) - torch.repeat_interleave(ccol[0][:-1], ccol[0].diff()))
+        .expand(n_batch, -1)
+        .contiguous()
     )
     values = _make_values(
         dtype, (n_batch, nnz, block_rows, block_cols), value_range, gen
@@ -219,7 +216,7 @@ def _expected_ccol_shape(case):
         return (size[-1] + 1,)
     if layout == "csc_batch":
         return size[:-2] + (size[-1] + 1,)
-    n_col_blocks = int(math.ceil(size[-1] / blocks[1]))
+    n_col_blocks = size[-1] // blocks[1]
     if layout == "bsc":
         return (n_col_blocks + 1,)
     return size[:-2] + (n_col_blocks + 1,)
@@ -430,14 +427,14 @@ def _uncoalesced_csc(dtype):
     # Keep the repeated (0, 0) entry in storage order.
     shape = (3, 4)
     ccol = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
-    rows = torch.tensor([0, 0, 2, 1, 3], dtype=torch.long, device=flag_gems.device)
+    rows = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
     values = _make_values(dtype, (5,), ["-1", "1"], torch.Generator("cpu"))
     return torch.sparse_csc_tensor(ccol, rows, values, shape)
 
 
 @pytest.mark.ccol_indices_copy
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
-def test_ccol_indices_copy_uncoalesced(dtype):
+def test_ccol_indices_copy_unchecked_uncoalesced(dtype):
     inp = _uncoalesced_csc(dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -450,7 +447,7 @@ def test_ccol_indices_copy_uncoalesced(dtype):
 
 @pytest.mark.ccol_indices_copy_out
 @pytest.mark.parametrize("dtype", _CCOLS_DTYPES)
-def test_ccol_indices_copy_out_uncoalesced(dtype):
+def test_ccol_indices_copy_out_unchecked_uncoalesced(dtype):
     inp = _uncoalesced_csc(dtype)
     ref_inp = tu.to_reference(inp)
     out = torch.full((5,), -1, dtype=torch.long, device=inp.device)

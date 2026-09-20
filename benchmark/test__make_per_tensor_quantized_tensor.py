@@ -120,7 +120,7 @@ class MakePerTensorQuantizedTensorBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = MAKE_PERTENSOR_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=MAKE_PERTENSOR_SHAPES)
 
 
 @pytest.mark._make_per_tensor_quantized_tensor

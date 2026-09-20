@@ -194,12 +194,6 @@ def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
     return inp, weight, bias
 
 
-def _disable_tf32():
-    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
-
 def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     # Supplement dtype-relative tolerance for the fp64 reference with absolute reduction-error bounds.
     if dtype == torch.bfloat16:
@@ -229,8 +223,6 @@ def test_slow_conv_transpose2d(
     dtype,
     bias,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -279,8 +271,6 @@ def test_slow_conv_transpose2d_value_ranges(
     value_range,
     dtype,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
@@ -325,8 +315,6 @@ def test_slow_conv_transpose2d_backward(
     dtype,
     bias,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -408,8 +396,6 @@ def test_slow_conv_transpose2d_backward(
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_transpose2d_nan_inf(dtype, scenario, special_arg):
-    _disable_tf32()
-
     (
         inp_shape,
         weight_shape,
@@ -467,8 +453,6 @@ def test_slow_conv_transpose2d_out(
     dtype,
     bias,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -649,3 +633,16 @@ def test_slow_conv_transpose2d_rejects_non_float_dtype():
     gems_op = flag_gems.testing.resolve_gems_op("slow_conv_transpose2d")
     with pytest.raises(_GEMS_ERRORS):
         gems_op(*args)
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

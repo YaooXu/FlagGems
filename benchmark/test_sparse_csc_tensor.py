@@ -46,13 +46,14 @@ def _make_csc_inputs(shape, nnz, dtype, device):
     M, N = shape
     # Spread the nnz entries uniformly across the columns so the compressed
     # column pointers are dense enough to be representative.
+    assert 0 <= nnz <= M * N
     q, r = divmod(nnz, N)
     counts = torch.full((N,), q, dtype=torch.long, device=device)
     if r:
         counts[:r] += 1
     ccol = torch.zeros(N + 1, dtype=torch.int64, device=device)
     torch.cumsum(counts, 0, out=ccol[1:])
-    row = torch.randint(0, M, (nnz,), dtype=torch.int64, device=device)
+    row = torch.arange(nnz, device=device) - torch.repeat_interleave(ccol[:-1], counts)
     values = torch.randn((nnz,), dtype=dtype, device=device)
     return ccol, row, values
 
@@ -93,7 +94,7 @@ class SparseCscTensorBenchmark(base.GenericBenchmark):
     # dense shapes in core_shapes.yaml, so benchmark dedicated (matrix shape,
     # nnz) pairs instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _CSC_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_CSC_SHAPES)
 
 
 @pytest.mark.sparse_csc_tensor

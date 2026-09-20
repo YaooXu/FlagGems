@@ -151,7 +151,7 @@ def _comparison_values(result, reference):
     return result, reference
 
 
-def assert_result_close(result, reference):
+def assert_result_close(result, reference, *, atol=1e-4):
     dtype = result.dtype
     result, reference = _comparison_values(result, reference)
     if dtype.is_floating_point or dtype.is_complex:
@@ -159,7 +159,7 @@ def assert_result_close(result, reference):
             result,
             reference,
             rtol=flag_gems.testing.RESOLUTION[dtype],
-            atol=1e-4,
+            atol=atol,
             equal_nan=True,
         )
     else:

@@ -189,37 +189,46 @@ class Benchmark:
             user_desired_dtypes if user_desired_dtypes else self.dtypes
         )
 
-    def set_shapes(self, shape_file_path: Optional[List[Any]] = None):
-        # Validate user-spicified shapes files
+    def set_shapes(self, shape_file_path: Optional[str] = None, *, default_shapes=None):
+        # Operator-specific descriptors override generic dense defaults, while
+        # explicit operator/class entries in the shape file still take priority.
+        defaults = self.DEFAULT_SHAPES if default_shapes is None else default_shapes
+        shape_classes = type(self).__mro__ if default_shapes is None else (type(self),)
 
         if not os.path.isfile(shape_file_path):
             raise FileNotFoundError(f"Shape file '{shape_file_path}' does not exist.")
 
         try:
             with open(shape_file_path, "r") as file:
-                yaml_config = yaml.safe_load(file)
+                yaml_config = yaml.safe_load(file) or {}
                 if self.op_name in yaml_config:
-                    self.shapes = yaml_config[self.op_name].get(
-                        "shapes", self.DEFAULT_SHAPES
-                    )
+                    self.shapes = yaml_config[self.op_name].get("shapes", defaults)
                     self.shape_desc = yaml_config[self.op_name].get(
                         "shape_desc", self.DEFAULT_SHAPE_DESC
                     )
                 else:
-                    for cls in type(self).__mro__:
+                    for cls in shape_classes:
                         class_name = cls.__name__
                         if class_name in yaml_config:
                             self.shapes = yaml_config[class_name].get(
-                                "shapes", self.DEFAULT_SHAPES
+                                "shapes", defaults
                             )
                             self.shape_desc = yaml_config[class_name].get(
                                 "shape_desc", self.DEFAULT_SHAPE_DESC
                             )
                             break
                     else:
-                        self.shapes = self.DEFAULT_SHAPES
+                        self.shapes = defaults
 
-            self.shapes = [tuple(shape) for shape in self.shapes]
+            # Composite descriptors may contain nested shape lists from YAML.
+            def as_tuple(value):
+                return (
+                    tuple(as_tuple(v) for v in value)
+                    if isinstance(value, (list, tuple))
+                    else value
+                )
+
+            self.shapes = [as_tuple(shape) for shape in self.shapes]
             if vendor_name == "kunlunxin":
                 if self.op_name in ["isin", "nonzero"]:
                     # isin oom  # nonzero oot
@@ -230,7 +239,8 @@ class Benchmark:
             # merge shapes from subclass If subclass has `set_more_shapes`,
             # call it to merge shapes
             if (
-                hasattr(self, "set_more_shapes")
+                default_shapes is None
+                and hasattr(self, "set_more_shapes")
                 and callable(getattr(self, "set_more_shapes"))
                 and Config.bench_level == consts.BenchLevel.COMPREHENSIVE
                 and not Config.query

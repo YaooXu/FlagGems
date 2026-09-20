@@ -67,7 +67,7 @@ class AddBatchDimBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = ADD_BATCH_DIM_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=ADD_BATCH_DIM_SHAPES)
 
 
 @pytest.mark._add_batch_dim

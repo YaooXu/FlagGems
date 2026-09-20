@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
-
 import pytest
 import torch
 
@@ -43,7 +41,7 @@ _LAYOUT_CASES = tu.selected_cases(
         (torch.sparse_bsc, (4, 6), 6, torch.int64),
         (torch.sparse_csr, (2, 3, 5, 4), 8, torch.int64),
         (torch.sparse_csr, (3, 5, 4), 7, torch.int32),
-        (torch.sparse_bsr, (2, 4, 6, 4), 8, torch.int64),
+        (torch.sparse_bsr, (2, 4, 6, 4), 6, torch.int64),
         (torch.sparse_csc, (3, 4, 5, 6), 9, torch.int32),
     ],
     quick=[(torch.sparse_csr, (2, 19, 7), 12, torch.int64)],
@@ -55,7 +53,7 @@ _VALUE_CASES = tu.selected_cases(
         (torch.sparse_csr, (5, 4), 7, torch.int64),
         (torch.sparse_bsr, (6, 4), 6, torch.int64),
         (torch.sparse_csr, (2, 3, 5, 4), 8, torch.int64),
-        (torch.sparse_bsc, (2, 4, 4, 6), 8, torch.int64),
+        (torch.sparse_bsc, (2, 4, 4, 6), 6, torch.int64),
     ],
     quick=[(torch.sparse_csr, (2, 19, 7), 12, torch.int64)],
 )
@@ -85,14 +83,11 @@ def _range_for_dtype(dtype, value_range):
     return [low_symbol, high_symbol]
 
 
-def _make_input(
-    layout, shape, nnz, dtype, index_dtype=torch.int64, value_range=None, seed=0
-):
-    # Build seeded, sorted index entries and count each compressed segment.
+def _make_input(layout, shape, nnz, dtype, index_dtype=torch.int64, value_range=None):
+    # Build sorted unique index entries in each compressed segment.
     if value_range is None:
         value_range = ["-1", "1"]
     device = flag_gems.device
-    gen = torch.Generator("cpu").manual_seed(seed)
     batch = shape[:-2]
     nrows, ncols = shape[-2], shape[-1]
     if layout in _BLOCK_LAYOUTS:
@@ -105,19 +100,13 @@ def _make_input(
     else:  # csc / bsc
         comp_dim, plain_dim = nblocks1, nblocks0
     entries = batch + (nnz,)
-    comp = torch.randint(0, comp_dim, entries, dtype=torch.long, generator=gen)
-    plain = torch.randint(0, plain_dim, entries, dtype=torch.long, generator=gen)
-    order = torch.argsort(comp * plain_dim + plain, dim=-1)
-    comp = torch.gather(comp, -1, order)
-    plain = torch.gather(plain, -1, order)
-    counts = torch.stack(
-        [
-            torch.bincount(comp[idx], minlength=comp_dim)
-            for idx in itertools.product(*(range(d) for d in batch))
-        ]
-    ).view(batch + (comp_dim,))
-    compressed = torch.zeros(batch + (comp_dim + 1,), dtype=torch.long)
-    compressed[..., 1:] = torch.cumsum(counts, -1)
+    assert 0 <= nnz <= comp_dim * plain_dim
+    counts = torch.full((comp_dim,), nnz // comp_dim, dtype=torch.long)
+    counts[: nnz % comp_dim] += 1
+    compressed = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    plain = torch.arange(nnz) - torch.repeat_interleave(compressed[:-1], counts)
+    compressed = compressed.expand(batch + (comp_dim + 1,)).contiguous()
+    plain = plain.expand(entries).contiguous()
     block_shape = (bs0, bs1) if bs0 > 1 else ()
     values = tu.make_input(
         dtype, entries + block_shape, _range_for_dtype(dtype, value_range)
@@ -336,7 +325,7 @@ def test_sparse_compressed_tensor_nan_inf_values(dtype, scenario):
     shape = (3, 4)
     crow_t = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
     col_t = torch.tensor(
-        [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
+        [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
     )
     values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     ref_crow = tu.to_reference(crow_t)

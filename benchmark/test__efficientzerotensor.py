@@ -76,9 +76,7 @@ class EfficientZeroTensorBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        # ``_efficientzerotensor`` has no core_shapes.yaml entry, so the local
-        # list above replaces the default shape file lookup.
-        self.shapes = EFFICIENTZEROTENSOR_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=EFFICIENTZEROTENSOR_SHAPES)
 
 
 # ``flag_gems._efficientzerotensor`` is not registered in every checkout;

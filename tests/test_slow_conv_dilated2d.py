@@ -140,10 +140,6 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
 def test_slow_conv_dilated2d(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    # Disable TF32 when comparing native fp32 results with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -170,9 +166,6 @@ def test_slow_conv_dilated2d(
 def test_slow_conv_dilated2d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -225,9 +218,6 @@ def test_slow_conv_dilated2d_value_ranges(
     dtype,
     bias,
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, value_range
     )
@@ -254,9 +244,6 @@ def test_slow_conv_dilated2d_value_ranges(
 def test_slow_conv_dilated2d_backward(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp = _INPUT_SCALE * tu.make_input(dtype, inp_shape, ["-1", "1"]).requires_grad_()
     weight = (
         _INPUT_SCALE * tu.make_input(dtype, weight_shape, ["-1", "1"]).requires_grad_()
@@ -305,9 +292,6 @@ def test_slow_conv_dilated2d_backward(
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_dilated2d_nan_inf(dtype, scenario, special_arg):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp = torch.ones((1, 2, 4, 4), dtype=dtype, device=flag_gems.device)
     weight = torch.ones((5, 2, 1, 1), dtype=dtype, device=flag_gems.device)
     bias = torch.ones((5,), dtype=dtype, device=flag_gems.device)
@@ -366,3 +350,17 @@ def test_slow_conv_dilated2d_rejects_unsupported_dtype(dtype):
     gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated2d")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         gems_op(inp, weight, (3, 3), bias, (1, 1), (0, 0), (1, 1))
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    # Match native fp32 results against the fp64 reference without leaking flags.
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

@@ -98,23 +98,16 @@ def _make_coo(sparse_shape, dense_shape, nnz, dtype, value_range, seed=0):
     return torch.sparse_coo_tensor(indices, values, size, device=flag_gems.device)
 
 
-def _make_csr(shape, nnz, dtype, value_range, seed=0):
-    gen = torch.Generator("cpu").manual_seed(seed)
+def _make_csr(shape, nnz, dtype, value_range):
     if len(shape) == 2:
         rows, cols = shape
     else:
         _, rows, cols = shape
-    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, generator=gen)
-    cuts = torch.sort(
-        torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, generator=gen)
-    ).values
-    crow_indices = torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long),
-            cuts,
-            torch.full((1,), nnz, dtype=torch.long),
-        ]
-    )
+    assert 0 <= nnz <= rows * cols
+    counts = torch.full((rows,), nnz // rows, dtype=torch.long)
+    counts[: nnz % rows] += 1
+    crow_indices = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    col_indices = torch.arange(nnz) - torch.repeat_interleave(crow_indices[:-1], counts)
     if len(shape) == 3:
         # Batched CSR: every batch stores the same nnz entries (shared
         # crow/col pattern), so the layout stays 2-D sparse for every batch.
@@ -422,7 +415,7 @@ def test_sparse_dim_nan_inf_coo(dtype, scenario):
 def test_sparse_dim_nan_inf_csr(dtype, scenario):
     values = tu.make_special_input(dtype, scenario).repeat(2)[:6]
     crow_indices = torch.tensor([0, 3, 4, 6], dtype=torch.long)
-    col_indices = torch.tensor([0, 1, 2, 1, 2, 0], dtype=torch.long)
+    col_indices = torch.tensor([0, 1, 2, 1, 0, 2], dtype=torch.long)
     inp = torch.sparse_csr_tensor(
         crow_indices, col_indices, values, (3, 4), device=flag_gems.device
     )

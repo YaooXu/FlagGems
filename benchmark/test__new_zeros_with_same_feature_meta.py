@@ -74,7 +74,9 @@ class NewZerosWithSameFeatureMetaBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to the op's allocation shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _NEW_ZEROS_WITH_SAME_FEATURE_META_CASES
+        super().set_shapes(
+            shape_file_path, default_shapes=_NEW_ZEROS_WITH_SAME_FEATURE_META_CASES
+        )
 
 
 @pytest.mark._new_zeros_with_same_feature_meta

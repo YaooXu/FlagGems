@@ -129,10 +129,6 @@ def _assert_grads_close(res_grads, ref_grads, in_reduce_dim, out_reduce_dim, dty
 def test__slow_conv2d_forward(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -159,9 +155,6 @@ def test__slow_conv2d_forward(
 def test__slow_conv2d_forward_value_ranges(
     inp_shape, weight_shape, kernel_size, stride, padding, value_range, dtype
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
@@ -188,9 +181,6 @@ def test__slow_conv2d_forward_value_ranges(
 def test__slow_conv2d_forward_backward(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -250,9 +240,6 @@ def test__slow_conv2d_forward_backward(
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test__slow_conv2d_forward_nan_inf(dtype, scenario, special_arg):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = (
         (1, 2, 5, 5),
         (5, 2, 3, 3),
@@ -290,9 +277,6 @@ def test__slow_conv2d_forward_nan_inf(dtype, scenario, special_arg):
 def test__slow_conv2d_forward_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -475,3 +459,17 @@ def test__slow_conv2d_forward_rejects_invalid_params(bad_kwargs):
     gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_forward")
     with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
         gems_op(inp, weight, **bad_kwargs)
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    # Match native fp32 results against the fp64 reference without leaking flags.
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

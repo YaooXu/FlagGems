@@ -53,7 +53,7 @@ class DataBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark for the aten::data shallow-copy view op."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = DATA_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=DATA_SHAPES)
 
     def set_more_shapes(self):
         # The inherited 2**28 / 10000x65536 generic shapes would allocate

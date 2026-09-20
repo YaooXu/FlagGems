@@ -70,9 +70,8 @@ class NegViewBenchmark(base.GenericBenchmark):
     MAX_NUMEL = 2**24  # 16M elements
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = [
-            shape for shape in NEG_VIEW_SHAPES if math.prod(shape) <= self.MAX_NUMEL
-        ]
+        super().set_shapes(shape_file_path, default_shapes=NEG_VIEW_SHAPES)
+        self.shapes = [s for s in self.shapes if math.prod(s) <= self.MAX_NUMEL]
 
 
 @pytest.mark._neg_view

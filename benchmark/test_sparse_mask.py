@@ -73,7 +73,7 @@ class SparseMaskBenchmark(base.GenericBenchmark):
     # sparse_mask has no meaningful dense shapes in core_shapes.yaml, so
     # benchmark the dedicated square layouts above.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _SPARSE_MASK_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_SPARSE_MASK_SHAPES)
 
 
 @pytest.mark.sparse_mask

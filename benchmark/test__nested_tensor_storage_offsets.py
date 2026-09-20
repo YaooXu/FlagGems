@@ -93,7 +93,7 @@ class NestedStorageOffsetsBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _NESTED_OFFSET_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_NESTED_OFFSET_SHAPES)
 
     def set_more_shapes(self):
         return []

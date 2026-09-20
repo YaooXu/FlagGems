@@ -91,7 +91,7 @@ class SparseResizeBenchmark(base.GenericBenchmark):
     # (logical_src_shape, sparse_dim, nnz, dst_size, dst_sparse_dim,
     # dst_dense_dim) tuples instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _SPARSE_RESIZE_CASES
+        super().set_shapes(shape_file_path, default_shapes=_SPARSE_RESIZE_CASES)
 
 
 @pytest.mark.sparse_resize_

@@ -58,7 +58,7 @@ class FlattenDenseTensorsBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to list-of-shapes cases."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = FLATTEN_DENSE_TENSORS_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=FLATTEN_DENSE_TENSORS_SHAPES)
 
     def set_more_shapes(self):
         # Every case consumes a list of tensors, so the framework's bare-tuple

@@ -65,9 +65,7 @@ class ShapeAsTensorBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark with shapes tuned for _shape_as_tensor."""
 
     def set_shapes(self, shape_file_path=None):
-        # _shape_as_tensor is not listed in core_shapes.yaml; use the local
-        # allocation-dominated list instead of resolving a shape file.
-        self.shapes = _SHAPE_AS_TENSOR_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_SHAPE_AS_TENSOR_SHAPES)
 
 
 @pytest.mark._shape_as_tensor

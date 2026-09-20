@@ -81,7 +81,7 @@ class ValuesBenchmark(base.GenericBenchmark):
     # shapes in core_shapes.yaml, so benchmark dedicated (sparse_shape,
     # dense_shape, nnz) triples instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _VALUES_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_VALUES_SHAPES)
 
 
 @pytest.mark._values

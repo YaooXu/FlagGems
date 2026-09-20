@@ -45,7 +45,7 @@ _BENCH_SHAPES = [
     ((1024, 1024), 262144),
     ((2048, 2048), 1048576),
     ((4096, 4096), 2097152),
-    ((64, 512, 512), 524288),
+    ((64, 512, 512), 65536),
     ((16, 1024, 1024), 262144),
 ]
 
@@ -60,11 +60,14 @@ def _make_csr_inputs(shape, nnz, dtype, device, seed=0):
     gen = torch.Generator("cpu").manual_seed(seed)
     batch = shape[:-2]
     rows, cols = shape[-2], shape[-1]
+    assert 0 <= nnz <= rows * cols
     counts = torch.full((rows,), nnz // rows, dtype=torch.long)
     counts[: nnz % rows] += 1
     crow = torch.zeros(rows + 1, dtype=torch.long)
     torch.cumsum(counts, 0, out=crow[1:])
-    col = torch.arange(nnz, dtype=torch.long) % cols
+    col = torch.arange(nnz, dtype=torch.long) - torch.repeat_interleave(
+        crow[:-1], counts
+    )
     if batch:
         crow = crow.expand(batch + (rows + 1,)).contiguous()
         col = col.expand(batch + (nnz,)).contiguous()
@@ -99,8 +102,7 @@ class SparseCsrTensorBenchmark(base.GenericBenchmark):
     ``sparse_csr_tensor`` factory call."""
 
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = _BENCH_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_BENCH_SHAPES)
 
 
 @pytest.mark.sparse_csr_tensor

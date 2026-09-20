@@ -44,9 +44,9 @@ _CROW_CASES = tu.selected_cases(
         ("bsr", (6, 6), 6, (3, 2)),
         ("bsr", (4, 6), 0, (2, 2)),
         ("bsr_batch", (2, 4, 6), 6, (2, 2)),
-        ("csr_batch", (7, 3, 12, 4, 5), 48, None),
-        ("bsr", (10, 10), 12, (3, 4)),
-        ("bsr_batch", (2, 8, 12), 12, (4, 4)),
+        ("csr_batch", (7, 3, 12, 4, 5), 20, None),
+        ("bsr", (12, 12), 12, (3, 4)),
+        ("bsr_batch", (2, 8, 12), 6, (4, 4)),
     ],
     quick=[("csr_batch", (2, 19, 7), 20, None)],
 )
@@ -101,33 +101,14 @@ def _shape_to_crow_case(shape):
 _SHAPE_CASES = [_shape_to_crow_case(shape) for shape in tu.selected_shapes()]
 
 
-def _random_crow(n_compressed, nnz, gen):
-    # Sorted split points start at zero and end at nnz; repeats leave empty segments.
-    if n_compressed == 1:
-        return torch.tensor([0, nnz], dtype=torch.long)
-    inner = torch.sort(
-        torch.randint(0, nnz + 1, (n_compressed - 1,), dtype=torch.long, generator=gen)
-    ).values
-    return torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long),
-            inner,
-            torch.tensor([nnz], dtype=torch.long),
-        ]
-    )
+def _make_crow(n_compressed, nnz):
+    counts = torch.full((n_compressed,), nnz // n_compressed, dtype=torch.long)
+    counts[: nnz % n_compressed] += 1
+    return torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
 
 
-def _random_crow_batch(n_batch, n_compressed, nnz, gen):
-    # Sorted split points start at zero and end at nnz; repeats leave empty segments.
-    row0 = torch.zeros(n_batch, 1, dtype=torch.long)
-    rown = torch.full((n_batch, 1), nnz, dtype=torch.long)
-    if n_compressed == 1:
-        return torch.cat([row0, rown], dim=1)
-    inner = torch.randint(
-        0, nnz + 1, (n_batch, n_compressed - 1), dtype=torch.long, generator=gen
-    )
-    inner, _ = torch.sort(inner, dim=1)
-    return torch.cat([row0, inner, rown], dim=1)
+def _make_crow_batch(n_batch, n_compressed, nnz):
+    return _make_crow(n_compressed, nnz).expand(n_batch, -1).contiguous()
 
 
 def _make_values(dtype, values_shape, value_range, gen):
@@ -150,17 +131,23 @@ def _make_values(dtype, values_shape, value_range, gen):
 
 def _make_csr(size, nnz, dtype, gen, device, value_range):
     n_rows, n_cols = size
-    crow = _random_crow(n_rows, nnz, gen)
-    col = torch.randint(0, n_cols, (nnz,), dtype=torch.long, generator=gen)
+    assert 0 <= nnz <= n_rows * n_cols
+    crow = _make_crow(n_rows, nnz)
+    col = torch.arange(nnz) - torch.repeat_interleave(crow[:-1], crow.diff())
     values = _make_values(dtype, (nnz,), value_range, gen)
     return torch.sparse_csr_tensor(crow, col, values, size=size, device=device)
 
 
 def _make_csr_batch(size, nnz, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
+    assert 0 <= nnz <= n_rows * n_cols
     n_batch = math.prod(batch_dims)
-    crow = _random_crow_batch(n_batch, n_rows, nnz, gen)
-    col = torch.randint(0, n_cols, (n_batch, nnz), dtype=torch.long, generator=gen)
+    crow = _make_crow_batch(n_batch, n_rows, nnz)
+    col = (
+        (torch.arange(nnz) - torch.repeat_interleave(crow[0][:-1], crow[0].diff()))
+        .expand(n_batch, -1)
+        .contiguous()
+    )
     values = _make_values(dtype, (n_batch, nnz), value_range, gen)
     return torch.sparse_csr_tensor(
         crow.view(batch_dims + (n_rows + 1,)),
@@ -174,13 +161,12 @@ def _make_csr_batch(size, nnz, dtype, gen, device, value_range):
 def _make_bsr(size, nnz, blocks, dtype, gen, device, value_range):
     n_rows, n_cols = size
     block_rows, block_cols = blocks
-    # Legacy non-divisible fixtures retain ceil-sized index arrays. The
-    # constructor stores these arrays with invariant checks disabled; it does
-    # not pad the logical matrix. The accessor reads the stored metadata.
-    n_row_blocks = int(math.ceil(n_rows / block_rows))
-    n_col_blocks = int(math.ceil(n_cols / block_cols))
-    crow = _random_crow(n_row_blocks, nnz, gen)
-    col = torch.randint(0, n_col_blocks, (nnz,), dtype=torch.long, generator=gen)
+    assert n_rows % block_rows == n_cols % block_cols == 0
+    n_row_blocks = n_rows // block_rows
+    n_col_blocks = n_cols // block_cols
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
+    crow = _make_crow(n_row_blocks, nnz)
+    col = torch.arange(nnz) - torch.repeat_interleave(crow[:-1], crow.diff())
     values = _make_values(dtype, (nnz, block_rows, block_cols), value_range, gen)
     return torch.sparse_bsr_tensor(crow, col, values, size=size, device=device)
 
@@ -188,12 +174,16 @@ def _make_bsr(size, nnz, blocks, dtype, gen, device, value_range):
 def _make_bsr_batch(size, nnz, blocks, dtype, gen, device, value_range):
     batch_dims, n_rows, n_cols = size[:-2], size[-2], size[-1]
     block_rows, block_cols = blocks
+    assert n_rows % block_rows == n_cols % block_cols == 0
     n_batch = math.prod(batch_dims)
-    n_row_blocks = int(math.ceil(n_rows / block_rows))
-    n_col_blocks = int(math.ceil(n_cols / block_cols))
-    crow = _random_crow_batch(n_batch, n_row_blocks, nnz, gen)
-    col = torch.randint(
-        0, n_col_blocks, (n_batch, nnz), dtype=torch.long, generator=gen
+    n_row_blocks = n_rows // block_rows
+    n_col_blocks = n_cols // block_cols
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
+    crow = _make_crow_batch(n_batch, n_row_blocks, nnz)
+    col = (
+        (torch.arange(nnz) - torch.repeat_interleave(crow[0][:-1], crow[0].diff()))
+        .expand(n_batch, -1)
+        .contiguous()
     )
     values = _make_values(
         dtype, (n_batch, nnz, block_rows, block_cols), value_range, gen
@@ -222,7 +212,7 @@ def _expected_crow_shape(case):
     layout, size, _, blocks = case
     n_rows = size[-2]
     if layout in ("bsr", "bsr_batch"):
-        n_compressed = int(math.ceil(n_rows / blocks[0]))
+        n_compressed = n_rows // blocks[0]
     else:
         n_compressed = n_rows
     if layout in ("csr", "bsr"):
@@ -444,7 +434,7 @@ def _uncoalesced_csr(dtype):
 
 @pytest.mark.crow_indices_copy
 @pytest.mark.parametrize("dtype", _CROW_DTYPES)
-def test_crow_indices_copy_uncoalesced(dtype):
+def test_crow_indices_copy_unchecked_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
     ref_inp = tu.to_reference(inp)
 
@@ -457,7 +447,7 @@ def test_crow_indices_copy_uncoalesced(dtype):
 
 @pytest.mark.crow_indices_copy_out
 @pytest.mark.parametrize("dtype", _CROW_DTYPES)
-def test_crow_indices_copy_out_uncoalesced(dtype):
+def test_crow_indices_copy_out_unchecked_uncoalesced(dtype):
     inp = _uncoalesced_csr(dtype)
     ref_inp = tu.to_reference(inp)
     out = torch.full((5,), -1, dtype=torch.long, device=inp.device)
@@ -475,7 +465,7 @@ def _special_csr(dtype, scenario):
     shape = (3, 4)
     crow = torch.tensor([0, 2, 4, 7], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor(
-        [0, 1, 0, 2, 1, 2, 0], dtype=torch.long, device=flag_gems.device
+        [0, 1, 0, 2, 0, 1, 2], dtype=torch.long, device=flag_gems.device
     )
     values = tu.make_special_input(dtype, scenario).repeat(2)[:7]
     return torch.sparse_csr_tensor(crow, cols, values, shape)

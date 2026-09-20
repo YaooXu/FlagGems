@@ -46,7 +46,7 @@ _ADD_BATCH_DIM_CASES = [
 ]
 
 
-def _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level):
+def _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level):
     # A plain tensor can pass an unwrap round-trip for singleton batch dims.
     # Require the actual legacy batch wrapper as well as its visible metadata.
     assert is_legacy_batchedtensor(res_out)
@@ -59,6 +59,7 @@ def _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level):
         res_out, level, ref_inp.size(batch_dim), batch_dim
     )
     tu.assert_result_equal(res_mat, ref_inp)
+    assert torch._C._is_alias_of(res_mat, inp)
 
 
 @pytest.mark._add_batch_dim
@@ -73,7 +74,7 @@ def test__add_batch_dim(shape, batch_dim, level, dtype):
     gems_op = flag_gems.testing.resolve_gems_op("_add_batch_dim")
     res_out = gems_op(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
+    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
@@ -90,7 +91,7 @@ def test__add_batch_dim_value_ranges(shape, dtype, value_range):
     gems_op = flag_gems.testing.resolve_gems_op("_add_batch_dim")
     res_out = gems_op(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
+    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
@@ -108,7 +109,7 @@ def test__add_batch_dim_non_contiguous(shape, batch_dim, level, dtype):
     gems_op = flag_gems.testing.resolve_gems_op("_add_batch_dim")
     res_out = gems_op(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
+    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim
@@ -124,7 +125,7 @@ def test__add_batch_dim_nan_inf(dtype, scenario):
     gems_op = flag_gems.testing.resolve_gems_op("_add_batch_dim")
     res_out = gems_op(inp, batch_dim, level)
 
-    _assert_batched_view(res_out, ref_out, ref_inp, batch_dim, level)
+    _assert_batched_view(res_out, ref_out, inp, ref_inp, batch_dim, level)
 
 
 @pytest.mark._add_batch_dim

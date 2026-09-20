@@ -96,7 +96,7 @@ class SlowConv2dBackwardBenchmark(base.GenericBenchmark):
     # inputs are conv-shaped, not the generic pointwise shapes), so benchmark
     # dedicated (N, C_in, H, W, C_out, kH, kW, stride, padding) tuples instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _SLOW_CONV2D_BACKWARD_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_SLOW_CONV2D_BACKWARD_SHAPES)
 
 
 @pytest.mark._slow_conv2d_backward

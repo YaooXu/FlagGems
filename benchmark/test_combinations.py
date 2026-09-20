@@ -71,8 +71,7 @@ class CombinationsBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = _COMBINATIONS_CASES
+        super().set_shapes(shape_file_path, default_shapes=_COMBINATIONS_CASES)
 
     def set_more_shapes(self):
         # GenericBenchmark's extra 1-D/2-D/3-D shapes would be rejected by the

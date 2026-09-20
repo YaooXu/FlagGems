@@ -81,7 +81,7 @@ def _make_metadata(num_channels, device):
 
 def _case_fn(shape, dtype):
     del dtype
-    axis = dict(SHAPE_AXIS)[tuple(shape)]
+    axis = 0
     yield base.BenchmarkCasePlan(
         shape={"input": shape},
         params={"axis": axis},
@@ -137,9 +137,9 @@ class MakePerChannelQuantizedTensorBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        # Ignore core_shapes.yaml / DEFAULT_SHAPES and use the allocation-friendly
-        # per-channel shape set above.
-        self.shapes = [shape for shape, _ in SHAPE_AXIS]
+        super().set_shapes(
+            shape_file_path, default_shapes=[shape for shape, _ in SHAPE_AXIS]
+        )
 
 
 @pytest.mark._make_per_channel_quantized_tensor

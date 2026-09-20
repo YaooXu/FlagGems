@@ -124,10 +124,6 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
 def test_slow_conv_dilated3d(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    # Disable TF32 when comparing native fp32 results with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -152,9 +148,6 @@ def test_slow_conv_dilated3d(
 def test_slow_conv_dilated3d_unbatched(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, False, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -179,9 +172,6 @@ def test_slow_conv_dilated3d_unbatched(
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
@@ -210,9 +200,6 @@ def test_slow_conv_dilated3d_value_ranges(case, value_range, dtype, bias):
 def test_slow_conv_dilated3d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dilation, dtype, bias
 ):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -248,9 +235,6 @@ def test_slow_conv_dilated3d_out(
 @pytest.mark.parametrize("case", _BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
 def test_slow_conv_dilated3d_backward(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding, dilation = case
     out_shape = _conv_output_shape(inp_shape, weight_shape, stride, padding, dilation)
 
@@ -294,9 +278,6 @@ def test_slow_conv_dilated3d_backward(case, dtype):
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_dilated3d_nan_inf(dtype, scenario, special_arg):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
     weight = torch.ones((5, 1, 2, 2, 2), dtype=dtype, device=flag_gems.device)
     bias = torch.ones((5,), dtype=dtype, device=flag_gems.device)
@@ -426,3 +407,17 @@ def test_slow_conv_dilated3d_rejects_output_size_too_small():
     gems_op = flag_gems.testing.resolve_gems_op("slow_conv_dilated3d")
     with pytest.raises((RuntimeError, TypeError, ValueError)):
         gems_op(inp, weight, (3, 3, 3), None, (1, 1, 1), (1, 1, 1), (5, 1, 1))
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    # Match native fp32 results against the fp64 reference without leaking flags.
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

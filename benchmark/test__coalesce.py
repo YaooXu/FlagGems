@@ -76,7 +76,7 @@ class CoalesceBenchmark(base.GenericBenchmark):
     # _coalesce is a sparse op, so there are no meaningful dense shapes in
     # core_shapes.yaml; benchmark the dedicated (shape, nnz) descriptors above.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _COALESCE_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_COALESCE_SHAPES)
 
 
 @pytest.mark._coalesce

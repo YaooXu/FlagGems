@@ -79,7 +79,7 @@ class SlowConv2dForwardBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding)."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = SLOW_CONV2D_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=SLOW_CONV2D_SHAPES)
 
 
 @pytest.mark._slow_conv2d_forward

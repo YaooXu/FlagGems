@@ -46,34 +46,30 @@ def _random_values(shape, dtype, gen):
     return torch.randint(-5, 6, shape, dtype=dtype, generator=gen)
 
 
-def _random_ccol(n_compressed, nnz, gen):
-    # Non-decreasing compressed index array of length n_compressed + 1 with
-    # ccol[0] == 0 and ccol[-1] == nnz.
-    if n_compressed == 1:
-        return torch.tensor([0, nnz], dtype=torch.long)
-    inner = torch.sort(
-        torch.randint(0, nnz + 1, (n_compressed - 1,), dtype=torch.long, generator=gen)
-    ).values
-    return torch.cat(
-        [torch.zeros(1, dtype=torch.long), inner, torch.tensor([nnz], dtype=torch.long)]
-    )
+def _make_ccol(n_compressed, nnz):
+    counts = torch.full((n_compressed,), nnz // n_compressed, dtype=torch.long)
+    counts[: nnz % n_compressed] += 1
+    return torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
 
 
 def _make_input(layout, size, nnz, blocks, dtype, device):
     gen = torch.Generator("cpu").manual_seed(0)
     if layout == "csc":
         n_rows, n_cols = size
-        ccol = _random_ccol(n_cols, nnz, gen)
-        row = torch.randint(0, n_rows, (nnz,), dtype=torch.long, generator=gen)
+        assert 0 <= nnz <= n_rows * n_cols
+        ccol = _make_ccol(n_cols, nnz)
+        row = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], ccol.diff())
         values = _random_values((nnz,), dtype, gen)
         return torch.sparse_csc_tensor(ccol, row, values, size=size, device=device)
     if layout == "csc_batch":
         batch, n_rows, n_cols = size
+        assert 0 <= nnz <= n_rows * n_cols
         ccols, rows, values = [], [], []
         for _ in range(batch):
-            ccols.append(_random_ccol(n_cols, nnz, gen))
+            ccols.append(_make_ccol(n_cols, nnz))
             rows.append(
-                torch.randint(0, n_rows, (nnz,), dtype=torch.long, generator=gen)
+                torch.arange(nnz)
+                - torch.repeat_interleave(ccols[-1][:-1], ccols[-1].diff())
             )
             values.append(_random_values((nnz,), dtype, gen))
         return torch.sparse_csc_tensor(
@@ -86,20 +82,25 @@ def _make_input(layout, size, nnz, blocks, dtype, device):
     if layout == "bsc":
         n_rows, n_cols = size
         br, bc = blocks
+        assert n_rows % br == n_cols % bc == 0
         n_col_blocks = n_cols // bc
-        ccol = _random_ccol(n_col_blocks, nnz, gen)
-        row = torch.randint(0, n_rows // br, (nnz,), dtype=torch.long, generator=gen)
+        assert 0 <= nnz <= (n_rows // br) * n_col_blocks
+        ccol = _make_ccol(n_col_blocks, nnz)
+        row = torch.arange(nnz) - torch.repeat_interleave(ccol[:-1], ccol.diff())
         values = _random_values((nnz, br, bc), dtype, gen)
         return torch.sparse_bsc_tensor(ccol, row, values, size=size, device=device)
     if layout == "bsc_batch":
         batch, n_rows, n_cols = size
         br, bc = blocks
+        assert n_rows % br == n_cols % bc == 0
         n_col_blocks = n_cols // bc
+        assert 0 <= nnz <= (n_rows // br) * n_col_blocks
         ccols, rows, values = [], [], []
         for _ in range(batch):
-            ccols.append(_random_ccol(n_col_blocks, nnz, gen))
+            ccols.append(_make_ccol(n_col_blocks, nnz))
             rows.append(
-                torch.randint(0, n_rows // br, (nnz,), dtype=torch.long, generator=gen)
+                torch.arange(nnz)
+                - torch.repeat_interleave(ccols[-1][:-1], ccols[-1].diff())
             )
             values.append(_random_values((nnz, br, bc), dtype, gen))
         return torch.sparse_bsc_tensor(
@@ -133,8 +134,7 @@ class CcolIndicesCopyBenchmark(base.GenericBenchmark):
     # dense shapes in core_shapes.yaml, so benchmark dedicated
     # (layout, size, nnz, blocks) cases instead.
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = _CCOLS
+        super().set_shapes(shape_file_path, default_shapes=_CCOLS)
 
 
 @pytest.mark.ccol_indices_copy

@@ -891,3 +891,161 @@ def test_combinations_zero_r_rejects_a_gradient_connection():
     with testing.override_gems_op("combinations", lambda inp, r, replacement: inp[:0]):
         with pytest.raises(AssertionError):
             cases.test_combinations_zero_r_no_autograd(8, False, torch.float32)
+
+
+def test_qparams_rejects_zero_tiny_scale():
+    from tests import test__choose_qparams_per_tensor as cases
+
+    with pytest.raises(AssertionError):
+        cases._assert_pair((0.0, 0), (6e-5, 0))
+    cases._assert_pair((6e-5, 0), (6e-5, 0))
+
+
+def test_add_batch_dim_rejects_copied_storage():
+    from tests import test__add_batch_dim as cases
+
+    def copied(inp, dim, level):
+        return torch.ops.aten._add_batch_dim(tu.to_reference(inp), dim, level)
+
+    with flag_gems.testing.override_gems_op("_add_batch_dim", copied):
+        with pytest.raises(AssertionError):
+            cases.test__add_batch_dim((3, 5), 0, 0, torch.float32)
+
+
+def test_remove_batch_dim_exercises_batched_input():
+    from tests import test__remove_batch_dim as cases
+
+    def plain_only(inp, *args):
+        assert not torch._C._functorch.is_legacy_batchedtensor(inp), "batched input"
+        return torch.ops.aten._remove_batch_dim(inp, *args)
+
+    with flag_gems.testing.override_gems_op("_remove_batch_dim", plain_only):
+        with pytest.raises(AssertionError, match="batched input"):
+            cases.test__remove_batch_dim_batched(1, 2, 0, torch.float32)
+
+
+def test_fw_primal_rejects_retained_tangent():
+    from tests import test__fw_primal as cases
+
+    with flag_gems.testing.override_gems_op(
+        "_fw_primal", lambda inp, level: torch.ops.aten.alias(inp)
+    ):
+        with pytest.raises(AssertionError):
+            cases.test__fw_primal_dual((3, 5), torch.float32)
+
+
+def test_data_rejects_shared_version_counter():
+    from tests import test_data as cases
+
+    with flag_gems.testing.override_gems_op("data", lambda inp: inp.detach()):
+        with pytest.raises(AssertionError):
+            cases.test_data_independent_version_counter(0)
+
+
+@pytest.mark.parametrize("level", ["CORE", "COMPREHENSIVE"])
+def test_operator_shapes_override_defaults(bench_config, tmp_path, level):
+    from benchmark import consts
+    from benchmark.test_adjoint import AdjointBenchmark, _build_inputs_fn, _case_fn
+
+    bench_config.Config.bench_level = getattr(consts.BenchLevel, level)
+    bench_config.Config.query = False
+    path = tmp_path / "shapes.yaml"
+    path.write_text("adjoint:\n  shapes: [[7, 11]]\n  shape_desc: custom matrix\n")
+    bench = AdjointBenchmark(
+        "adjoint",
+        torch.ops.aten.adjoint,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
+    )
+    bench.set_shapes(str(path))
+    assert bench.shapes == [(7, 11)]
+    assert bench.shape_desc == "custom matrix"
+
+
+def test_composite_shapes_override_defaults(bench_config, tmp_path):
+    from benchmark import consts
+    from benchmark.test_sparse_bsr_tensor import (
+        SparseBsrTensorBenchmark,
+        _build_inputs_fn,
+        _case_fn,
+    )
+
+    bench_config.Config.bench_level = consts.BenchLevel.COMPREHENSIVE
+    bench_config.Config.query = False
+    path = tmp_path / "shapes.yaml"
+    path.write_text("sparse_bsr_tensor:\n  shapes: [[[2, 6, 12], [2, 3]]]\n")
+    bench = SparseBsrTensorBenchmark(
+        "sparse_bsr_tensor",
+        torch.ops.aten.sparse_bsr_tensor,
+        case_fn=_case_fn,
+        build_inputs_fn=_build_inputs_fn,
+    )
+    bench.set_shapes(str(path))
+    assert bench.shapes == [((2, 6, 12), (2, 3))]
+    plan = next(_case_fn(bench.shapes[0], torch.float32))
+    crow, col, values, size, kwargs = _build_inputs_fn(plan, torch.float32, "cpu")
+    with torch.sparse.check_sparse_tensor_invariants():
+        result = torch.ops.aten.sparse_bsr_tensor(crow, col, values, size, **kwargs)
+    assert result.dense_dim() == 0
+    assert result.crow_indices().shape == (2, 4)
+    assert result.values().shape == (2, 12, 2, 3)
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "tests.test__slow_conv2d_backward",
+        "tests.test__slow_conv2d_forward",
+        "tests.test_slow_conv_dilated2d",
+        "tests.test_slow_conv_dilated3d",
+        "tests.test_slow_conv_transpose2d",
+        "tests.test_slow_conv_transpose3d",
+        "tests.test_thnn_conv2d",
+        "benchmark.test_thnn_conv2d",
+    ],
+)
+def test_convolution_precision_restored_on_failure(module_name):
+    module = importlib.import_module(module_name)
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        fixture = module.full_precision.__wrapped__()
+        next(fixture)
+        assert not torch.backends.cuda.matmul.allow_tf32
+        assert not torch.backends.cudnn.allow_tf32
+        with pytest.raises(RuntimeError, match="test failure"):
+            fixture.throw(RuntimeError("test failure"))
+        assert torch.backends.cuda.matmul.allow_tf32
+        assert torch.backends.cudnn.allow_tf32
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32
+
+
+@pytest.mark.parametrize("operator", ["sparse_csc_tensor", "sparse_compressed_tensor"])
+def test_special_value_sparse_fixtures_have_valid_indices(operator):
+    cases = importlib.import_module(f"tests.test_{operator}")
+    with torch.sparse.check_sparse_tensor_invariants():
+        with flag_gems.testing.override_gems_op(
+            operator, getattr(torch.ops.aten, operator)
+        ):
+            getattr(cases, f"test_{operator}_nan_inf_values")(torch.float32, "nan")
+
+
+def test_csr_fixture_tables_have_valid_indices():
+    from tests import test_sparse_csr_tensor as cases
+
+    with torch.sparse.check_sparse_tensor_invariants():
+        with flag_gems.testing.override_gems_op(
+            "sparse_csr_tensor", torch.ops.aten.sparse_csr_tensor
+        ):
+            for case in cases._CSR_2D_CASES:
+                cases.test_sparse_csr_tensor_crow_col_value_size(
+                    case, torch.float32, ["-1", "1"]
+                )
+            for case in cases._CSR_3D_CASES:
+                cases.test_sparse_csr_tensor_crow_col_value_size_batched(
+                    case, torch.float32, ["-1", "1"]
+                )

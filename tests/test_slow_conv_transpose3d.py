@@ -246,12 +246,6 @@ def _assert_close(res_out, ref_out, dtype, equal_nan=False):
     utils.gems_assert_close(res_out, ref_out, dtype, equal_nan=equal_nan, atol=atol)
 
 
-def _disable_tf32():
-    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
-
 @pytest.mark.slow_conv_transpose3d
 @pytest.mark.parametrize(
     "inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation",
@@ -270,8 +264,6 @@ def test_slow_conv_transpose3d(
     dtype,
     bias,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -303,8 +295,6 @@ def test_slow_conv_transpose3d(
 @pytest.mark.parametrize("dtype", SUPPORTED_DTYPES)
 @pytest.mark.parametrize("bias", BIASES)
 def test_slow_conv_transpose3d_value_ranges(case, value_range, dtype, bias):
-    _disable_tf32()
-
     (
         inp_shape,
         weight_shape,
@@ -361,8 +351,6 @@ def test_slow_conv_transpose3d_out(
     dtype,
     bias,
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(inp_shape, weight_shape, bias, dtype)
     ref_inp = tu.to_reference(inp, True)
     ref_weight = tu.to_reference(weight, True)
@@ -415,8 +403,6 @@ def test_slow_conv_transpose3d_out(
 @pytest.mark.parametrize("case", _BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", tu.selected_cases(_BACKWARD_DTYPES))
 def test_slow_conv_transpose3d_backward(case, dtype):
-    _disable_tf32()
-
     (
         inp_shape,
         weight_shape,
@@ -483,8 +469,6 @@ def test_slow_conv_transpose3d_backward(case, dtype):
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_slow_conv_transpose3d_nan_inf(dtype, scenario, special_arg):
-    _disable_tf32()
-
     inp = torch.ones((1, 1, 4, 4, 4), dtype=dtype, device=flag_gems.device)
     weight = torch.ones((1, 5, 1, 1, 1), dtype=dtype, device=flag_gems.device)
     bias = torch.ones((5,), dtype=dtype, device=flag_gems.device)
@@ -638,3 +622,16 @@ def test_slow_conv_transpose3d_rejects_bias_size_mismatch():
         gems_op(
             inp, weight, (3, 3, 3), bias, (1, 1, 1), (1, 1, 1), (0, 0, 0), (1, 1, 1)
         )
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

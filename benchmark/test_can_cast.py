@@ -82,9 +82,7 @@ class CanCastBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark for the tensor-free dtype-pair op can_cast."""
 
     def set_shapes(self, shape_file_path=None):
-        # There is no tensor data for can_cast; the case list is driven solely
-        # by the (from_, to) dtype pairs enumerated in _case_fn.
-        self.shapes = [(0,)]
+        super().set_shapes(shape_file_path, default_shapes=[(0,)])
 
     def set_more_shapes(self):
         # Additional tensor shapes are meaningless for a dtype-metadata query.

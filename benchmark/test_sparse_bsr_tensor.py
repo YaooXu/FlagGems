@@ -61,6 +61,7 @@ def _make_bsr_inputs(shape, block, dtype, device, seed=0):
     gen = torch.Generator("cpu").manual_seed(seed)
     rows, cols = shape[-2], shape[-1]
     br, bc = block
+    assert rows % br == cols % bc == 0
     n_row_blocks = rows // br
     n_col_blocks = cols // bc
     crow = [0]
@@ -74,6 +75,8 @@ def _make_bsr_inputs(shape, block, dtype, device, seed=0):
     values_shape = shape[:-2] + (nnz, br, bc)
     crow_t = torch.tensor(crow, dtype=torch.long, device=device)
     col_t = torch.tensor(col, dtype=torch.long, device=device)
+    crow_t = crow_t.expand(shape[:-2] + (n_row_blocks + 1,)).contiguous()
+    col_t = col_t.expand(shape[:-2] + (nnz,)).contiguous()
     values_t = utils.generate_tensor_input(values_shape, dtype, device)
     return crow_t, col_t, values_t
 
@@ -106,7 +109,7 @@ class SparseBsrTensorBenchmark(base.GenericBenchmark):
     ``sparse_bsr_tensor`` factory call."""
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BENCH_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_BENCH_SHAPES)
 
 
 @pytest.mark.sparse_bsr_tensor

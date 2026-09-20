@@ -114,19 +114,6 @@ class DstackBenchmark(base.GenericBenchmark):
         ]
 
 
-def _resolve_gems_op():
-    # Resolved inside the test (never at module import time) so KernelGen's
-    # override_gems_op("dstack", ...) wins. Falls back to None when neither an
-    # override nor a direct flag_gems.dstack callable is registered; the
-    # benchmark then just times the torch reference.
-    try:
-        return flag_gems.testing.resolve_gems_op(
-            "dstack", getattr(flag_gems, "dstack", None)
-        )
-    except LookupError:
-        return None
-
-
 @pytest.mark.dstack
 @pytest.mark.dstack_benchmark
 def test_dstack():
@@ -135,7 +122,7 @@ def test_dstack():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.dstack,
-        gems_op=_resolve_gems_op(),
+        gems_op=getattr(flag_gems, "dstack", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

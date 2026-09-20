@@ -68,16 +68,11 @@ class ThnnConv2dBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding)."""
 
     def set_shapes(self, shape_file_path=None):
-        # This op has no entry in core_shapes.yaml; use the local perf shapes
-        # directly instead of inheriting the (pointwise) default shape set.
-        self.shapes = THNN_CONV2D_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=THNN_CONV2D_SHAPES)
 
 
 @pytest.mark.thnn_conv2d
 def test_thnn_conv2d():
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     bench = ThnnConv2dBenchmark(
         op_name="thnn_conv2d",
         case_fn=_case_fn,
@@ -91,3 +86,16 @@ def test_thnn_conv2d():
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

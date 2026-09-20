@@ -63,25 +63,18 @@ def _make_sparse_coo_input(shape, sparse_dim, dtype, device, nnz=_NNZ, seed=0):
     return torch.sparse_coo_tensor(indices, values, shape, device=device)
 
 
-def _make_sparse_csr_input(shape, dtype, device, nnz=_NNZ, seed=0):
+def _make_sparse_csr_input(shape, dtype, device, nnz=_NNZ):
     # 2-D (rows, cols) or batched 3-D (batch, rows, cols); every batch stores
     # the same nnz entries (shared crow/col pattern).
-    gen = torch.Generator("cpu").manual_seed(seed)
     if len(shape) == 2:
         rows, cols = shape
     else:
         _, rows, cols = shape
-    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, generator=gen)
-    cuts = torch.sort(
-        torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, generator=gen)
-    ).values
-    crow_indices = torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long),
-            cuts,
-            torch.full((1,), nnz, dtype=torch.long),
-        ]
-    )
+    assert 0 <= nnz <= rows * cols
+    counts = torch.full((rows,), nnz // rows, dtype=torch.long)
+    counts[: nnz % rows] += 1
+    crow_indices = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    col_indices = torch.arange(nnz) - torch.repeat_interleave(crow_indices[:-1], counts)
     if len(shape) == 3:
         crow_indices = crow_indices.expand(shape[0], -1).contiguous()
         col_indices = col_indices.expand(shape[0], -1).contiguous()
@@ -127,9 +120,7 @@ class NnzBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark whose inputs are sparse COO/CSR tensors."""
 
     def set_shapes(self, shape_file_path=None):
-        # _nnz is a sparse-only op, so there are no meaningful dense shapes in
-        # core_shapes.yaml; benchmark the dedicated sparse descriptors above.
-        self.shapes = _NNZ_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_NNZ_SHAPES)
 
 
 @pytest.mark._nnz

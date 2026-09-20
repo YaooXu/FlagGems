@@ -122,7 +122,7 @@ class EmptyPerChannelAffineQuantizedBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = EMPTY_Q_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=EMPTY_Q_SHAPES)
 
 
 @pytest.mark._empty_per_channel_affine_quantized

@@ -67,10 +67,7 @@ class FwPrimalBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark restricted to allocation-friendly shapes."""
 
     def set_shapes(self, shape_file_path=None):
-        # Ignore the 1G/268M-element entries in the default shape file: this
-        # view op is latency-bound, not bandwidth-bound.
-        del shape_file_path
-        self.shapes = FW_PRIMAL_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=FW_PRIMAL_SHAPES)
 
 
 @pytest.mark._fw_primal

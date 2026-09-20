@@ -52,8 +52,8 @@ _COL_CASES = tu.selected_cases(
         ("csr", (12, 9, 3, 6), 9, None),
         ("csr", (3, 6, 4, 4, 6, 5), 11, None),
         ("csr", (7, 3, 12, 4, 2, 15), 10, None),
-        ("csr", (3, 4, 2, 5, 3, 4, 2), 13, None),
-        ("bsr", (10, 10), 6, (3, 4)),
+        ("csr", (3, 4, 2, 5, 3, 4, 2), 8, None),
+        ("bsr", (12, 12), 6, (3, 4)),
         ("bsr_batch", (2, 4, 6), 4, (2, 2)),
         ("bsr_batch", (2, 8, 12), 6, (4, 4)),
     ],
@@ -93,15 +93,13 @@ _INDEX_CASES = tu.selected_cases(
 )
 
 
-def _random_compressed(batch, n_rows, n_cols, nnz, gen):
-    """Build sorted CSR indices with a row sentinel; duplicate entries are allowed."""
+def _make_compressed_indices(batch, n_rows, n_cols, nnz):
+    """Build sorted CSR indices with a row sentinel; each coordinate occurs once."""
     entries = tuple(batch) + (nnz,)
-    rows = torch.randint(0, n_rows, entries, dtype=torch.long, generator=gen)
-    cols = torch.randint(0, n_cols, entries, dtype=torch.long, generator=gen)
-    order = torch.argsort(rows * n_cols + cols, dim=-1)
-    rows = torch.gather(rows, -1, order)
-    cols = torch.gather(cols, -1, order)
-
+    assert 0 <= nnz <= n_rows * n_cols
+    positions = torch.arange(nnz, dtype=torch.long) * (n_rows * n_cols) // max(nnz, 1)
+    rows = (positions // n_cols).expand(entries).contiguous()
+    cols = (positions % n_cols).expand(entries).contiguous()
     counts = torch.zeros(tuple(batch) + (n_rows,), dtype=torch.long)
     if nnz > 0:
         counts.scatter_add_(-1, rows, torch.ones(entries, dtype=torch.long))
@@ -110,10 +108,9 @@ def _random_compressed(batch, n_rows, n_cols, nnz, gen):
     return crow, cols
 
 
-def _build_csr(shape, nnz, dtype, value_range, seed=0):
+def _build_csr(shape, nnz, dtype, value_range):
     batch, n_rows, n_cols = shape[:-2], shape[-2], shape[-1]
-    gen = torch.Generator("cpu").manual_seed(seed)
-    crow, cols = _random_compressed(batch, n_rows, n_cols, nnz, gen)
+    crow, cols = _make_compressed_indices(batch, n_rows, n_cols, nnz)
     values = tu.make_input(dtype, tuple(batch) + (nnz,), value_range)
     return torch.sparse_csr_tensor(
         crow.to(flag_gems.device),
@@ -123,16 +120,12 @@ def _build_csr(shape, nnz, dtype, value_range, seed=0):
     )
 
 
-def _build_bsr(shape, nnz, blocks, dtype, value_range, seed=0):
+def _build_bsr(shape, nnz, blocks, dtype, value_range):
     batch, n_rows, n_cols = shape[:-2], shape[-2], shape[-1]
     block_rows, block_cols = blocks
-    # Legacy non-divisible fixtures retain ceil-sized index arrays. The
-    # constructor stores these arrays with invariant checks disabled; it does
-    # not pad the logical matrix. The accessor reads the stored metadata.
-    n_row_blocks = (n_rows + block_rows - 1) // block_rows
-    n_col_blocks = (n_cols + block_cols - 1) // block_cols
-    gen = torch.Generator("cpu").manual_seed(seed)
-    crow, cols = _random_compressed(batch, n_row_blocks, n_col_blocks, nnz, gen)
+    n_row_blocks = n_rows // block_rows
+    n_col_blocks = n_cols // block_cols
+    crow, cols = _make_compressed_indices(batch, n_row_blocks, n_col_blocks, nnz)
     values = tu.make_input(
         dtype, tuple(batch) + (nnz, block_rows, block_cols), value_range
     )
@@ -144,11 +137,11 @@ def _build_bsr(shape, nnz, blocks, dtype, value_range, seed=0):
     )
 
 
-def _build_input(layout, shape, nnz, blocks, dtype, value_range=("-1", "1"), seed=0):
+def _build_input(layout, shape, nnz, blocks, dtype, value_range=("-1", "1")):
     if layout == "csr":
-        return _build_csr(shape, nnz, dtype, value_range, seed)
+        return _build_csr(shape, nnz, dtype, value_range)
     if layout in ("bsr", "bsr_batch"):
-        return _build_bsr(shape, nnz, blocks, dtype, value_range, seed)
+        return _build_bsr(shape, nnz, blocks, dtype, value_range)
     raise ValueError(f"unknown layout {layout}")
 
 
@@ -276,7 +269,7 @@ def test_col_indices_single_row(dtype):
 
 @pytest.mark.col_indices
 @pytest.mark.parametrize("dtype", _COL_DTYPES)
-def test_col_indices_uncoalesced(dtype):
+def test_col_indices_unchecked_uncoalesced(dtype):
     shape = (4, 3)
     crow = torch.tensor([0, 3, 3, 5, 5], dtype=torch.long, device=flag_gems.device)
     cols = torch.tensor([0, 0, 2, 1, 2], dtype=torch.long, device=flag_gems.device)
@@ -312,8 +305,8 @@ def test_col_indices_full_storage(dtype):
 
 @pytest.mark.col_indices
 @pytest.mark.parametrize("dtype", _COL_DTYPES)
-def test_col_indices_bsr_ragged_blocks(dtype):
-    inp = _build_input("bsr", (10, 10), 6, (3, 4), dtype, ["-1", "1"])
+def test_col_indices_bsr_rectangular_blocks(dtype):
+    inp = _build_input("bsr", (12, 12), 6, (3, 4), dtype, ["-1", "1"])
     ref_inp = tu.to_reference(inp)
 
     ref_out = torch.ops.aten.col_indices(ref_inp)

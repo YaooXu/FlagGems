@@ -46,7 +46,7 @@ _BSR_BATCHED_CASES = [
     ((2, 6, 6), (2, 3), [0, 2, 4, 4], [0, 1, 0, 1]),
     ((3, 4, 8), (2, 4), [0, 2, 3], [0, 1, 0]),
     ((2, 4, 4), (2, 2), [0, 2, 2], [0, 1]),
-    ((2, 8, 12), (4, 3), [0, 1, 3], [0, 3, 1]),
+    ((2, 8, 12), (4, 3), [0, 1, 3], [0, 1, 3]),
     ((2, 3, 4, 4), (2, 2), [0, 2, 4], [0, 1, 0, 1]),
 ]
 
@@ -136,7 +136,7 @@ def _assert_bsr_structure(out, size, block, nnz, dtype, batch=None):
     assert tuple(out.shape) == tuple(size)
     assert out.dtype == dtype
     assert out.sparse_dim() == 2
-    assert out.dense_dim() == len(size) - 2
+    assert out.dense_dim() == 0
     assert out._nnz() == nnz
     if batch is None:
         assert tuple(out.values().shape) == (nnz, block[0], block[1])
@@ -146,7 +146,7 @@ def _assert_bsr_structure(out, size, block, nnz, dtype, batch=None):
         assert tuple(out.values().shape) == (batch,) + (nnz, block[0], block[1])
     n_row_blocks = size[-2] // block[0]
     n_col_blocks = size[-1] // block[1]
-    assert len(out.crow_indices()) == n_row_blocks + 1
+    assert out.crow_indices().shape == size[:-2] + (n_row_blocks + 1,)
     assert (out.col_indices() < n_col_blocks).all()
     assert (out.col_indices() >= 0).all()
 
@@ -193,6 +193,8 @@ def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range)
     nnz = len(col)
     crow_t = torch.tensor(crow, dtype=torch.long, device=flag_gems.device)
     col_t = torch.tensor(col, dtype=torch.long, device=flag_gems.device)
+    crow_t = crow_t.expand(batch + (len(crow),)).contiguous()
+    col_t = col_t.expand(batch + (nnz,)).contiguous()
     values = _make_bsr_values(nnz, block, dtype, batch=batch, value_range=value_range)
     ref_crow = tu.to_reference(crow_t)
     ref_col = tu.to_reference(col_t)
@@ -218,8 +220,10 @@ def test_sparse_bsr_tensor_crow_col_value_size_batched(case, dtype, value_range)
 def test_sparse_bsr_tensor_crow_col_value_size_empty(case, dtype):
     size, block, batch = case
     n_row_blocks = size[-2] // block[0]
-    crow_t = torch.zeros(n_row_blocks + 1, dtype=torch.long, device=flag_gems.device)
-    col_t = torch.empty(0, dtype=torch.long, device=flag_gems.device)
+    crow_t = torch.zeros(
+        size[:-2] + (n_row_blocks + 1,), dtype=torch.long, device=flag_gems.device
+    )
+    col_t = torch.empty(size[:-2] + (0,), dtype=torch.long, device=flag_gems.device)
     values = _make_bsr_values(0, block, dtype, batch=batch)
     ref_crow = tu.to_reference(crow_t)
     ref_col = tu.to_reference(col_t)
@@ -276,6 +280,8 @@ def test_sparse_bsr_tensor_shape_levels(case, dtype, value_range):
     nnz = len(col)
     crow_t = torch.tensor(crow, dtype=torch.long, device=flag_gems.device)
     col_t = torch.tensor(col, dtype=torch.long, device=flag_gems.device)
+    crow_t = crow_t.expand(batch + (len(crow),)).contiguous()
+    col_t = col_t.expand(batch + (nnz,)).contiguous()
     values = _make_bsr_values(nnz, block, dtype, batch=batch, value_range=value_range)
     ref_crow = tu.to_reference(crow_t)
     ref_col = tu.to_reference(col_t)

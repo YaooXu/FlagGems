@@ -62,7 +62,7 @@ class AdjointBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = ADJOINT_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=ADJOINT_SHAPES)
 
 
 @pytest.mark.adjoint

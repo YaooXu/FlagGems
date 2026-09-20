@@ -105,7 +105,9 @@ class EmptyAffineQuantizedBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = EMPTY_AFFINE_QUANTIZED_SHAPES
+        super().set_shapes(
+            shape_file_path, default_shapes=EMPTY_AFFINE_QUANTIZED_SHAPES
+        )
 
 
 @pytest.mark._empty_affine_quantized

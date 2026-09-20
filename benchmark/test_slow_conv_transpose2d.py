@@ -43,9 +43,15 @@ SLOW_CONV_TRANSPOSE2D_SHAPES = [
 
 def _case_fn(shape, dtype):
     del dtype
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        shape
-    )
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = shape
     yield base.BenchmarkCasePlan(
         shape={"input": inp_shape, "weight": weight_shape},
         params={
@@ -69,9 +75,15 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        plan.builder_args
-    )
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = plan.builder_args
     inp = utils.generate_tensor_input(inp_shape, dtype, device)
     weight = utils.generate_tensor_input(weight_shape, dtype, device)
     bias = utils.generate_tensor_input((weight_shape[1],), dtype, device)
@@ -93,8 +105,7 @@ class SlowConvTranspose2dBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark over (input, weight, kernel, stride, padding, output_padding, dilation)."""
 
     def set_shapes(self, shape_file_path=None):
-        # The op has no entry in core_shapes.yaml; use the local shape list.
-        self.shapes = SLOW_CONV_TRANSPOSE2D_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=SLOW_CONV_TRANSPOSE2D_SHAPES)
 
     def set_more_shapes(self):
         # The generic 1D/2D/3D extra shapes cannot describe a conv workload;

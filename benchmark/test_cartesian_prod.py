@@ -52,8 +52,7 @@ class CartesianProdBenchmark(base.GenericBenchmark):
     """
 
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = _CARTESIAN_PROD_BENCH_SIZES
+        super().set_shapes(shape_file_path, default_shapes=_CARTESIAN_PROD_BENCH_SIZES)
 
     def set_more_shapes(self):
         return []

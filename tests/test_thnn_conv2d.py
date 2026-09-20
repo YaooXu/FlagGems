@@ -67,12 +67,6 @@ def _conv_output_shape(inp_shape, weight_shape, kernel_size, stride, padding):
     return (n, out_c, h_out, w_out)
 
 
-def _disable_tf32():
-    # Disable TF32 so native fp32 results can be compared with the fp64 reference.
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
-
 def _make_conv_inputs(inp_shape, weight_shape, with_bias, dtype, value_range):
     inp = tu.make_input(dtype, inp_shape, value_range)
     weight = tu.make_input(dtype, weight_shape, value_range)
@@ -126,8 +120,6 @@ def _assert_grads_close(res_grads, ref_grads, in_reduce_dim, out_reduce_dim, dty
 def test_thnn_conv2d(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -156,8 +148,6 @@ def test_thnn_conv2d(
 def test_thnn_conv2d_value_ranges(
     inp_shape, weight_shape, kernel_size, stride, padding, value_range, dtype
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, True, dtype, value_range
     )
@@ -184,8 +174,6 @@ def test_thnn_conv2d_value_ranges(
 def test_thnn_conv2d_backward(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -246,8 +234,6 @@ def test_thnn_conv2d_backward(
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "bias"])
 def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
-    _disable_tf32()
-
     inp_shape, weight_shape, kernel_size, stride, padding = (
         (1, 2, 5, 5),
         (5, 2, 3, 3),
@@ -285,8 +271,6 @@ def test_thnn_conv2d_nan_inf(dtype, scenario, special_arg):
 def test_thnn_conv2d_out(
     inp_shape, weight_shape, kernel_size, stride, padding, dtype, bias
 ):
-    _disable_tf32()
-
     inp, weight, bias_t = _make_conv_inputs(
         inp_shape, weight_shape, bias, dtype, ["-1", "1"]
     )
@@ -425,3 +409,16 @@ def test_thnn_conv2d_rejects_unsupported_dtype(dtype):
     gems_op = flag_gems.testing.resolve_gems_op("thnn_conv2d")
     with pytest.raises(_GEMS_ERRORS):
         gems_op(*args)
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

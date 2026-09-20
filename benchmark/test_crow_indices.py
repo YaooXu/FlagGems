@@ -38,25 +38,25 @@ _CROW_SHAPES = [
     ((1024, 1024), 1048576),
     ((4096, 4096), 1048576),
     ((16, 1024, 1024), 262144),
-    ((8, 256, 256), 1048576),
+    ((8, 256, 256), 16384),
     ((64, 1024, 1024), 131072),
-    ((4, 8, 256, 256), 262144),
+    ((4, 8, 256, 256), 16384),
 ]
 
 
 def _make_structure(logical_shape, nnz, device):
-    # Random (row, col) structure with a valid crow pointer array, generated
-    # directly on the benchmark device. (row, col) pairs are drawn with
-    # replacement; the crow array is built with a row-wise bincount so the
-    # result is always a valid CSR structure.
+    # Unique coordinates in compressed order.
     nrows, ncols = logical_shape[-2], logical_shape[-1]
     batch = logical_shape[:-2]
     entries_shape = batch + (nnz,)
-    rows = torch.randint(0, nrows, entries_shape, dtype=torch.long, device=device)
-    cols = torch.randint(0, ncols, entries_shape, dtype=torch.long, device=device)
-    order = torch.argsort(rows * ncols + cols, dim=-1)
-    rows = torch.gather(rows, -1, order)
-    cols = torch.gather(cols, -1, order)
+    assert 0 <= nnz <= nrows * ncols
+    positions = (
+        torch.arange(nnz, dtype=torch.long, device=device)
+        * (nrows * ncols)
+        // max(nnz, 1)
+    )
+    rows = (positions // ncols).expand(entries_shape).contiguous()
+    cols = (positions % ncols).expand(entries_shape).contiguous()
     counts = torch.stack(
         [
             torch.bincount(rows[idx], minlength=nrows)
@@ -92,7 +92,7 @@ class CrowIndicesBenchmark(base.GenericBenchmark):
     # shapes in core_shapes.yaml, so benchmark dedicated (logical_shape, nnz)
     # pairs instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _CROW_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_CROW_SHAPES)
 
 
 @pytest.mark.crow_indices

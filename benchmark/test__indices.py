@@ -76,10 +76,7 @@ class IndicesBenchmark(base.GenericBenchmark):
     """Two-phase GenericBenchmark whose inputs are sparse COO tensors."""
 
     def set_shapes(self, shape_file_path=None):
-        # _indices is a sparse metadata accessor; there are no meaningful dense
-        # shapes in core_shapes.yaml, so benchmark the dedicated
-        # (sparse_shape, dense_shape, nnz) descriptors above.
-        self.shapes = _INDICES_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_INDICES_SHAPES)
 
 
 @pytest.mark._indices

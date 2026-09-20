@@ -28,12 +28,8 @@ chain, where a chain is a tuple of 2-D matrix shapes.
 
 ``torch_op=torch.ops.aten.chain_matmul`` is only the perf comparison reference;
 the candidate comes from ``flag_gems`` via KernelGen's
-``testing.override_gems_op``. The default overload is looked up under
-``op_name="chain_matmul"`` and the ``.out`` overload under the canonical
-``op_name="chain_matmul.out"`` (the harness also registers the
-``chain_matmul_out`` alias, passed here as the default callable).
-``getattr(flag_gems, ..., None)`` keeps the file importable and runnable before a
-direct FlagGems callable is registered.
+``testing.override_gems_op`` under ``op_name="chain_matmul"`` for both
+ordinary and ``out=`` calls.
 
 The chains are sized so the largest is a few GFLOP: enough to hide launch
 overhead and expose the parenthesization cost, while every intermediate stays
@@ -89,8 +85,7 @@ class ChainMatmulBenchmark(base.GenericBenchmark):
     BENCH_SHAPES = _CHAIN_BENCH_SHAPES
 
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = list(self.BENCH_SHAPES)
+        super().set_shapes(shape_file_path, default_shapes=list(self.BENCH_SHAPES))
 
     def set_more_shapes(self):
         return []

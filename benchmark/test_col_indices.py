@@ -39,7 +39,7 @@ _COL_CASES = [
 ]
 
 
-def _random_compressed(batch, n_rows, n_cols, nnz, device):
+def _make_compressed_indices(batch, n_rows, n_cols, nnz, device):
     """Valid compressed-row structure generated directly on the benchmark device.
 
     ``crow`` has shape ``batch + (n_rows + 1,)`` (non-decreasing, starting at 0
@@ -47,17 +47,14 @@ def _random_compressed(batch, n_rows, n_cols, nnz, device):
     sorted by (row, col) so the structure is a well-formed CSR/BSR index set.
     """
     entries = tuple(batch) + (nnz,)
-    gen = torch.Generator(device=device).manual_seed(0)
-    rows = torch.randint(
-        0, n_rows, entries, dtype=torch.long, device=device, generator=gen
+    assert 0 <= nnz <= n_rows * n_cols
+    positions = (
+        torch.arange(nnz, dtype=torch.long, device=device)
+        * (n_rows * n_cols)
+        // max(nnz, 1)
     )
-    cols = torch.randint(
-        0, n_cols, entries, dtype=torch.long, device=device, generator=gen
-    )
-    order = torch.argsort(rows * n_cols + cols, dim=-1)
-    rows = torch.gather(rows, -1, order)
-    cols = torch.gather(cols, -1, order)
-
+    rows = (positions // n_cols).expand(entries).contiguous()
+    cols = (positions % n_cols).expand(entries).contiguous()
     counts = torch.zeros(tuple(batch) + (n_rows,), dtype=torch.long, device=device)
     if nnz > 0:
         counts.scatter_add_(
@@ -80,14 +77,16 @@ def _build_input(layout, size, nnz, blocks, dtype, device):
     batch, n_rows, n_cols = size[:-2], size[-2], size[-1]
     entries = tuple(batch) + (nnz,)
     if layout == "csr":
-        crow, cols = _random_compressed(batch, n_rows, n_cols, nnz, device)
+        crow, cols = _make_compressed_indices(batch, n_rows, n_cols, nnz, device)
         values = _random_values(entries, dtype, device)
         return torch.sparse_csr_tensor(crow, cols, values, size)
     if layout in ("bsr", "bsr_batch"):
         block_rows, block_cols = blocks
-        n_row_blocks = (n_rows + block_rows - 1) // block_rows
-        n_col_blocks = (n_cols + block_cols - 1) // block_cols
-        crow, cols = _random_compressed(batch, n_row_blocks, n_col_blocks, nnz, device)
+        n_row_blocks = n_rows // block_rows
+        n_col_blocks = n_cols // block_cols
+        crow, cols = _make_compressed_indices(
+            batch, n_row_blocks, n_col_blocks, nnz, device
+        )
         values = _random_values(entries + (block_rows, block_cols), dtype, device)
         return torch.sparse_bsr_tensor(crow, cols, values, size)
     raise ValueError(f"unknown layout {layout}")
@@ -114,7 +113,7 @@ class ColIndicesBenchmark(base.GenericBenchmark):
     # shapes in core_shapes.yaml, so benchmark dedicated (layout, size, nnz,
     # blocks) cases instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _COL_CASES
+        super().set_shapes(shape_file_path, default_shapes=_COL_CASES)
 
 
 @pytest.mark.col_indices

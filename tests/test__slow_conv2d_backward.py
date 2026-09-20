@@ -175,9 +175,6 @@ def _assert_grads_close(
 @pytest.mark.parametrize("value_range", tu.selected_ranges())
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_value_ranges(case, value_range, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, value_range
@@ -206,9 +203,6 @@ def test__slow_conv2d_backward_value_ranges(case, value_range, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_output_mask_full(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -230,9 +224,6 @@ def test__slow_conv2d_backward_output_mask_full(case, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_grad_input_only(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -255,9 +246,6 @@ def test__slow_conv2d_backward_grad_input_only(case, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_grad_weight_only(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -280,9 +268,6 @@ def test__slow_conv2d_backward_grad_weight_only(case, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_grad_bias_only(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -306,9 +291,6 @@ def test__slow_conv2d_backward_grad_bias_only(case, dtype):
 @pytest.mark.parametrize("mask", _MIXED_MASKS)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_mixed_mask(case, mask, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -330,9 +312,6 @@ def test__slow_conv2d_backward_mixed_mask(case, mask, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_grad_input_out(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -390,9 +369,6 @@ def test__slow_conv2d_backward_grad_input_out(case, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES)
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_output_mask_out(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -448,9 +424,6 @@ def test__slow_conv2d_backward_output_mask_out(case, dtype):
 @pytest.mark.parametrize("case", SLOW_CONV2D_BACKWARD_CASES[:3])
 @pytest.mark.parametrize("dtype", utils.ALL_FLOAT_DTYPES)
 def test__slow_conv2d_backward_backward(case, dtype):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp_shape, weight_shape, kernel_size, stride, padding = case
     inp, weight, grad_output = _make_inputs(
         inp_shape, weight_shape, kernel_size, stride, padding, dtype, ["-1", "1"]
@@ -490,9 +463,6 @@ def test__slow_conv2d_backward_backward(case, dtype):
 )
 @pytest.mark.parametrize("special_arg", ["inp", "weight", "grad_output"])
 def test__slow_conv2d_backward_nan_inf(dtype, scenario, special_arg):
-    torch.backends.cudnn.allow_tf32 = False
-    torch.backends.cuda.matmul.allow_tf32 = False
-
     inp = torch.ones((2, 3, 5, 5), dtype=dtype, device=flag_gems.device)
     weight = torch.ones((2, 3, 3, 3), dtype=dtype, device=flag_gems.device)
     grad_output = torch.ones((2, 2, 5, 5), dtype=dtype, device=flag_gems.device)
@@ -602,3 +572,16 @@ def test__slow_conv2d_backward_negative_scalar_param(scalar_param):
     gems_op = flag_gems.testing.resolve_gems_op("_slow_conv2d_backward")
     with pytest.raises((TypeError, ValueError, RuntimeError)):
         gems_op(grad_output, inp, weight, args[0], args[1], args[2], _FULL_MASK)
+
+
+@pytest.fixture(autouse=True)
+def full_precision():
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        yield
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32

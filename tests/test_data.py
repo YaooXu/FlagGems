@@ -190,3 +190,30 @@ def test_data_special_scenarios(dtype, scenario):
     expected = torch.ops.aten.data(reference)
     actual = candidate(inp)
     tu.assert_result_equal(actual, expected)
+
+
+@pytest.mark.data
+@pytest.mark.parametrize("initial_mutations", [0, 2])
+def test_data_independent_version_counter(initial_mutations):
+    inp = tu.make_input(torch.float32, (3, 10), ["-1", "1"])[..., 1::2]
+    ref_inp = tu.to_reference(inp)
+    for _ in range(initial_mutations):
+        inp.add_(1)
+        ref_inp.add_(1)
+    input_version = inp._version
+    gems_op = flag_gems.testing.resolve_gems_op("data")
+    res_out = gems_op(inp)
+    ref_out = torch.ops.aten.data(ref_inp)
+    assert res_out._version == ref_out._version
+
+    res_out.add_(1)
+    ref_out.add_(1)
+    assert inp._version == input_version
+    assert res_out._version == ref_out._version
+    output_version = res_out._version
+
+    inp.add_(1)
+    ref_inp.add_(1)
+    assert res_out._version == output_version
+    _assert_alias_semantics(res_out, ref_out, inp)
+    tu.assert_result_equal(inp, ref_inp)

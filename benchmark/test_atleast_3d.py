@@ -50,10 +50,10 @@ class Atleast3DBenchmark(base.GenericBenchmark):
     # Curated, size-bounded shape set: a view op has no data-dependent work, so
     # the larger generic shapes add allocation time without changing the
     # measured dispatch cost.
+    DEFAULT_SHAPE_DESC = "rank-complete view shapes"
+
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = list(_CURATED_SHAPES)
-        self.shape_desc = "rank-complete view shapes"
+        super().set_shapes(shape_file_path, default_shapes=list(_CURATED_SHAPES))
 
 
 def _case_fn(shape, dtype):
@@ -92,33 +92,6 @@ def _sequence_build_inputs_fn(plan, dtype, device):
     return inp, {}
 
 
-def _resolve_named_gems_op(name):
-    # Resolution order: (1) the override installed by KernelGen, (2) the direct
-    # flag_gems callable, (3) None -> the benchmark keeps its torch_op
-    # reference. Never resolved at import time.
-    default = getattr(flag_gems, name.replace(".", "_"), None)
-    if default is None:
-        default = getattr(flag_gems, name, None)
-    try:
-        return flag_gems.testing.resolve_gems_op(name, default)
-    except LookupError:
-        return None
-
-
-def _resolve_gems_op():
-    return _resolve_named_gems_op("atleast_3d")
-
-
-def _resolve_gems_op_sequence():
-    # Accept a dedicated Sequence override or a single callable handling both
-    # overloads.
-    for name in ("atleast_3d.Sequence", "atleast_3d_sequence", "atleast_3d"):
-        op = _resolve_named_gems_op(name)
-        if op is not None:
-            return op
-    return None
-
-
 @pytest.mark.atleast_3d
 @pytest.mark.atleast_3d_benchmark
 def test_atleast_3d():
@@ -127,7 +100,7 @@ def test_atleast_3d():
         case_fn=_case_fn,
         build_inputs_fn=_build_inputs_fn,
         torch_op=torch.ops.aten.atleast_3d,
-        gems_op=_resolve_gems_op(),
+        gems_op=getattr(flag_gems, "atleast_3d", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()
@@ -141,7 +114,7 @@ def test_atleast_3d_sequence():
         case_fn=_sequence_case_fn,
         build_inputs_fn=_sequence_build_inputs_fn,
         torch_op=torch.ops.aten.atleast_3d.Sequence,
-        gems_op=_resolve_gems_op_sequence(),
+        gems_op=getattr(flag_gems, "atleast_3d", None),
         dtypes=consts.FLOAT_DTYPES,
     )
     bench.run()

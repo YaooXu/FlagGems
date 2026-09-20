@@ -108,9 +108,15 @@ SLOW_CONV_TRANSPOSE3D_SHAPES = [
 
 def _case_fn(shape, dtype):
     del dtype
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        shape
-    )
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = shape
     yield base.BenchmarkCasePlan(
         shape={"input": inp_shape, "weight": weight_shape},
         params={
@@ -134,9 +140,15 @@ def _case_fn(shape, dtype):
 
 
 def _build_inputs_fn(plan, dtype, device):
-    inp_shape, weight_shape, kernel_size, stride, padding, output_padding, dilation = (
-        plan.builder_args
-    )
+    (
+        inp_shape,
+        weight_shape,
+        kernel_size,
+        stride,
+        padding,
+        output_padding,
+        dilation,
+    ) = plan.builder_args
     inp = utils.generate_tensor_input(inp_shape, dtype, device)
     weight = utils.generate_tensor_input(weight_shape, dtype, device)
     # Transposed conv weight is (C_in, C_out, kD, kH, kW): bias has C_out
@@ -160,7 +172,7 @@ class SlowConvTranspose3dBenchmark(base.GenericBenchmark):
     DEFAULT_SHAPE_DESC = "input/weight shape"
 
     def set_shapes(self, shape_file_path=None):
-        self.shapes = SLOW_CONV_TRANSPOSE3D_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=SLOW_CONV_TRANSPOSE3D_SHAPES)
 
 
 @pytest.mark.slow_conv_transpose3d

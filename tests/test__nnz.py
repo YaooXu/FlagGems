@@ -73,23 +73,16 @@ def _make_coo_input(shape, sparse_dim, nnz, dtype, value_range, seed=0):
     return torch.sparse_coo_tensor(indices, values, shape, device=flag_gems.device)
 
 
-def _make_csr_input(shape, nnz, dtype, value_range, seed=0):
-    gen = torch.Generator("cpu").manual_seed(seed)
+def _make_csr_input(shape, nnz, dtype, value_range):
     if len(shape) == 2:
         rows, cols = shape
     else:
         _, rows, cols = shape
-    col_indices = torch.randint(0, cols, (nnz,), dtype=torch.long, generator=gen)
-    cuts = torch.sort(
-        torch.randint(0, nnz + 1, (rows - 1,), dtype=torch.long, generator=gen)
-    ).values
-    crow_indices = torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long),
-            cuts,
-            torch.full((1,), nnz, dtype=torch.long),
-        ]
-    )
+    assert 0 <= nnz <= rows * cols
+    counts = torch.full((rows,), nnz // rows, dtype=torch.long)
+    counts[: nnz % rows] += 1
+    crow_indices = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
+    col_indices = torch.arange(nnz) - torch.repeat_interleave(crow_indices[:-1], counts)
     if len(shape) == 3:
         # Batched CSR: every batch stores the same nnz entries (shared
         # crow/col pattern), so ``_nnz`` reports the per-batch stored count.

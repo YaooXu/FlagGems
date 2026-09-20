@@ -40,17 +40,19 @@ _BSC_SHAPES = [
 def _make_bsc_inputs(shape, block, nnz, dtype, device):
     M, N = shape
     Br, Bc = block
+    assert M % Br == N % Bc == 0
     n_row_blocks = M // Br
     n_col_blocks = N // Bc
     # Spread the nnz entries uniformly across the column blocks so the
     # compressed column pointers are dense enough to be representative.
+    assert 0 <= nnz <= n_row_blocks * n_col_blocks
     q, r = divmod(nnz, n_col_blocks)
     counts = torch.full((n_col_blocks,), q, dtype=torch.long, device=device)
     if r:
         counts[:r] += 1
     ccol = torch.zeros(n_col_blocks + 1, dtype=torch.int64, device=device)
     torch.cumsum(counts, 0, out=ccol[1:])
-    row = torch.randint(0, n_row_blocks, (nnz,), dtype=torch.int64, device=device)
+    row = torch.arange(nnz, device=device) - torch.repeat_interleave(ccol[:-1], counts)
     values = torch.randn((nnz, Br, Bc), dtype=dtype, device=device)
     return ccol, row, values
 
@@ -91,7 +93,7 @@ class SparseBscTensorBenchmark(base.GenericBenchmark):
     # dense shapes in core_shapes.yaml, so benchmark dedicated
     # (matrix shape, block, nnz) triples instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BSC_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_BSC_SHAPES)
 
 
 @pytest.mark.sparse_bsc_tensor

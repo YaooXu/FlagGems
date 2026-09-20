@@ -104,7 +104,9 @@ class SparseResizeAndClearBenchmark(base.GenericBenchmark):
     # timed call must start with the declared nonempty storage. fresh_inputs
     # restores that state before each invocation, outside the measured region.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _SPARSE_RESIZE_AND_CLEAR_CASES
+        super().set_shapes(
+            shape_file_path, default_shapes=_SPARSE_RESIZE_AND_CLEAR_CASES
+        )
 
 
 @pytest.mark.sparse_resize_and_clear_

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 
 import pytest
 import torch
@@ -49,38 +48,30 @@ def _random_values(shape, dtype, gen):
     return torch.randint(-5, 6, shape, dtype=dtype, generator=gen)
 
 
-def _random_crow(n_compressed, nnz, gen):
-    # Non-decreasing compressed-row array of length n_compressed + 1 with
-    # crow[0] == 0 and crow[-1] == nnz.
-    if n_compressed == 1:
-        return torch.tensor([0, nnz], dtype=torch.long)
-    inner = torch.sort(
-        torch.randint(0, nnz + 1, (n_compressed - 1,), dtype=torch.long, generator=gen)
-    ).values
-    return torch.cat(
-        [
-            torch.zeros(1, dtype=torch.long),
-            inner,
-            torch.tensor([nnz], dtype=torch.long),
-        ]
-    )
+def _make_crow(n_compressed, nnz):
+    counts = torch.full((n_compressed,), nnz // n_compressed, dtype=torch.long)
+    counts[: nnz % n_compressed] += 1
+    return torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
 
 
 def _make_input(layout, size, nnz, blocks, dtype, device):
     gen = torch.Generator("cpu").manual_seed(0)
     if layout == "csr":
         n_rows, n_cols = size
-        crow = _random_crow(n_rows, nnz, gen)
-        col = torch.randint(0, n_cols, (nnz,), dtype=torch.long, generator=gen)
+        assert 0 <= nnz <= n_rows * n_cols
+        crow = _make_crow(n_rows, nnz)
+        col = torch.arange(nnz) - torch.repeat_interleave(crow[:-1], crow.diff())
         values = _random_values((nnz,), dtype, gen)
         return torch.sparse_csr_tensor(crow, col, values, size=size, device=device)
     if layout == "csr_batch":
         batch, n_rows, n_cols = size
+        assert 0 <= nnz <= n_rows * n_cols
         crows, cols, values = [], [], []
         for _ in range(batch):
-            crows.append(_random_crow(n_rows, nnz, gen))
+            crows.append(_make_crow(n_rows, nnz))
             cols.append(
-                torch.randint(0, n_cols, (nnz,), dtype=torch.long, generator=gen)
+                torch.arange(nnz)
+                - torch.repeat_interleave(crows[-1][:-1], crows[-1].diff())
             )
             values.append(_random_values((nnz,), dtype, gen))
         return torch.sparse_csr_tensor(
@@ -93,22 +84,27 @@ def _make_input(layout, size, nnz, blocks, dtype, device):
     if layout == "bsr":
         n_rows, n_cols = size
         br, bc = blocks
-        n_row_blocks = math.ceil(n_rows / br)
-        n_col_blocks = math.ceil(n_cols / bc)
-        crow = _random_crow(n_row_blocks, nnz, gen)
-        col = torch.randint(0, n_col_blocks, (nnz,), dtype=torch.long, generator=gen)
+        assert n_rows % br == n_cols % bc == 0
+        n_row_blocks = n_rows // br
+        n_col_blocks = n_cols // bc
+        assert 0 <= nnz <= n_row_blocks * n_col_blocks
+        crow = _make_crow(n_row_blocks, nnz)
+        col = torch.arange(nnz) - torch.repeat_interleave(crow[:-1], crow.diff())
         values = _random_values((nnz, br, bc), dtype, gen)
         return torch.sparse_bsr_tensor(crow, col, values, size=size, device=device)
     if layout == "bsr_batch":
         batch, n_rows, n_cols = size
         br, bc = blocks
-        n_row_blocks = math.ceil(n_rows / br)
-        n_col_blocks = math.ceil(n_cols / bc)
+        assert n_rows % br == n_cols % bc == 0
+        n_row_blocks = n_rows // br
+        n_col_blocks = n_cols // bc
+        assert 0 <= nnz <= n_row_blocks * n_col_blocks
         crows, cols, values = [], [], []
         for _ in range(batch):
-            crows.append(_random_crow(n_row_blocks, nnz, gen))
+            crows.append(_make_crow(n_row_blocks, nnz))
             cols.append(
-                torch.randint(0, n_col_blocks, (nnz,), dtype=torch.long, generator=gen)
+                torch.arange(nnz)
+                - torch.repeat_interleave(crows[-1][:-1], crows[-1].diff())
             )
             values.append(_random_values((nnz, br, bc), dtype, gen))
         return torch.sparse_bsr_tensor(
@@ -142,8 +138,7 @@ class CrowIndicesCopyBenchmark(base.GenericBenchmark):
     # dense shapes in core_shapes.yaml, so benchmark dedicated
     # (layout, size, nnz, blocks) cases instead.
     def set_shapes(self, shape_file_path=None):
-        del shape_file_path
-        self.shapes = _CROW
+        super().set_shapes(shape_file_path, default_shapes=_CROW)
 
 
 @pytest.mark.crow_indices_copy

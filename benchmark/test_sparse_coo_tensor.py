@@ -77,7 +77,7 @@ class SparseCooTensorBenchmark(base.GenericBenchmark):
     # dense shapes in core_shapes.yaml, so benchmark dedicated
     # (tensor_shape, nnz) pairs instead.
     def set_shapes(self, shape_file_path=None):
-        self.shapes = _BENCH_SHAPES
+        super().set_shapes(shape_file_path, default_shapes=_BENCH_SHAPES)
 
     def set_more_shapes(self):
         return []
