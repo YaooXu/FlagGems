@@ -540,6 +540,55 @@ class Benchmark:
         Config.executed_case_ids.update(executed)
         return results
 
+    def _candidate_call(self):
+        """Resolve the same callable and dispatch scope for candidate-only modes."""
+        override = (
+            Config.override_registry.get_override(self.op_name)
+            if Config.override_registry is not None else None
+        )
+        op = override if override is not None else self.gems_op or self.torch_op
+        dispatch = (
+            nullcontext()
+            if override is not None or self.gems_op
+            else flag_gems.use_gems(exclude=[] if self.op_name == "zero_" else ["zero_"])
+        )
+        return op, dispatch, override is not None
+
+    def _run_preflight_cases(self, case_ids: Optional[Collection[str]]):
+        """Check candidate executability, not correctness or performance."""
+        if not self.supports_cases():
+            raise ValueError(f"Operator '{self.op_name}' does not support --preflight-only yet.")
+        cases = self._collect_cases()
+        if not cases:
+            raise ValueError(f"Operator '{self.op_name}' has no preflight cases.")
+        Config.available_case_ids.update(case.case_id for case in cases)
+        selected = None if case_ids is None else set(case_ids)
+        executed = []
+        for case in cases:
+            if selected is not None and case.case_id not in selected:
+                continue
+            record = {
+                "operator": self.op_name, "nodeid": Config.current_nodeid,
+                "case_id": case.case_id, "override": False,
+                "count": 0, "status": "failed",
+            }
+            Config.preflight_records.append(record)
+            try:
+                args, kwargs = self.unpack_to_args_kwargs(self.build_inputs(case))
+                op, dispatch, record["override"] = self._candidate_call()
+                with dispatch:
+                    record["count"] = 1
+                    op(*args, **kwargs)
+                    torch_device_fn.synchronize()
+            except Exception as exc:
+                record["error"] = str(exc)
+                raise
+            record["status"] = "passed"
+            Config.executed_case_ids.add(case.case_id)
+            executed.append(case.case_id)
+            del args, kwargs
+        return executed
+
     def _run_profile_cases(self, case_ids: Collection[str]):
         """Run one candidate case with warmup/iterations owned by pytest."""
         if not self.supports_cases():
@@ -558,19 +607,7 @@ class Benchmark:
             capture_input = self.build_inputs(case)
             args, kwargs = self.unpack_to_args_kwargs(warmup_input)
             capture_args, capture_kwargs = self.unpack_to_args_kwargs(capture_input)
-            override = (
-                Config.override_registry.get_override(self.op_name)
-                if Config.override_registry is not None
-                else None
-            )
-            op = override or self.gems_op or self.torch_op
-            dispatch = (
-                nullcontext()
-                if override is not None or self.gems_op
-                else flag_gems.use_gems(
-                    exclude=[] if self.op_name == "zero_" else ["zero_"]
-                )
-            )
+            op, dispatch, _ = self._candidate_call()
             with dispatch:
                 warmup_fn = lambda: op(*args, **kwargs)
                 for _ in range(Config.profile_warmup):
@@ -665,6 +702,9 @@ class Benchmark:
         configured_case_ids = getattr(Config, "case_ids", None)
         selection_requested = case_ids is not None or configured_case_ids is not None
         selected_case_ids = case_ids if case_ids is not None else configured_case_ids
+
+        if getattr(Config, "preflight_only", False):
+            return self._run_preflight_cases(selected_case_ids)
 
         if getattr(Config, "profile_only", False):
             return self._run_profile_cases(selected_case_ids or [])
