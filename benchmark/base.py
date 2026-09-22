@@ -16,6 +16,7 @@ import gc
 import math
 import os
 import time
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import Any, Collection, Generator, List, Optional, Tuple
 
@@ -39,6 +40,7 @@ from .consts import (
     check_metric_dependencies,
     model_shapes,
 )
+from .profile_hook import profile_capture_scope
 
 torch_backend_device = flag_gems.runtime.torch_backend_device
 torch_device_fn = flag_gems.runtime.torch_device_fn
@@ -538,6 +540,46 @@ class Benchmark:
         Config.executed_case_ids.update(executed)
         return results
 
+    def _run_profile_cases(self, case_ids: Collection[str]):
+        """Run one candidate case with warmup/iterations owned by pytest."""
+        if not self.supports_cases():
+            raise ValueError(
+                f"Operator '{self.op_name}' does not support --profile-only yet."
+            )
+        cases = self._collect_cases()
+        available = {case.case_id for case in cases}
+        Config.available_case_ids.update(available)
+        selected = set(case_ids)
+        executed = []
+        for case in cases:
+            if case.case_id not in selected:
+                continue
+            warmup_input = self.build_inputs(case)
+            capture_input = self.build_inputs(case)
+            args, kwargs = self.unpack_to_args_kwargs(warmup_input)
+            capture_args, capture_kwargs = self.unpack_to_args_kwargs(capture_input)
+            op = self.gems_op or self.torch_op
+            dispatch = (
+                nullcontext()
+                if self.gems_op
+                else flag_gems.use_gems(exclude=[] if self.op_name == "zero_" else ["zero_"])
+            )
+            with dispatch:
+                warmup_fn = lambda: op(*args, **kwargs)
+                for _ in range(Config.profile_warmup):
+                    warmup_fn()
+                torch_device_fn.synchronize()
+                capture_fn = lambda: op(*capture_args, **capture_kwargs)
+                with profile_capture_scope(
+                    backend=vendor_name, case_id=case.case_id
+                ):
+                    for _ in range(Config.profile_iterations):
+                        capture_fn()
+                    torch_device_fn.synchronize()
+            executed.append(case.case_id)
+        Config.executed_case_ids.update(executed)
+        return executed
+
     def _measure_input(self, input, case_id=None):
         metric = BenchmarkMetrics(case_id=case_id)
         try:
@@ -616,6 +658,9 @@ class Benchmark:
         configured_case_ids = getattr(Config, "case_ids", None)
         selection_requested = case_ids is not None or configured_case_ids is not None
         selected_case_ids = case_ids if case_ids is not None else configured_case_ids
+
+        if getattr(Config, "profile_only", False):
+            return self._run_profile_cases(selected_case_ids or [])
 
         if getattr(Config, "list_cases", False):
             if selected_case_ids:
