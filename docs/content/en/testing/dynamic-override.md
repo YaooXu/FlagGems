@@ -256,6 +256,8 @@ maintaining separate copies of the operator source tree.
 
 ## Candidate-only preflight
 
+Ordinary correctness and benchmark execution also use `--override`. Each correctness JSON case records `candidate_calls` observed during its test call phase. A benchmark marks `candidate_source: override` only after actually invoking the injected callable; the original `torch_op` is still timed separately as the baseline. A passing pytest session is not a substitute for candidate coverage checks. When all correctness cases are skipped, overrides are restored without an unused-candidate error; this is not correctness success, and KGS preserves `ALL_SKIP` while running applicable benchmarks.
+
 `benchmark/` supports `--preflight-only`: reuse case enumeration and input construction, invoke the selected candidate once per case, then synchronize the device. It does not run the correctness reference, benchmark warmup/timing, or speedup calculations. One invocation means one Python operator call; compilation or autotuning inside the candidate may still launch several kernels. Passing means executable, not numerically correct or faster.
 
 From the FlagGems checkout root, check every core case for `addmm_`:

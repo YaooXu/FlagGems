@@ -402,6 +402,8 @@ maintaining separate copies of the operator source tree.
 
 ## Candidate-only Preflight
 
+普通 correctness/benchmark 同样使用 `--override`。正确性 JSON 的每个 pytest case 带有 `candidate_calls`，记录该 case 的测试调用阶段内实际调用的候选次数；benchmark 只有真正调用过注入候选才写入 `candidate_source: override`，baseline 仍单独调用原始 `torch_op`。不要用 pytest 整体通过代替候选覆盖检查。正确性 case 全部 skip 时仅恢复 override，不因零调用额外报错；这并不代表正确性通过，KGS 会保留 `ALL_SKIP` 语义并继续适用的 benchmark。
+
 `benchmark/` 支持 `--preflight-only`：沿用原有 case 枚举和输入构造，对每个选中 case 调用一次候选并同步设备，不运行正确性 reference、不进行 warmup/benchmark 计时，也不计算加速比。这里的一次指 Python 算子入口调用一次；候选内部的编译或 autotune 仍可能启动多个 kernel。通过仅表示候选可执行，不表示数值正确或性能达标。
 
 在 FlagGems checkout 根目录运行，例如检查 `addmm_` 的全部 core case：

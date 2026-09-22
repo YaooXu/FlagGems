@@ -632,21 +632,16 @@ class Benchmark:
             if "latency_base" in self.to_bench_metrics and not Config.skip_native:
                 metric.latency_base = self.get_latency(self.torch_op, *args, **kwargs)
             if "latency" in self.to_bench_metrics:
-                if self.gems_op:
-                    metric.latency = self.get_latency(self.gems_op, *args, **kwargs)
-                else:
-                    if self.op_name == "zero_":
-                        with flag_gems.use_gems():
-                            metric.latency = self.get_latency(
-                                self.torch_op, *args, **kwargs
-                            )
-                    else:
-                        # exclude flaggems' zero_ to avoid the overhead of zero_
-                        # in do_bench's clear_cache
-                        with flag_gems.use_gems(exclude=["zero_"]):
-                            metric.latency = self.get_latency(
-                                self.torch_op, *args, **kwargs
-                            )
+                op, dispatch, overridden = self._candidate_call()
+                registry = Config.override_registry
+                key = f"flag_gems.{self.op_name}"
+                before = registry.call_counts().get(key, 0) if overridden else 0
+                with dispatch:
+                    metric.latency = self.get_latency(op, *args, **kwargs)
+                if overridden:
+                    if registry.call_counts().get(key, 0) <= before:
+                        raise RuntimeError("Benchmark did not invoke the injected candidate")
+                    metric.candidate_source = "override"
             if "speedup" in self.to_bench_metrics:
                 if Config.skip_native:
                     if metric.latency_base is not None and metric.latency is not None:

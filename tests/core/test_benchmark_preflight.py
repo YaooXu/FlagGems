@@ -164,3 +164,38 @@ def test_profile_still_uses_shared_candidate_resolution(runner, monkeypatch):
     bench.run()
     assert events == [("candidate", 0), "sync", "capture", ("candidate", 0), "sync", "stop"]
     assert config.preflight_records == []
+
+
+def test_benchmark_times_reference_and_live_override_separately(monkeypatch, runner):
+    from dataclasses import asdict
+
+    bench, config, events = runner
+    counts = {"flag_gems.example": 0}
+    def candidate(value):
+        counts["flag_gems.example"] += 1
+        events.append("candidate")
+    def reference(value):
+        events.append("reference")
+    config.override_registry = SimpleNamespace(get_override=lambda name: candidate, call_counts=lambda: dict(counts))
+    bench.torch_op = reference
+    bench.gems_op = fail
+    bench.to_bench_metrics = ["latency_base", "latency", "speedup"]
+    monkeypatch.setattr(bench, "record_shapes", lambda *args, **kwargs: ())
+    def latency(op, *args, **kwargs):
+        op(*args, **kwargs)
+        return 2.0 if op is reference else 1.0
+    monkeypatch.setattr(bench, "get_latency", latency)
+    metric = bench._measure_input((1,), case_id="case-0")
+    assert events == ["reference", "candidate"]
+    assert asdict(metric)["candidate_source"] == "override"
+    assert metric.latency == 1.0 and metric.latency_base == 2.0
+
+
+def test_benchmark_cannot_claim_an_unused_override(monkeypatch, runner):
+    bench, config, _ = runner
+    config.override_registry.call_counts = lambda: {"flag_gems.example": 0}
+    bench.to_bench_metrics = ["latency"]
+    monkeypatch.setattr(bench, "record_shapes", lambda *args, **kwargs: ())
+    monkeypatch.setattr(bench, "get_latency", lambda *args, **kwargs: 1.0)
+    with pytest.raises(pytest.fail.Exception, match="did not invoke"):
+        bench._measure_input((1,), case_id="case-0")
