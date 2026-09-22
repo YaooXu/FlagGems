@@ -211,6 +211,10 @@ class DynamicOpOverride:
         """Return list of currently overridden operator names."""
         return list(self._overrides.keys())
 
+    def get_override(self, op_name: str, module_name: str = "flag_gems"):
+        """Return the live callable for benchmark-owned candidate invocation."""
+        return self._overrides.get(f"{module_name}.{op_name}")
+
     def load_impl_from_file(self, filepath: str, func_name: str) -> Optional[Callable]:
         """
         Load an implementation function from a Python file.

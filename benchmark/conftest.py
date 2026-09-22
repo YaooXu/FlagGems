@@ -112,6 +112,7 @@ class BenchConfig:
         self.profile_only = False
         self.profile_warmup = 10
         self.profile_iterations = 1
+        self.override_registry = None
         self.skip_native = False
         self.native_baseline_skip_reason = None
 
@@ -428,6 +429,7 @@ def pytest_configure(config):
 
     # Apply dynamic operator overrides
     config._override_registry = apply_overrides_from_args(config.option)
+    Config.override_registry = config._override_registry
 
 
 def pytest_unconfigure(config):

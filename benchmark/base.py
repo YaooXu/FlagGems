@@ -558,11 +558,18 @@ class Benchmark:
             capture_input = self.build_inputs(case)
             args, kwargs = self.unpack_to_args_kwargs(warmup_input)
             capture_args, capture_kwargs = self.unpack_to_args_kwargs(capture_input)
-            op = self.gems_op or self.torch_op
+            override = (
+                Config.override_registry.get_override(self.op_name)
+                if Config.override_registry is not None
+                else None
+            )
+            op = override or self.gems_op or self.torch_op
             dispatch = (
                 nullcontext()
-                if self.gems_op
-                else flag_gems.use_gems(exclude=[] if self.op_name == "zero_" else ["zero_"])
+                if override is not None or self.gems_op
+                else flag_gems.use_gems(
+                    exclude=[] if self.op_name == "zero_" else ["zero_"]
+                )
             )
             with dispatch:
                 warmup_fn = lambda: op(*args, **kwargs)
