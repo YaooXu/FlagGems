@@ -544,20 +544,25 @@ class Benchmark:
         """Resolve the same callable and dispatch scope for candidate-only modes."""
         override = (
             Config.override_registry.get_override(self.op_name)
-            if Config.override_registry is not None else None
+            if Config.override_registry is not None
+            else None
         )
         op = override if override is not None else self.gems_op or self.torch_op
         dispatch = (
             nullcontext()
             if override is not None or self.gems_op
-            else flag_gems.use_gems(exclude=[] if self.op_name == "zero_" else ["zero_"])
+            else flag_gems.use_gems(
+                exclude=[] if self.op_name == "zero_" else ["zero_"]
+            )
         )
         return op, dispatch, override is not None
 
     def _run_preflight_cases(self, case_ids: Optional[Collection[str]]):
         """Check candidate executability, not correctness or performance."""
         if not self.supports_cases():
-            raise ValueError(f"Operator '{self.op_name}' does not support --preflight-only yet.")
+            raise ValueError(
+                f"Operator '{self.op_name}' does not support --preflight-only yet."
+            )
         cases = self._collect_cases()
         if not cases:
             raise ValueError(f"Operator '{self.op_name}' has no preflight cases.")
@@ -568,9 +573,12 @@ class Benchmark:
             if selected is not None and case.case_id not in selected:
                 continue
             record = {
-                "operator": self.op_name, "nodeid": Config.current_nodeid,
-                "case_id": case.case_id, "override": False,
-                "count": 0, "status": "failed",
+                "operator": self.op_name,
+                "nodeid": Config.current_nodeid,
+                "case_id": case.case_id,
+                "override": False,
+                "count": 0,
+                "status": "failed",
             }
             Config.preflight_records.append(record)
             try:
@@ -614,9 +622,7 @@ class Benchmark:
                     warmup_fn()
                 torch_device_fn.synchronize()
                 capture_fn = lambda: op(*capture_args, **capture_kwargs)
-                with profile_capture_scope(
-                    backend=vendor_name, case_id=case.case_id
-                ):
+                with profile_capture_scope(backend=vendor_name, case_id=case.case_id):
                     for _ in range(Config.profile_iterations):
                         capture_fn()
                     torch_device_fn.synchronize()
@@ -640,7 +646,9 @@ class Benchmark:
                     metric.latency = self.get_latency(op, *args, **kwargs)
                 if overridden:
                     if registry.call_counts().get(key, 0) <= before:
-                        raise RuntimeError("Benchmark did not invoke the injected candidate")
+                        raise RuntimeError(
+                            "Benchmark did not invoke the injected candidate"
+                        )
                     metric.candidate_source = "override"
             if "speedup" in self.to_bench_metrics:
                 if Config.skip_native:

@@ -1,9 +1,24 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Candidate-only runner tests; inputs and device operations are host fakes.
 
 Run with --confcutdir=tests/core in an existing FlagGems runtime environment.
 """
-from contextlib import contextmanager
+
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +42,11 @@ def runner(monkeypatch):
     config.override_registry = SimpleNamespace(get_override=lambda name: candidate)
     monkeypatch.setattr(base, "Config", config)
     monkeypatch.setattr(conftest, "Config", config)
-    monkeypatch.setattr(base, "torch_device_fn", SimpleNamespace(synchronize=lambda: events.append("sync")))
+    monkeypatch.setattr(
+        base,
+        "torch_device_fn",
+        SimpleNamespace(synchronize=lambda: events.append("sync")),
+    )
     monkeypatch.setattr(base, "profile_capture_scope", fail)
     bench = base.Benchmark("example", torch_op=fail, gems_op=fail)
     monkeypatch.setattr(bench, "init_user_config", lambda: None)
@@ -46,12 +65,17 @@ def test_preflight_runs_candidate_once_per_selected_case(runner, selection, expe
     assert bench.run(case_ids=selection) == [f"case-{i}" for i in expected]
     assert events == [item for i in expected for item in (("candidate", i), "sync")]
     assert config.executed_case_ids == {f"case-{i}" for i in expected}
-    assert all(r["override"] and r["count"] == 1 and r["status"] == "passed" for r in config.preflight_records)
+    assert all(
+        r["override"] and r["count"] == 1 and r["status"] == "passed"
+        for r in config.preflight_records
+    )
     assert all("latency" not in r for r in config.preflight_records)
 
 
 @pytest.mark.parametrize("direct_gems", [True, False])
-def test_preflight_without_override_preserves_gems_dispatch(monkeypatch, runner, direct_gems):
+def test_preflight_without_override_preserves_gems_dispatch(
+    monkeypatch, runner, direct_gems
+):
     bench, config, events = runner
     config.override_registry = None
     op = lambda value: events.append(("gems", value))
@@ -66,7 +90,9 @@ def test_preflight_without_override_preserves_gems_dispatch(monkeypatch, runner,
 
     monkeypatch.setattr(base.flag_gems, "use_gems", fail if direct_gems else use_gems)
     bench.run(case_ids=["case-0"])
-    assert events == ([("gems", 0), "sync"] if direct_gems else ["enter", ("gems", 0), "sync", "exit"])
+    assert events == (
+        [("gems", 0), "sync"] if direct_gems else ["enter", ("gems", 0), "sync", "exit"]
+    )
     assert config.preflight_records[0]["override"] is False
 
 
@@ -111,14 +137,22 @@ def test_preflight_report_replaces_stale_data(monkeypatch, tmp_path, runner):
     bench.run(case_ids=["case-0"])
     conftest.pytest_terminal_summary(None, 0, None)
     result = json.loads(output.read_text())
-    assert result == {"schema_version": "flaggems.preflight/v1", "records": config.preflight_records}
+    assert result == {
+        "schema_version": "flaggems.preflight/v1",
+        "records": config.preflight_records,
+    }
 
 
 def test_unknown_or_unexecuted_case_and_all_skip_cannot_pass(runner):
     bench, config, _ = runner
     config.case_ids = ["missing"]
     bench.run()
-    session = SimpleNamespace(exitstatus=pytest.ExitCode.OK, config=SimpleNamespace(pluginmanager=SimpleNamespace(get_plugin=lambda name: None)))
+    session = SimpleNamespace(
+        exitstatus=pytest.ExitCode.OK,
+        config=SimpleNamespace(
+            pluginmanager=SimpleNamespace(get_plugin=lambda name: None)
+        ),
+    )
     conftest.pytest_sessionfinish(session, 0)
     assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
     config.preflight_records = [{"status": "failed"}]
@@ -134,13 +168,17 @@ def test_unknown_or_unexecuted_case_and_all_skip_cannot_pass(runner):
     assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
 
 
-@pytest.mark.parametrize("other", [["--profile-only"], ["--list-cases"], ["--query"], ["--parallel", "2"]])
+@pytest.mark.parametrize(
+    "other", [["--profile-only"], ["--list-cases"], ["--query"], ["--parallel", "2"]]
+)
 def test_preflight_rejects_conflicting_cli_modes(monkeypatch, other):
     parser = Parser()
     conftest.pytest_addoption(parser)
     options = parser.parse(["--preflight-only", *other])
     config = SimpleNamespace(
-        option=options, addinivalue_line=lambda *args: None, getini=lambda key: [],
+        option=options,
+        addinivalue_line=lambda *args: None,
+        getini=lambda key: [],
         getoption=lambda key: getattr(options, key.lstrip("-").replace("-", "_")),
     )
     with pytest.raises(pytest.UsageError, match="--preflight-only"):
@@ -162,7 +200,14 @@ def test_profile_still_uses_shared_candidate_resolution(runner, monkeypatch):
 
     monkeypatch.setattr(base, "profile_capture_scope", capture)
     bench.run()
-    assert events == [("candidate", 0), "sync", "capture", ("candidate", 0), "sync", "stop"]
+    assert events == [
+        ("candidate", 0),
+        "sync",
+        "capture",
+        ("candidate", 0),
+        "sync",
+        "stop",
+    ]
     assert config.preflight_records == []
 
 
@@ -171,19 +216,26 @@ def test_benchmark_times_reference_and_live_override_separately(monkeypatch, run
 
     bench, config, events = runner
     counts = {"flag_gems.example": 0}
+
     def candidate(value):
         counts["flag_gems.example"] += 1
         events.append("candidate")
+
     def reference(value):
         events.append("reference")
-    config.override_registry = SimpleNamespace(get_override=lambda name: candidate, call_counts=lambda: dict(counts))
+
+    config.override_registry = SimpleNamespace(
+        get_override=lambda name: candidate, call_counts=lambda: dict(counts)
+    )
     bench.torch_op = reference
     bench.gems_op = fail
     bench.to_bench_metrics = ["latency_base", "latency", "speedup"]
     monkeypatch.setattr(bench, "record_shapes", lambda *args, **kwargs: ())
+
     def latency(op, *args, **kwargs):
         op(*args, **kwargs)
         return 2.0 if op is reference else 1.0
+
     monkeypatch.setattr(bench, "get_latency", latency)
     metric = bench._measure_input((1,), case_id="case-0")
     assert events == ["reference", "candidate"]

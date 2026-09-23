@@ -231,11 +231,13 @@ def pytest_addoption(parser):
         help="Benchmark only this exact workload ID. May be repeated.",
     )
     parser.addoption(
-        "--profile-only", action="store_true",
+        "--profile-only",
+        action="store_true",
         help="Replay exactly one case with candidate-only profiling.",
     )
     parser.addoption(
-        "--preflight-only", action="store_true",
+        "--preflight-only",
+        action="store_true",
         help="Run each selected candidate case once and synchronize; no timing or correctness comparison.",
     )
     parser.addoption("--profile-warmup", type=int, default=10)
@@ -365,7 +367,9 @@ def pytest_configure(config):
     Config.preflight_only = config.getoption("--preflight-only")
     Config.profile_warmup = config.getoption("--profile-warmup")
     Config.profile_iterations = config.getoption("--profile-iterations")
-    if Config.preflight_only and (Config.profile_only or Config.list_cases or Config.query):
+    if Config.preflight_only and (
+        Config.profile_only or Config.list_cases or Config.query
+    ):
         raise pytest.UsageError(
             "--preflight-only cannot be combined with --profile-only, --list-cases or --query."
         )
@@ -386,7 +390,9 @@ def pytest_configure(config):
     if Config.profile_only and Config.list_cases:
         raise pytest.UsageError("--profile-only cannot be combined with --list-cases.")
     if Config.profile_warmup < 0 or Config.profile_iterations < 1:
-        raise pytest.UsageError("profile warmup must be non-negative and iterations positive")
+        raise pytest.UsageError(
+            "profile warmup must be non-negative and iterations positive"
+        )
 
     level_value = config.getoption("--level")
     Config.bench_level = consts.BenchLevel(level_value)
@@ -582,10 +588,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if Config.preflight_only:
         if Config.record_json:
             with open(REPORT_FILE, "w") as f:
-                json.dump({
-                    "schema_version": "flaggems.preflight/v1",
-                    "records": Config.preflight_records,
-                }, f, indent=2)
+                json.dump(
+                    {
+                        "schema_version": "flaggems.preflight/v1",
+                        "records": Config.preflight_records,
+                    },
+                    f,
+                    indent=2,
+                )
         return
     if Config.list_cases:
         with open(REPORT_FILE, "w") as f:

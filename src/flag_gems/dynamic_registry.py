@@ -177,7 +177,9 @@ class DynamicOpOverride:
 
         return True
 
-    def restore_all(self, module_name: str = "flag_gems", *, allow_unused: bool = False):
+    def restore_all(
+        self, module_name: str = "flag_gems", *, allow_unused: bool = False
+    ):
         """
         Restore all overridden operators in the specified module.
 
