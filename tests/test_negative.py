@@ -16,22 +16,18 @@ import pytest
 import torch
 
 import flag_gems
-from flag_gems.testing.reference import reference_call, reference_only
 
 from . import accuracy_utils as utils
 
 
 @pytest.mark.negative
-@pytest.mark.reference_only
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_negative(shape, dtype):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp)
 
-    ref_out = reference_call(torch.negative, ref_inp)
-    if reference_only():
-        return
+    ref_out = torch.negative(ref_inp)
     with flag_gems.use_gems():
         res_out = torch.negative(inp)
 

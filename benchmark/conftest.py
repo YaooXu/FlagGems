@@ -15,6 +15,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 
 import pytest
 import torch
@@ -23,8 +24,7 @@ import yaml
 import flag_gems
 from flag_gems.cli_override import add_override_arguments, apply_overrides_from_args
 from flag_gems.runtime import torch_device_fn
-from flag_gems.testing.reference import (
-    add_reference_option,
+from .reference import (
     reference_report,
     validate_reference_options,
 )
@@ -188,7 +188,8 @@ def _deactivate_inactive_native_marker(item, current_vendor):
 
 
 def pytest_addoption(parser):
-    add_reference_option(parser)
+    parser.addoption("--reference-only", action="store_true", default=False,
+                     help="Run original benchmark baseline only; no candidate or timing.")
     parser.addoption(
         (
             "--mode" if vendor_name != "kunlunxin" else "--fg_mode"
@@ -362,7 +363,7 @@ def pytest_configure(config):
     )
 
     Config = BenchConfig()
-    Config.reference_only = validate_reference_options(config, "timing")
+    Config.reference_only = validate_reference_options(config)
     CASE_LISTS.clear()
     TEST_RESULTS.clear()
 
@@ -615,7 +616,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Combine and dump the result into JSON."""
     if Config.reference_only:
         with open(REPORT_FILE, "w") as output:
-            json.dump(reference_report("timing", Config.reference_records, exitstatus=exitstatus), output, indent=2)
+            json.dump(reference_report(Config.reference_records, exitstatus=exitstatus), output, indent=2)
         return
     if Config.preflight_only:
         if Config.record_json:
@@ -656,7 +657,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 def pytest_sessionfinish(session, exitstatus):
     if Config is not None and Config.reference_only:
-        if reference_report("timing", Config.reference_records)["status"] in {"UNSUPPORTED", "FAILED", "NO_CASES"}:
+        if reference_report(Config.reference_records)["status"] in {"UNSUPPORTED", "FAILED", "NO_CASES"}:
             if session.exitstatus == pytest.ExitCode.OK:
                 session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if Config is not None and Config.preflight_only:
@@ -693,6 +694,10 @@ def pytest_itemcollected(item):
 
 
 def pytest_collection_modifyitems(session, config, items):
+    if Config.reference_only:
+        correctness_root = Path(__file__).resolve().parents[1] / "tests"
+        if any(Path(item.path).resolve().is_relative_to(correctness_root) for item in items):
+            raise pytest.UsageError("--reference-only is for benchmark only; run correctness pytest separately")
     collect_marks_file = config.getoption("--collect-marks")
     if not collect_marks_file:
         return

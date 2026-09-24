@@ -16,22 +16,18 @@ import pytest
 import torch
 
 import flag_gems
-from flag_gems.testing.reference import reference_call, reference_only
 
 from . import accuracy_utils as utils
 
 
 @pytest.mark.rsqrt
-@pytest.mark.reference_only
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_rsqrt(shape, dtype):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp, True)
 
-    ref_out = reference_call(torch.rsqrt, ref_inp)
-    if reference_only():
-        return
+    ref_out = torch.rsqrt(ref_inp)
     with flag_gems.use_gems():
         res_out = torch.rsqrt(inp)
 
@@ -39,16 +35,13 @@ def test_rsqrt(shape, dtype):
 
 
 @pytest.mark.rsqrt_
-@pytest.mark.reference_only
 @pytest.mark.parametrize("shape", utils.POINTWISE_SHAPES)
 @pytest.mark.parametrize("dtype", utils.FLOAT_DTYPES)
 def test_rsqrt_(shape, dtype):
     inp = torch.randn(shape, dtype=dtype, device=flag_gems.device)
     ref_inp = utils.to_reference(inp.clone(), True)
 
-    ref_out = reference_call(torch.rsqrt_, ref_inp)
-    if reference_only():
-        return
+    ref_out = torch.rsqrt_(ref_inp)
     with flag_gems.use_gems():
         res_out = torch.rsqrt_(inp)
 

@@ -643,7 +643,7 @@ class Benchmark:
                 continue
             try:
                 args, kwargs = self.unpack_to_args_kwargs(self.build_inputs(case))
-                fn, _ = self._benchmark_callable(self.torch_op, *args, **kwargs)
+                fn, grad_inputs = self._benchmark_callable(self.torch_op, *args, **kwargs)
                 record["count"] = 1
                 fn()
                 torch_device_fn.synchronize()
@@ -656,6 +656,7 @@ class Benchmark:
             record["status"] = "PASSED"
             Config.executed_case_ids.add(case.case_id)
             executed.append(case.case_id)
+            del fn, grad_inputs, args, kwargs
         return executed
 
     def _run_profile_cases(self, case_ids: Collection[str]):
