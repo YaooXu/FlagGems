@@ -107,12 +107,18 @@ class Benchmark:
         self.op_name = op_name
         if is_backward and self.op_name.find("_backward") == -1:
             self.op_name += "_backward"
-        if getattr(Config, "reference_only", False) and type(self).run is not Benchmark.run:
-            Config.reference_records.append({
-                "nodeid": Config.current_nodeid, "operator": self.op_name,
-                "status": "UNSUPPORTED",
-                "reason": "custom benchmark run requires an explicit reference runner",
-            })
+        if (
+            getattr(Config, "reference_only", False)
+            and type(self).run is not Benchmark.run
+        ):
+            Config.reference_records.append(
+                {
+                    "nodeid": Config.current_nodeid,
+                    "operator": self.op_name,
+                    "status": "UNSUPPORTED",
+                    "reason": "custom benchmark run requires an explicit reference runner",
+                }
+            )
             pytest.skip("reference-only is unsupported for custom benchmark run")
         self.torch_op = torch_op
         self.gems_op = kwargs.get("gems_op", None)
@@ -617,13 +623,17 @@ class Benchmark:
         if (
             not self.supports_cases()
             or getattr(self.get_latency, "__func__", None) is not Benchmark.get_latency
-            or getattr(self._measure_input, "__func__", None) is not Benchmark._measure_input
+            or getattr(self._measure_input, "__func__", None)
+            is not Benchmark._measure_input
         ):
-            Config.reference_records.append({
-                "nodeid": Config.current_nodeid, "operator": self.op_name,
-                "status": "UNSUPPORTED",
-                "reason": "custom or legacy baseline requires an explicit reference runner",
-            })
+            Config.reference_records.append(
+                {
+                    "nodeid": Config.current_nodeid,
+                    "operator": self.op_name,
+                    "status": "UNSUPPORTED",
+                    "reason": "custom or legacy baseline requires an explicit reference runner",
+                }
+            )
             pytest.skip("reference-only is unsupported for this benchmark")
         cases = self._collect_cases()
         if not cases:
@@ -631,11 +641,20 @@ class Benchmark:
         Config.available_case_ids.update(case.case_id for case in cases)
         selected = None if case_ids is None else set(case_ids)
         executed = []
-        selected_cases = [case for case in cases if selected is None or case.case_id in selected]
-        records = [{
-            **case.to_dict(), "nodeid": Config.current_nodeid, "operator": self.op_name,
-            "count": 0, "status": "NOT_RUN", "reason": "reference traversal stopped before this case",
-        } for case in selected_cases]
+        selected_cases = [
+            case for case in cases if selected is None or case.case_id in selected
+        ]
+        records = [
+            {
+                **case.to_dict(),
+                "nodeid": Config.current_nodeid,
+                "operator": self.op_name,
+                "count": 0,
+                "status": "NOT_RUN",
+                "reason": "reference traversal stopped before this case",
+            }
+            for case in selected_cases
+        ]
         Config.reference_records.extend(records)
         for case, record in zip(selected_cases, records):
             record.pop("reason")
@@ -648,7 +667,9 @@ class Benchmark:
                 record["stage"] = "build_inputs"
                 args, kwargs = self.unpack_to_args_kwargs(self.build_inputs(case))
                 record["stage"] = "prepare_reference"
-                fn, grad_inputs = self._benchmark_callable(self.torch_op, *args, **kwargs)
+                fn, grad_inputs = self._benchmark_callable(
+                    self.torch_op, *args, **kwargs
+                )
                 record["stage"] = "invoke"
                 record["count"] = 1
                 fn()
@@ -680,7 +701,10 @@ class Benchmark:
             executed.append(case.case_id)
         failures = sum(record["status"] == "FAILED" for record in records)
         if failures:
-            pytest.fail(f"{failures} reference cases failed; see per-case reference report", pytrace=False)
+            pytest.fail(
+                f"{failures} reference cases failed; see per-case reference report",
+                pytrace=False,
+            )
         return executed
 
     def _run_profile_cases(self, case_ids: Collection[str]):

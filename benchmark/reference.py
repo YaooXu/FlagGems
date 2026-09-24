@@ -32,7 +32,8 @@ def reference_failure(error):
     ):
         category = "API_MISSING"
     elif isinstance(error, (RuntimeError, NotImplementedError)) and re.search(
-        r"not implemented for ['\"](?:Half|BFloat16|Float|Double|Char|Byte|Short|Int|Long|Bool|Float8_[A-Za-z0-9_]+)['\"]",
+        r"not implemented for ['\"]"
+        r"(?:Half|BFloat16|Float|Double|Char|Byte|Short|Int|Long|Bool|Float8_[A-Za-z0-9_]+)['\"]",
         message,
     ):
         category = "DTYPE_UNSUPPORTED"
@@ -42,7 +43,9 @@ def reference_failure(error):
         "category": category,
         "type": type(error).__name__,
         "message": message,
-        "traceback": "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+        "traceback": "".join(
+            traceback.format_exception(type(error), error, error.__traceback__)
+        ),
     }
 
 
@@ -51,12 +54,25 @@ def validate_reference_options(config):
         return False
     import pytest
 
-    conflicts = [name for name in ("override", "override_config", "profile_only",
-                 "preflight_only", "list_cases", "query", "parallel", "numprocesses")
-                 if getattr(config.option, name, None)]
+    conflicts = [
+        name
+        for name in (
+            "override",
+            "override_config",
+            "profile_only",
+            "preflight_only",
+            "list_cases",
+            "query",
+            "parallel",
+            "numprocesses",
+        )
+        if getattr(config.option, name, None)
+    ]
     if conflicts:
-        raise pytest.UsageError("--reference-only cannot be combined with " +
-                                ", ".join("--" + name.replace("_", "-") for name in conflicts))
+        raise pytest.UsageError(
+            "--reference-only cannot be combined with "
+            + ", ".join("--" + name.replace("_", "-") for name in conflicts)
+        )
     return True
 
 
@@ -64,10 +80,19 @@ def reference_report(records, *, exitstatus=0):
     """Separate source skips, unsupported tests and real execution failures."""
     # pytest.skip aborts the entire original benchmark node, including any
     # remaining cases. Earlier calls remain evidence, not a completed node.
-    skipped_nodes = {r.get("nodeid") for r in records
-                     if r.get("pytest_phase") and r["status"] == "SKIP"}
-    statuses = ["SKIP" if r["status"] in {"PASSED", "NOT_RUN"} and r.get("nodeid") in skipped_nodes
-                else r["status"] for r in records]
+    skipped_nodes = {
+        r.get("nodeid")
+        for r in records
+        if r.get("pytest_phase") and r["status"] == "SKIP"
+    }
+    statuses = [
+        (
+            "SKIP"
+            if r["status"] in {"PASSED", "NOT_RUN"} and r.get("nodeid") in skipped_nodes
+            else r["status"]
+        )
+        for r in records
+    ]
     if exitstatus not in (0, 1, 5) or any(s in {"FAILED", "NOT_RUN"} for s in statuses):
         status = "FAILED"
     elif "UNSUPPORTED" in statuses:
@@ -80,5 +105,9 @@ def reference_report(records, *, exitstatus=0):
         status = "ALL_SKIP"
     else:
         status = "NO_CASES"
-    return {"schema_version": "flaggems.reference/v1", "phase": "timing",
-            "status": status, "records": records}
+    return {
+        "schema_version": "flaggems.reference/v1",
+        "phase": "timing",
+        "status": status,
+        "records": records,
+    }
