@@ -168,3 +168,25 @@ def test_reference_mode_cannot_run_correctness_pytest(runner, reference_only):
             conftest.pytest_collection_modifyitems(None, options, [item])
     else:
         conftest.pytest_collection_modifyitems(None, options, [item])
+
+
+@pytest.mark.parametrize("reference_only", [False, True])
+@pytest.mark.parametrize("level", [None, "core", "comprehensive"])
+def test_reference_only_defaults_to_core_without_changing_normal_defaults(monkeypatch, reference_only, level):
+    from _pytest.config.argparsing import Parser
+    parser = Parser()
+    conftest.pytest_addoption(parser)
+    argv = ["--reference-only"] if reference_only else []
+    if level is not None:
+        argv.extend(["--level", level])
+    options = parser.parse(argv)
+    config = SimpleNamespace(
+        option=options, addinivalue_line=lambda *a: None, getini=lambda _: [],
+        getoption=lambda key: getattr(options, key.lstrip("-").replace("-", "_")),
+        hook=SimpleNamespace(pytest_flaggems_profile_scope=lambda **kw: None),
+    )
+    monkeypatch.setattr(conftest, "Config", conftest.Config)
+    monkeypatch.setattr(conftest, "REPORT_FILE", conftest.REPORT_FILE)
+    monkeypatch.setattr(conftest, "apply_overrides_from_args", lambda _: None)
+    conftest.pytest_configure(config)
+    assert conftest.Config.bench_level.value == (level or ("core" if reference_only else "comprehensive"))

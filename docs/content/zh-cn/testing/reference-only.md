@@ -5,13 +5,13 @@ weight: 50
 
 # Benchmark reference-only：检查原始 core baseline
 
-`--reference-only` 仅用于 benchmark，在目标运行环境中执行原始 baseline，不需要 candidate，不使用 override，不做 warmup、计时、正确性比较或 Profile。默认 review 使用 `--level core`，检查原测试输入生成和性能 reference 能否运行，不能据此声称正确性 pytest 的 reference 或完整测试链路已经通过。
+`--reference-only` 仅用于 benchmark，默认 level 为 `core`，无需显式传入；可通过 `--level` 覆盖。普通 benchmark 仍默认 `comprehensive`。该模式执行原始 baseline，不需要 candidate，不使用 override，不做 warmup、计时、正确性比较或 Profile，只检查输入生成和性能 reference 能否运行，不能据此声称正确性 pytest 的 reference 或完整测试链路已经通过。
 
 ```bash
-pytest -q benchmark/test_negative.py --reference-only --level core --output benchmark-reference.json
+pytest -q benchmark/test_negative.py --reference-only --output benchmark-reference.json
 ```
 
-可沿用单独一次 `--list-cases` 得到的 `--case-id` 精确重放；KGS review 会使用整个 core 集合，不缩减 dtype 或 workload。输出默认是 `reference_result.json`，每次覆盖写入，不累计旧结果。先核对 `flag_gems.__file__` 来自预期 checkout，避免旧 editable install 导致使用另一版本。
+可沿用单独一次 `--list-cases --level core` 得到的 `--case-id` 精确重放；列举用例时需与实际执行 level 匹配。KGS review 会使用整个 core 集合，不缩减 dtype 或 workload。输出每次覆盖写入，不累计旧结果。先核对 `flag_gems.__file__` 来自预期 checkout，避免旧 editable install 导致使用另一版本。
 
 ## 复用与边界
 

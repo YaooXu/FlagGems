@@ -208,10 +208,10 @@ def pytest_addoption(parser):
     parser.addoption(
         "--level",
         action="store",
-        default="comprehensive",
+        default=None,
         required=False,
         choices=[level.value for level in consts.BenchLevel],
-        help="Specify the benchmark level: comprehensive, or core.",
+        help="Benchmark level: reference-only defaults to core; other modes default to comprehensive.",
     )
 
     parser.addoption(
@@ -413,6 +413,8 @@ def pytest_configure(config):
     Config.profile_hook = config.hook.pytest_flaggems_profile_scope
 
     level_value = config.getoption("--level")
+    if level_value is None:
+        level_value = "core" if Config.reference_only else "comprehensive"
     Config.bench_level = consts.BenchLevel(level_value)
 
     warmup_value = config.getoption("--warmup")
