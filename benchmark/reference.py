@@ -14,6 +14,37 @@
 
 """Reference-only benchmark options and reports, independent of correctness pytest."""
 
+import re
+import traceback
+from types import ModuleType
+
+
+def reference_failure(error):
+    """Conservative diagnostic hints, not an authoritative capability table."""
+    message = str(error)
+    category = "UNKNOWN"
+    obj = getattr(error, "obj", None)
+    if (
+        isinstance(error, AttributeError)
+        and isinstance(obj, ModuleType)
+        and (obj.__name__ == "torch" or obj.__name__.startswith("torch."))
+        and getattr(error, "name", None)
+    ):
+        category = "API_MISSING"
+    elif isinstance(error, (RuntimeError, NotImplementedError)) and re.search(
+        r"not implemented for ['\"](?:Half|BFloat16|Float|Double|Char|Byte|Short|Int|Long|Bool|Float8_[A-Za-z0-9_]+)['\"]",
+        message,
+    ):
+        category = "DTYPE_UNSUPPORTED"
+    elif isinstance(error, NotImplementedError):
+        category = "NOT_IMPLEMENTED"
+    return {
+        "category": category,
+        "type": type(error).__name__,
+        "message": message,
+        "traceback": "".join(traceback.format_exception(type(error), error, error.__traceback__)),
+    }
+
 
 def validate_reference_options(config):
     if not getattr(config.option, "reference_only", False):
@@ -35,9 +66,9 @@ def reference_report(records, *, exitstatus=0):
     # remaining cases. Earlier calls remain evidence, not a completed node.
     skipped_nodes = {r.get("nodeid") for r in records
                      if r.get("pytest_phase") and r["status"] == "SKIP"}
-    statuses = ["SKIP" if r["status"] == "PASSED" and r.get("nodeid") in skipped_nodes
+    statuses = ["SKIP" if r["status"] in {"PASSED", "NOT_RUN"} and r.get("nodeid") in skipped_nodes
                 else r["status"] for r in records]
-    if exitstatus not in (0, 1, 5) or "FAILED" in statuses:
+    if exitstatus not in (0, 1, 5) or any(s in {"FAILED", "NOT_RUN"} for s in statuses):
         status = "FAILED"
     elif "UNSUPPORTED" in statuses:
         status = "UNSUPPORTED"

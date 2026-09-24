@@ -44,6 +44,14 @@ pytest -q benchmark/test_negative.py --reference-only --output benchmark-referen
 
 KGS 配套通过设备 slot 和隔离 worker 调用此命令，核对冻结 benchmark fingerprint 与 core case 覆盖，保存原报告；该执行事实不是模型审核结论，也不写入候选优化 ledger。KG 的 `skip_review` 仅跳过模型审核，不跳过这项目标验证。
 
+### 逐 case 失败信息
+
+每个已选 case 保留 `case_id`、`ordinal`、`dtype`、`shape`、`params` 和执行状态。失败记录额外包含 `stage`（`build_inputs`、`prepare_reference`、`invoke` 或 `synchronize`）与 `failure`（`category`、异常 `type`、原始 `message`、`traceback`），用于区分输入构造、原 reference 调用和设备同步失败。`dtype` 来自 case 声明；backward 或原始 reference 内部可能转换 dtype，具体报错仍以原始异常为准。
+
+`category` 是保守的诊断提示，不是设备能力表：`DTYPE_UNSUPPORTED` 仅识别明确的 PyTorch `not implemented for '<dtype>'` 信息；`API_MISSING` 仅用于实际访问缺失的 `torch` 模块属性；`NOT_IMPLEMENTED` 保留无法确定是整个 API、后端还是参数组合不支持的 `NotImplementedError`；其余为 `UNKNOWN`。不能从某一个 dtype 或某个输入失败推断整个算子不可用。
+
+明确的上述能力错误在设备同步正常后继续下一个 case，所有失败仍逐条保留且总体为 `FAILED`。未知错误、同步失败或中断立即停止当前 node，剩余已选 case 标为 `NOT_RUN`，不伪造失败原因。错误后的同步若再次失败，另存 `recovery_failure`，保留首个异常。原 pytest skip 仍终止整个 node；未完成的 case 不计作通过。收集或 setup 阶段尚未生成 case 时只能提供 pytest 阶段级错误；进程被强杀时也不承诺完整报告。
+
 ## 验证范围
 
 分支基于官方 `master@d17e23e48e26b6396bd3fc899c95dac74f305cbe`，已撤回早期 correctness reference-only 试验，对应正确性 pytest 与该 master 保持一致。Host 测试使用现有 `kernelgen-nvidia-cu128` 容器，验证原 baseline、backward、精确 case 选择、skip/异常、配置互斥与既有 Preflight/Profile 路径；设备同步使用模拟实现。未安装或升级依赖，未进行 GPU/跨芯片验收。

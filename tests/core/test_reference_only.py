@@ -22,7 +22,7 @@ import torch
 
 from benchmark import base, conftest
 from benchmark.cases import BenchmarkCaseSpec
-from benchmark.reference import reference_report, validate_reference_options
+from benchmark.reference import reference_failure, reference_report, validate_reference_options
 
 def forbidden(*args, **kwargs):
     raise AssertionError("candidate, timing or profiling must not run")
@@ -101,6 +101,93 @@ def test_reference_failure_is_not_passed(runner, monkeypatch, failure):
         bench.run()
     assert reference_report(config.reference_records)["status"] == "FAILED"
     assert not config.executed_case_ids
+    assert [r["status"] for r in config.reference_records] == ["FAILED", "NOT_RUN", "NOT_RUN"]
+    record = config.reference_records[0]
+    assert record["stage"] == {"input": "build_inputs", "reference": "invoke", "sync": "synchronize"}[failure]
+    assert record["dtype"] == "float32" and record["shape"] == {} and record["params"] == {}
+    assert record["failure"]["category"] == "UNKNOWN"
+    assert "RuntimeError: original failure" in record["failure"]["traceback"]
+
+
+def test_capability_failures_are_recorded_individually_and_later_cases_run(runner):
+    bench, config, events = runner
+    def reference(value):
+        if value == 0:
+            raise RuntimeError('"op_cpu" not implemented for \'Half\'')
+        if value == 1:
+            getattr(torch, "_missing_reference_test_api")()
+        events.append(value)
+    bench.torch_op = reference
+    with pytest.raises(pytest.fail.Exception, match="2 reference cases failed"):
+        bench.run()
+    records = config.reference_records
+    assert [r["status"] for r in records] == ["FAILED", "FAILED", "PASSED"]
+    assert [r["failure"]["category"] for r in records[:2]] == ["DTYPE_UNSUPPORTED", "API_MISSING"]
+    assert events == ["sync", "sync", 2, "sync"]
+    assert config.executed_case_ids == {"case-2"}
+    assert reference_report(records)["status"] == "FAILED"
+    assert json.loads(json.dumps(records)) == records
+
+
+@pytest.mark.parametrize("error,category", [
+    (AttributeError("arbitrary missing attribute"), "UNKNOWN"),
+    (TypeError("wrong dtype"), "UNKNOWN"),
+    (RuntimeError("unsupported shape"), "UNKNOWN"),
+    (NotImplementedError("backend implementation unavailable"), "NOT_IMPLEMENTED"),
+    (RuntimeError('"op" not implemented for \'BFloat16\''), "DTYPE_UNSUPPORTED"),
+])
+def test_failure_categories_do_not_guess_api_or_dtype_support(error, category):
+    assert reference_failure(error)["category"] == category
+
+
+def test_capability_failure_does_not_continue_after_sync_failure(runner, monkeypatch):
+    bench, config, _ = runner
+    def unavailable(*args):
+        raise NotImplementedError("no backend kernel")
+    def broken_sync():
+        raise RuntimeError("device lost")
+    bench.torch_op = unavailable
+    monkeypatch.setattr(base.torch_device_fn, "synchronize", broken_sync)
+    with pytest.raises(RuntimeError, match="device lost"):
+        bench.run()
+    assert [r["status"] for r in config.reference_records] == ["FAILED", "NOT_RUN", "NOT_RUN"]
+    assert config.reference_records[0]["failure"]["type"] == "NotImplementedError"
+    assert config.reference_records[0]["recovery_failure"]["message"] == "device lost"
+
+
+def test_reference_interrupt_propagates_and_leaves_unexecuted_cases(runner):
+    bench, config, _ = runner
+    def interrupted(*args):
+        raise KeyboardInterrupt()
+    bench.torch_op = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        bench.run()
+    assert [r["status"] for r in config.reference_records] == ["FAILED", "NOT_RUN", "NOT_RUN"]
+
+
+@pytest.mark.parametrize("stage", ["build_inputs", "prepare_reference"])
+def test_capability_failure_before_invocation_keeps_zero_call_count(runner, monkeypatch, stage):
+    bench, config, _ = runner
+    def unavailable(*args):
+        raise NotImplementedError("original baseline unavailable")
+    monkeypatch.setattr(bench, "build_inputs" if stage == "build_inputs" else "_benchmark_callable", unavailable)
+    with pytest.raises(pytest.fail.Exception, match="3 reference cases failed"):
+        bench.run()
+    assert all(r["stage"] == stage and r["count"] == 0 and r["status"] == "FAILED"
+               for r in config.reference_records)
+
+
+def test_source_skip_preserves_node_semantics_and_unexecuted_records(runner):
+    bench, config, _ = runner
+    def skip(value):
+        if value == 1:
+            pytest.skip("source condition")
+    bench.torch_op = skip
+    with pytest.raises(pytest.skip.Exception):
+        bench.run()
+    assert [r["status"] for r in config.reference_records] == ["PASSED", "SKIP", "NOT_RUN"]
+    config.reference_records.append({"nodeid": config.current_nodeid, "status": "SKIP", "pytest_phase": "call"})
+    assert reference_report(config.reference_records)["status"] == "ALL_SKIP"
 
 
 def test_unsupported_custom_runner_cannot_execute_candidate(runner):

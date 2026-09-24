@@ -40,6 +40,7 @@ from .consts import (
     check_metric_dependencies,
     model_shapes,
 )
+from .reference import reference_failure
 
 torch_backend_device = flag_gems.runtime.torch_backend_device
 torch_device_fn = flag_gems.runtime.torch_device_fn
@@ -630,33 +631,56 @@ class Benchmark:
         Config.available_case_ids.update(case.case_id for case in cases)
         selected = None if case_ids is None else set(case_ids)
         executed = []
-        for case in cases:
-            if selected is not None and case.case_id not in selected:
-                continue
-            record = {
-                "nodeid": Config.current_nodeid, "operator": self.op_name,
-                "case_id": case.case_id, "count": 0, "status": "FAILED",
-            }
-            Config.reference_records.append(record)
+        selected_cases = [case for case in cases if selected is None or case.case_id in selected]
+        records = [{
+            **case.to_dict(), "nodeid": Config.current_nodeid, "operator": self.op_name,
+            "count": 0, "status": "NOT_RUN", "reason": "reference traversal stopped before this case",
+        } for case in selected_cases]
+        Config.reference_records.extend(records)
+        for case, record in zip(selected_cases, records):
+            record.pop("reason")
+            record["status"] = "FAILED"
             if Config.skip_native:
                 record.update(status="SKIP", reason=Config.native_baseline_skip_reason)
                 continue
+            args = kwargs = fn = grad_inputs = None
             try:
+                record["stage"] = "build_inputs"
                 args, kwargs = self.unpack_to_args_kwargs(self.build_inputs(case))
+                record["stage"] = "prepare_reference"
                 fn, grad_inputs = self._benchmark_callable(self.torch_op, *args, **kwargs)
+                record["stage"] = "invoke"
                 record["count"] = 1
                 fn()
+                record["stage"] = "synchronize"
                 torch_device_fn.synchronize()
             except pytest.skip.Exception as error:
                 record.update(status="SKIP", reason=str(error))
                 raise
             except BaseException as error:
-                record["error"] = f"{type(error).__name__}: {error}"
-                raise
+                record["failure"] = reference_failure(error)
+                if (
+                    not isinstance(error, Exception)
+                    or record["stage"] == "synchronize"
+                    or record["failure"]["category"] == "UNKNOWN"
+                ):
+                    raise
+                # Only explicit capability errors can continue, and never if
+                # queued accelerator work reports an additional failure.
+                try:
+                    torch_device_fn.synchronize()
+                except BaseException as sync_error:
+                    record["recovery_failure"] = reference_failure(sync_error)
+                    raise
+                continue
+            finally:
+                del fn, grad_inputs, args, kwargs
             record["status"] = "PASSED"
             Config.executed_case_ids.add(case.case_id)
             executed.append(case.case_id)
-            del fn, grad_inputs, args, kwargs
+        failures = sum(record["status"] == "FAILED" for record in records)
+        if failures:
+            pytest.fail(f"{failures} reference cases failed; see per-case reference report", pytrace=False)
         return executed
 
     def _run_profile_cases(self, case_ids: Collection[str]):
