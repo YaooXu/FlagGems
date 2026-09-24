@@ -17,6 +17,7 @@ import torch
 from packaging import version
 
 import flag_gems
+from flag_gems.testing.reference import reference_call, reference_only
 
 from . import accuracy_utils as utils
 from .conftest import QUICK_MODE
@@ -66,6 +67,7 @@ _addmm_beta_zero_only = pytest.mark.skipif(
 
 
 @pytest.mark.addmm
+@pytest.mark.reference_only
 @pytest.mark.parametrize("M, N, K", MNK_SHAPES)
 @pytest.mark.parametrize("scalar", utils.SCALARS)
 @pytest.mark.parametrize("dtype", FLOAT_DTYPES)
@@ -86,18 +88,18 @@ def test_addmm(monkeypatch, M, N, K, scalar, dtype, b_column_major):
 
     alpha = beta = scalar
 
-    ref_out1 = torch.addmm(ref_bias1, ref_mat1, ref_mat2, alpha=alpha, beta=beta)
-    res_out1 = flag_gems.addmm(bias1, mat1, mat2, alpha=alpha, beta=beta)
-
-    utils.gems_assert_close(res_out1, ref_out1, dtype, reduce_dim=K)
+    ref_out1 = reference_call(torch.addmm, ref_bias1, ref_mat1, ref_mat2, alpha=alpha, beta=beta)
+    if not reference_only():
+        res_out1 = flag_gems.addmm(bias1, mat1, mat2, alpha=alpha, beta=beta)
+        utils.gems_assert_close(res_out1, ref_out1, dtype, reduce_dim=K)
 
     bias2 = torch.randn((M, N), dtype=dtype, device=flag_gems.device)
     ref_bias2 = utils.to_reference(bias2, True)
 
-    ref_out2 = torch.addmm(ref_bias2, ref_mat1, ref_mat2, alpha=alpha, beta=beta)
-    res_out2 = flag_gems.addmm(bias2, mat1, mat2, alpha=alpha, beta=beta)
-
-    utils.gems_assert_close(res_out2, ref_out2, dtype, reduce_dim=K)
+    ref_out2 = reference_call(torch.addmm, ref_bias2, ref_mat1, ref_mat2, alpha=alpha, beta=beta)
+    if not reference_only():
+        res_out2 = flag_gems.addmm(bias2, mat1, mat2, alpha=alpha, beta=beta)
+        utils.gems_assert_close(res_out2, ref_out2, dtype, reduce_dim=K)
 
 
 @pytest.mark.addmm

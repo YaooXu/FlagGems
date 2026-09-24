@@ -16,6 +16,7 @@ import fcntl
 import json
 import logging
 import os
+from contextlib import nullcontext
 from datetime import datetime
 
 import pytest
@@ -26,6 +27,13 @@ import yaml
 
 import flag_gems
 from flag_gems.cli_override import add_override_arguments, apply_overrides_from_args
+from flag_gems.runtime import torch_device_fn
+from flag_gems.testing.reference import (
+    add_reference_option,
+    reference_execution,
+    reference_report,
+    validate_reference_options,
+)
 
 BUILTIN_MARKS = {
     "filterwarnings",
@@ -37,6 +45,7 @@ BUILTIN_MARKS = {
     "trylast",
     "usefixtures",
     "xfail",
+    "reference_only",
 }
 REGISTERED_MARKS = []
 TEST_RESULTS = {}
@@ -45,6 +54,7 @@ RECORD_LOG = False
 RECORD_JSON = False
 TO_CPU = False
 QUICK_MODE = False
+REFERENCE_ONLY = False
 
 device = flag_gems.device
 
@@ -53,6 +63,7 @@ REPORT_FILE = "accuracy_result.json"
 
 
 def pytest_addoption(parser):
+    add_reference_option(parser)
     parser.addoption(
         "--ref",
         action="store",
@@ -108,6 +119,13 @@ def pytest_configure(config):
     global RUNTEST_INFO
     global TO_CPU
     global QUICK_MODE
+    global REFERENCE_ONLY
+
+    REFERENCE_ONLY = validate_reference_options(config, "correctness")
+    REPORT_FILE = "accuracy_result.json"
+    config.addinivalue_line(
+        "markers", "reference_only: test explicitly supports original-reference execution without a candidate"
+    )
 
     TEST_RESULTS.clear()
 
@@ -124,6 +142,8 @@ def pytest_configure(config):
         report_file = config.getoption("--output")
         if report_file:
             REPORT_FILE = report_file
+    if REFERENCE_ONLY:
+        REPORT_FILE = config.getoption("--output") or "reference_result.json"
 
     if RECORD_LOG:
         RUNTEST_INFO = {}
@@ -166,6 +186,10 @@ def pytest_runtest_teardown(item, nextitem):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    if REFERENCE_ONLY:
+        report = _reference_report()
+        if report["status"] in {"FAILED", "UNSUPPORTED", "NO_CASES"} and session.exitstatus == pytest.ExitCode.OK:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if RECORD_LOG:
         logging.info(json.dumps(RUNTEST_INFO, indent=2))
 
@@ -183,11 +207,40 @@ def pytest_unconfigure(config):
 def pytest_runtest_call(item):
     registry = item.config._override_registry
     before = registry.call_counts()
-    yield
+    scope = reference_execution(torch_device_fn.synchronize) if REFERENCE_ONLY else nullcontext([])
+    with scope as calls:
+        outcome = yield
+    if REFERENCE_ONLY:
+        TEST_RESULTS[item.nodeid]["reference_calls"] = calls
+        if outcome.excinfo is None and (not calls or any(call["status"] != "PASSED" for call in calls)):
+            outcome.force_exception(AssertionError("reference-only test did not complete an explicit reference_call"))
     after = registry.call_counts()
     TEST_RESULTS[item.nodeid]["candidate_calls"] = {
         name: count - before.get(name, 0) for name, count in after.items()
     }
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    if REFERENCE_ONLY and item.get_closest_marker("reference_only") is None:
+        TEST_RESULTS[item.nodeid]["reference_unsupported"] = True
+        pytest.skip("reference-only is unsupported: annotate and adapt this test explicitly")
+
+
+def _reference_report(exitstatus=0):
+    records = []
+    for nodeid, result in TEST_RESULTS.items():
+        status = {"passed": "PASSED", "skipped": "SKIP", "failed": "FAILED"}.get(
+            result.get("result"), "FAILED"
+        )
+        if result.get("reference_unsupported"):
+            status = "UNSUPPORTED"
+        records.append({
+            "nodeid": nodeid, "operator": result.get("opname"), "status": status,
+            "reference_calls": result.get("reference_calls", []),
+            "reason": result.get("reason"),
+        })
+    return reference_report("correctness", records, exitstatus=exitstatus)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -221,6 +274,9 @@ def pytest_runtest_logreport(report):
         report.nodeid, {"params": None, "result": None, "opname": None}
     )
     if report.when == "setup":
+        if REFERENCE_ONLY and report.outcome == "failed":
+            result["result"] = "failed"
+            result["reason"] = get_reason(report)
         if report.outcome == "skipped":
             reason = get_reason(report)
             result["result"] = "skipped"
@@ -232,9 +288,16 @@ def pytest_runtest_logreport(report):
             result["reason"] = reason
         else:
             result["reason"] = None
+    elif REFERENCE_ONLY and report.when == "teardown" and report.outcome == "failed":
+        result["result"] = "failed"
+        result["reason"] = get_reason(report)
 
 
-def pytest_terminal_summary(terminalreporter):
+def pytest_terminal_summary(terminalreporter, exitstatus):
+    if REFERENCE_ONLY:
+        with open(REPORT_FILE, "w") as output:
+            json.dump(_reference_report(exitstatus), output, indent=2)
+        return
     data = TEST_RESULTS
     with open(REPORT_FILE, "a+") as json_file:
         fcntl.flock(json_file, fcntl.LOCK_EX)

@@ -106,6 +106,13 @@ class Benchmark:
         self.op_name = op_name
         if is_backward and self.op_name.find("_backward") == -1:
             self.op_name += "_backward"
+        if getattr(Config, "reference_only", False) and type(self).run is not Benchmark.run:
+            Config.reference_records.append({
+                "nodeid": Config.current_nodeid, "operator": self.op_name,
+                "status": "UNSUPPORTED",
+                "reason": "custom benchmark run requires an explicit reference runner",
+            })
+            pytest.skip("reference-only is unsupported for custom benchmark run")
         self.torch_op = torch_op
         self.gems_op = kwargs.get("gems_op", None)
         self.is_backward = is_backward
@@ -290,7 +297,12 @@ class Benchmark:
         self.gems_op = gems_op
 
     def get_latency(self, op, *args, **kwargs):
+        fn, xs = self._benchmark_callable(op, *args, **kwargs)
+        return self._time_callable(fn, xs)
+
+    def _benchmark_callable(self, op, *args, **kwargs):
         fn = lambda: op(*args, **kwargs)
+        xs = None
         if self.is_backward:
             out = fn()
             dout = torch.randn_like(out)
@@ -299,6 +311,9 @@ class Benchmark:
             fn = lambda: torch.autograd.grad(
                 (out,), xs, grad_outputs=(dout,), retain_graph=True
             )
+        return fn, xs
+
+    def _time_callable(self, fn, xs):
         if Config.mode == consts.BenchMode.OPERATOR:
             n_warm, n_rep = get_iter_count(fn)
             for i in range(n_warm):
@@ -596,6 +611,53 @@ class Benchmark:
             del args, kwargs
         return executed
 
+    def _run_reference_cases(self, case_ids: Optional[Collection[str]]):
+        """Run the original timing baseline once; never enter Gems dispatch."""
+        if (
+            not self.supports_cases()
+            or getattr(self.get_latency, "__func__", None) is not Benchmark.get_latency
+            or getattr(self._measure_input, "__func__", None) is not Benchmark._measure_input
+        ):
+            Config.reference_records.append({
+                "nodeid": Config.current_nodeid, "operator": self.op_name,
+                "status": "UNSUPPORTED",
+                "reason": "custom or legacy baseline requires an explicit reference runner",
+            })
+            pytest.skip("reference-only is unsupported for this benchmark")
+        cases = self._collect_cases()
+        if not cases:
+            raise ValueError(f"Operator '{self.op_name}' has no reference cases.")
+        Config.available_case_ids.update(case.case_id for case in cases)
+        selected = None if case_ids is None else set(case_ids)
+        executed = []
+        for case in cases:
+            if selected is not None and case.case_id not in selected:
+                continue
+            record = {
+                "nodeid": Config.current_nodeid, "operator": self.op_name,
+                "case_id": case.case_id, "count": 0, "status": "FAILED",
+            }
+            Config.reference_records.append(record)
+            if Config.skip_native:
+                record.update(status="SKIP", reason=Config.native_baseline_skip_reason)
+                continue
+            try:
+                args, kwargs = self.unpack_to_args_kwargs(self.build_inputs(case))
+                fn, _ = self._benchmark_callable(self.torch_op, *args, **kwargs)
+                record["count"] = 1
+                fn()
+                torch_device_fn.synchronize()
+            except pytest.skip.Exception as error:
+                record.update(status="SKIP", reason=str(error))
+                raise
+            except BaseException as error:
+                record["error"] = f"{type(error).__name__}: {error}"
+                raise
+            record["status"] = "PASSED"
+            Config.executed_case_ids.add(case.case_id)
+            executed.append(case.case_id)
+        return executed
+
     def _run_profile_cases(self, case_ids: Collection[str]):
         """Run one candidate case with warmup/iterations owned by pytest."""
         if not self.supports_cases():
@@ -709,6 +771,9 @@ class Benchmark:
         configured_case_ids = getattr(Config, "case_ids", None)
         selection_requested = case_ids is not None or configured_case_ids is not None
         selected_case_ids = case_ids if case_ids is not None else configured_case_ids
+
+        if getattr(Config, "reference_only", False):
+            return self._run_reference_cases(selected_case_ids)
 
         if getattr(Config, "preflight_only", False):
             return self._run_preflight_cases(selected_case_ids)

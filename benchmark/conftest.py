@@ -23,6 +23,11 @@ import yaml
 import flag_gems
 from flag_gems.cli_override import add_override_arguments, apply_overrides_from_args
 from flag_gems.runtime import torch_device_fn
+from flag_gems.testing.reference import (
+    add_reference_option,
+    reference_report,
+    validate_reference_options,
+)
 
 from . import consts
 from .profile_hook import ProfileHooks
@@ -113,6 +118,8 @@ class BenchConfig:
         self.profile_only = False
         self.preflight_only = False
         self.preflight_records = []
+        self.reference_only = False
+        self.reference_records = []
         self.profile_warmup = 10
         self.profile_iterations = 1
         self.profile_hook = None
@@ -181,6 +188,7 @@ def _deactivate_inactive_native_marker(item, current_vendor):
 
 
 def pytest_addoption(parser):
+    add_reference_option(parser)
     parser.addoption(
         (
             "--mode" if vendor_name != "kunlunxin" else "--fg_mode"
@@ -354,6 +362,7 @@ def pytest_configure(config):
     )
 
     Config = BenchConfig()
+    Config.reference_only = validate_reference_options(config, "timing")
     CASE_LISTS.clear()
     TEST_RESULTS.clear()
 
@@ -429,6 +438,9 @@ def pytest_configure(config):
     if Config.record_json or Config.list_cases:
         Config.output = config.getoption("--output")
         REPORT_FILE = Config.output
+    if Config.reference_only:
+        Config.record_json = True
+        REPORT_FILE = config.getoption("--output") or "reference_result.json"
 
     if Config.record_log:
         cmd_args = [
@@ -567,6 +579,14 @@ def pytest_runtest_makereport(item, call):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_logreport(report):
+    if Config.reference_only:
+        if report.outcome in {"failed", "skipped"}:
+            Config.reference_records.append({
+                "nodeid": report.nodeid, "operator": report.opid,
+                "status": "FAILED" if report.failed else "SKIP",
+                "reason": get_reason(report), "pytest_phase": report.when,
+            })
+        return
     if not Config.record_json:
         return
 
@@ -593,6 +613,10 @@ def pytest_runtest_logreport(report):
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Combine and dump the result into JSON."""
+    if Config.reference_only:
+        with open(REPORT_FILE, "w") as output:
+            json.dump(reference_report("timing", Config.reference_records, exitstatus=exitstatus), output, indent=2)
+        return
     if Config.preflight_only:
         if Config.record_json:
             with open(REPORT_FILE, "w") as f:
@@ -631,6 +655,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    if Config is not None and Config.reference_only:
+        if reference_report("timing", Config.reference_records)["status"] in {"UNSUPPORTED", "FAILED", "NO_CASES"}:
+            if session.exitstatus == pytest.ExitCode.OK:
+                session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if Config is not None and Config.preflight_only:
         incomplete = not Config.preflight_records or any(
             record["status"] != "passed" for record in Config.preflight_records
@@ -641,7 +669,11 @@ def pytest_sessionfinish(session, exitstatus):
         return
     requested = set(Config.case_ids)
     unknown = sorted(requested - Config.available_case_ids)
-    not_executed = sorted(requested - Config.executed_case_ids)
+    skipped = (
+        {r.get("case_id") for r in Config.reference_records if r["status"] == "SKIP"}
+        if Config.reference_only else set()
+    )
+    not_executed = sorted(requested - Config.executed_case_ids - skipped)
     if unknown or not_executed:
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         if reporter:
