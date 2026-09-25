@@ -49,6 +49,7 @@ from ._scaled_dot_product_fused_attention_overrideable import (
 )
 from ._thnn_fused_lstm_cell import _thnn_fused_lstm_cell
 from ._thnn_fused_lstm_cell_backward_impl import _thnn_fused_lstm_cell_backward_impl
+from ._torch_library_compat import impl_with_override
 from ._unsafe_masked_index_put_accumulate import _unsafe_masked_index_put_accumulate
 from ._upsample_bilinear2d_aa import _upsample_bilinear2d_aa  # noqa: F401
 from ._upsample_nearest_exact2d_backward import _upsample_nearest_exact2d_backward
@@ -1555,8 +1556,8 @@ def _patch_adaptive_max_pool2d_aten():
     from .adaptive_max_pool2d import adaptive_max_pool2d as _gems_fwd
 
     _adaptive_max_pool2d_aten_lib = torch.library.Library("aten", "IMPL")
-    _adaptive_max_pool2d_aten_lib.impl(
-        "adaptive_max_pool2d", _gems_fwd, "CUDA", allow_override=True
+    impl_with_override(
+        _adaptive_max_pool2d_aten_lib, "adaptive_max_pool2d", _gems_fwd, "CUDA"
     )
 
 
@@ -1595,8 +1596,8 @@ def _patch_adaptive_max_pool3d_aten():
         return _gems_fwd_impl(input, output_size, return_indices=True)
 
     _adaptive_max_pool3d_aten_lib = torch.library.Library("aten", "IMPL")
-    _adaptive_max_pool3d_aten_lib.impl(
-        "adaptive_max_pool3d", _gems_fwd, "CUDA", allow_override=True
+    impl_with_override(
+        _adaptive_max_pool3d_aten_lib, "adaptive_max_pool3d", _gems_fwd, "CUDA"
     )
 
 

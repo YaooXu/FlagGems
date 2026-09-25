@@ -14,6 +14,8 @@ from flag_gems import runtime
 from flag_gems.runtime import torch_device_fn
 from flag_gems.utils import libentry
 
+from ._torch_library_compat import impl_with_override
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ def range(start, end, *, dtype=None, layout=None, device=None, pin_memory=None):
 
 
 _range_backend_select_lib = torch.library.Library("aten", "IMPL", "BackendSelect")
-_range_backend_select_lib.impl("range", range, allow_override=True)
+impl_with_override(_range_backend_select_lib, "range", range)
 
 
 # ---------------------------------------------------------------------------
@@ -229,4 +231,4 @@ def range_step(
 
 
 _range_step_lib = torch.library.Library("aten", "IMPL")
-_range_step_lib.impl("range.step", range_step, "CUDA", allow_override=True)
+impl_with_override(_range_step_lib, "range.step", range_step, "CUDA")
